@@ -632,7 +632,6 @@ function buildSparkline(hourlyPredictions) {
     ].filter(t => t.ms > startMs2 && t.ms < endMs2).sort((a, b) => a.ms - b.ms);
 
     const toX = ms => PAD_X + Math.min(1, Math.max(0, (ms - startMs2) / totalMs)) * (W - PAD_X * 2);
-    const barY = PAD_T + 1.5; // centered on top edge (stroke-width 3 → 1.5 above/below)
     // Determine initial state: is startMs2 during daytime?
     let curDay = window._sunriseMs <= startMs2 && window._sunsetMs > startMs2;
     let curX = PAD_X;
@@ -641,7 +640,7 @@ function buildSparkline(hourlyPredictions) {
       const tx = toX(tr.ms);
       const w = tx - curX;
       if (w > 0) {
-        dayNightBar += `<line x1="${curX.toFixed(1)}" y1="${barY}" x2="${tx.toFixed(1)}" y2="${barY}" stroke="${curDay ? '#ffffff' : '#000000'}" stroke-width="3"/>`;
+        dayNightBar += `<rect x="${curX.toFixed(1)}" y="${PAD_T}" width="${w.toFixed(1)}" height="${plotH}" fill="${curDay ? '#ffffff' : '#000000'}"/>`;
       }
       curX = tx;
       curDay = tr.day;
@@ -649,7 +648,8 @@ function buildSparkline(hourlyPredictions) {
     // Final segment to end
     const endX = PAD_X + (W - PAD_X * 2);
     if (curX < endX) {
-      dayNightBar += `<line x1="${curX.toFixed(1)}" y1="${barY}" x2="${endX.toFixed(1)}" y2="${barY}" stroke="${curDay ? '#ffffff' : '#000000'}" stroke-width="3"/>`;
+      const w = endX - curX;
+      dayNightBar += `<rect x="${curX.toFixed(1)}" y="${PAD_T}" width="${w.toFixed(1)}" height="${plotH}" fill="${curDay ? '#ffffff' : '#000000'}"/>`;
     }
   }
 
