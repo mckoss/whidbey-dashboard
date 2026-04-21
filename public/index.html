@@ -270,7 +270,20 @@
       grid-template-columns: repeat(4, 1fr);
       gap: 0.35rem;
       align-content: start;
+      overflow: hidden;
+      position: relative;
     }
+
+    @keyframes slideInFromRight {
+      from { transform: translateX(110%); opacity: 0; }
+      to   { transform: translateX(0);    opacity: 1; }
+    }
+    @keyframes slideOutToLeft {
+      from { transform: translateX(0);    opacity: 1; }
+      to   { transform: translateX(-110%); opacity: 0; }
+    }
+    .sailing.slide-in  { animation: slideInFromRight 0.45s cubic-bezier(0.25,0.46,0.45,0.94) forwards; }
+    .sailing.slide-out { animation: slideOutToLeft  0.45s cubic-bezier(0.55,0,0.75,0.06) forwards; }
 
     .sailing {
       background: var(--bg);
@@ -649,19 +662,74 @@ function sailingCard(s, parsedSailings, spaceMap) {
   return `<div class="${cssClass}"><div class="sail-time">${display}</div>${vesselHtml}<div class="sail-status">${statusText}</div>${fillHtml}</div>`;
 }
 
-function makeCountdownUpdater(countdownId, sailingsList) {
-  return function() {
-    const el = document.getElementById(countdownId);
-    if (!el) return;
-    const now = Date.now();
-    const next = sailingsList.find(s => s.sailTime.getTime() >= now);
-    if (!next) { el.textContent = 'Done for day'; el.className = 'countdown-badge'; return; }
-    const remaining = next.sailTime.getTime() - now;
-    const text = formatCountdown(remaining);
-    const urgent = remaining < 15 * 60 * 1000;
-    el.textContent = `⛴ ${text}`;
-    el.className = `countdown-badge${urgent ? ' urgent' : ''}`;
-  };
+// Tracks the current "next sailing" time per panel so we can detect transitions
+const panelNextTime = {};
+
+function buildDisplayList(parsedSailings) {
+  const now = new Date();
+  const lastDeparted = [...parsedSailings].reverse().find(s => s.sailTime < now);
+  const next3 = parsedSailings.filter(s => s.sailTime >= now).slice(0, 3);
+  const list = [];
+  if (lastDeparted) list.push(lastDeparted);
+  list.push(...next3);
+  return list;
+}
+
+function updateFerryCards(panelId, countdownId, parsedSailings, spaceMap, animate) {
+  const el = document.getElementById(panelId);
+  if (!el) return;
+  const grid = el.querySelector('.sailings-grid');
+  if (!grid) return;
+
+  const now = new Date();
+  const trueNextIdx = parsedSailings.findIndex(s => s.sailTime >= now);
+  const trueLastIdx = parsedSailings.length - 1;
+  const nextIsLast = trueNextIdx === trueLastIdx && trueNextIdx >= 0;
+
+  // Update countdown badge
+  const cdEl = document.getElementById(countdownId);
+  if (cdEl) {
+    const next = trueNextIdx >= 0 ? parsedSailings[trueNextIdx] : null;
+    if (!next) {
+      cdEl.textContent = 'Done for day'; cdEl.className = 'countdown-badge';
+    } else {
+      const remaining = next.sailTime.getTime() - Date.now();
+      const text = formatCountdown(remaining);
+      const urgent = remaining < 15 * 60 * 1000;
+      cdEl.textContent = `⛴ ${text}`;
+      cdEl.className = `countdown-badge${urgent ? ' urgent' : ''}`;
+    }
+  }
+
+  // Update last-sailing note
+  const lastNote = el.querySelector('.last-sailing-note');
+  if (lastNote) lastNote.style.display = nextIsLast ? '' : 'none';
+
+  const displayList = buildDisplayList(parsedSailings);
+
+  if (!animate) {
+    // Initial render — no animation
+    grid.innerHTML = displayList.map(s => sailingCard(s, parsedSailings, spaceMap)).join('');
+    return;
+  }
+
+  // Animated slide: old cards slide out left, new rightmost card slides in from right
+  // Only the cards that shifted need animation — slide ALL out, rebuild, slide new one in
+  const oldCards = Array.from(grid.children);
+  oldCards.forEach(c => {
+    c.classList.add('slide-out');
+  });
+
+  setTimeout(() => {
+    grid.innerHTML = displayList.map((s, i) => {
+      const html = sailingCard(s, parsedSailings, spaceMap);
+      // Inject slide-in class on the new rightmost card only
+      if (i === displayList.length - 1) {
+        return html.replace('class="sailing', 'class="sailing slide-in');
+      }
+      return html;
+    }).join('');
+  }, 420); // slightly before animation ends so it's seamless
 }
 
 function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spaceMap, isStale) {
@@ -673,14 +741,10 @@ function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spac
   const trueNextIdx = parsedSailings.findIndex(s => s.sailTime >= now);
   const trueLastIdx = parsedSailings.length - 1;
   const nextIsLast = trueNextIdx === trueLastIdx && trueNextIdx >= 0;
+  const nextTime = trueNextIdx >= 0 ? parsedSailings[trueNextIdx].sailTime.getTime() : null;
 
-  // last departed + next 3
-  const lastDeparted = [...parsedSailings].reverse().find(s => s.sailTime < now);
-  const next3 = parsedSailings.filter(s => s.sailTime >= now).slice(0, 3);
-  const displayList = [];
-  if (lastDeparted) displayList.push(lastDeparted);
-  displayList.push(...next3);
-
+  // Full rebuild of panel HTML (header + grid)
+  const displayList = buildDisplayList(parsedSailings);
   const cards = displayList.map(s => sailingCard(s, parsedSailings, spaceMap)).join('');
 
   el.innerHTML = `
@@ -692,10 +756,24 @@ function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spac
     </div>
     <div class="sailings-grid">${cards}</div>`;
 
+  panelNextTime[panelId] = nextTime;
+
+  // Countdown + slide-check ticker
   if (countdownIntervals[countdownId]) clearInterval(countdownIntervals[countdownId]);
-  const updater = makeCountdownUpdater(countdownId, parsedSailings);
-  updater();
-  countdownIntervals[countdownId] = setInterval(updater, 30000);
+  countdownIntervals[countdownId] = setInterval(() => {
+    const now2 = new Date();
+    const newNextIdx = parsedSailings.findIndex(s => s.sailTime >= now2);
+    const newNextTime = newNextIdx >= 0 ? parsedSailings[newNextIdx].sailTime.getTime() : null;
+
+    // If the "next" sailing has changed, animate the slide transition
+    const shouldAnimate = newNextTime !== panelNextTime[panelId];
+    if (shouldAnimate) panelNextTime[panelId] = newNextTime;
+
+    updateFerryCards(panelId, countdownId, parsedSailings, spaceMap, shouldAnimate);
+  }, 30000);
+
+  // Initial countdown update (no animation)
+  updateFerryCards(panelId, countdownId, parsedSailings, spaceMap, false);
 }
 
 // ── Ferry loader ───────────────────────────────────────────────────────
