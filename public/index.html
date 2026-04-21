@@ -178,16 +178,17 @@
       display: block;
     }
 
-    .tide-list { display: flex; flex-direction: column; gap: 0.35rem; overflow: hidden; flex: 1; min-height: 0; }
+    .tide-list { display: grid; grid-template-rows: repeat(4, 1fr); gap: 0.3rem; flex: 1; min-height: 0; overflow: hidden; }
 
     .tide-item {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 0.4rem 0.65rem;
+      padding: 0.3rem 0.65rem;
       border-radius: 0.4rem;
       background: var(--bg);
       transition: opacity 0.3s;
+      min-height: 0;
     }
 
     .tide-item.past { opacity: 0.4; }
@@ -554,7 +555,8 @@ async function loadTides() {
     const cutoff48h = new Date(now.getTime() + 48 * 3600 * 1000);
     const upcoming = predictions
       .map(p => ({ ...p, date: new Date(p.t) }))
-      .filter(p => p.date >= new Date(now.getTime() - 3600000) && p.date <= cutoff48h);
+      .filter(p => p.date >= new Date(now.getTime() - 3600000) && p.date <= cutoff48h)
+      .slice(0, 4);  // always exactly 4 rows — matches grid-template-rows
 
     const items = upcoming.map(p => {
       const isToday = p.date.toDateString() === now.toDateString();
