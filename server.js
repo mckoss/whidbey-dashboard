@@ -133,7 +133,7 @@ app.get('/api/tides/hourly', cachedEndpoint('tides_hourly', 2 * 60 * 60 * 1000, 
   const startDt = new Date(today);
   startDt.setMinutes(0, 0, 0);
   const startMs = startDt.getTime();
-  const endMs = startMs + 48 * 3600 * 1000;
+  const endMs = startMs + 52 * 3600 * 1000; // 48h display + 4h headroom for refresh interval
 
   for (let ms = startMs; ms <= endMs; ms += 3600 * 1000) {
     // Find surrounding events
@@ -188,7 +188,7 @@ function ferryScheduleEndpoint(cacheKey, fromTerminal, toTerminal) {
 
 // ── Ferry space helper (reusable for either terminal) ─────────────────
 function ferrySpaceEndpoint(cacheKey, fromTerminal, toTerminal) {
-  return cachedEndpoint(cacheKey, 2 * 60 * 1000, async () => {
+  return cachedEndpoint(cacheKey, 5 * 60 * 1000, async () => {
     if (!WSF_API_KEY) return { error: 'WSF_API_KEY not configured' };
     const url = `https://www.wsdot.wa.gov/ferries/api/terminals/rest/terminalsailingspace` +
       `/${fromTerminal}?apiaccesscode=${WSF_API_KEY}`;
