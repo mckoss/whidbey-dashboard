@@ -26,9 +26,9 @@ const CONFIG = {
   // Whidbey beach house coords (Clinton, WA)
   LAT: 47.9748,
   LON: -122.3534,
-  // WSF terminal IDs: Clinton=8, Mukilteo=7
-  WSF_DEPARTING_TERMINAL: 8,   // Clinton (Whidbey side)
-  WSF_ARRIVING_TERMINAL: 7,    // Mukilteo (mainland side)
+  // WSF terminal IDs (from API): Clinton=5, Mukilteo=14
+  WSF_DEPARTING_TERMINAL: 5,   // Clinton (Whidbey side)
+  WSF_ARRIVING_TERMINAL: 14,   // Mukilteo (mainland side)
   TIMEZONE: 'America/Los_Angeles',
 };
 
@@ -79,7 +79,7 @@ app.get('/api/ferry', async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
     const url = `https://www.wsdot.wa.gov/ferries/api/schedule/rest/scheduletoday` +
-      `/${CONFIG.WSF_DEPARTING_TERMINAL}/${CONFIG.WSF_ARRIVING_TERMINAL}` +
+      `/${CONFIG.WSF_DEPARTING_TERMINAL}/${CONFIG.WSF_ARRIVING_TERMINAL}/false` +
       `?apiaccesscode=${WSF_API_KEY}`;
     const r = await fetch(url, { headers: { Accept: 'application/json' } });
     const data = await r.json();

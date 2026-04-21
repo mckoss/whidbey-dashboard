@@ -377,9 +377,11 @@ async function loadFerry() {
     const now = new Date();
     let sailings = [];
 
-    // WSF schedule response structure: array of departure times
+    // WSF scheduletoday response: { TerminalCombos: [{ Times: [...] }] }
     if (Array.isArray(sched)) {
       sailings = sched;
+    } else if (sched.TerminalCombos?.[0]?.Times) {
+      sailings = sched.TerminalCombos[0].Times;
     } else if (sched.ScheduleTimes) {
       sailings = sched.ScheduleTimes;
     } else if (sched.Times) {
@@ -410,14 +412,18 @@ async function loadFerry() {
 
     const sailingEls = sailings.map(s => {
       // Try various time field names WSF might use
-      const timeStr = s.DepartingTime || s.DepartureTime || s.Time || s.SailingTime || '';
-      if (!timeStr) return '';
-      const sailTime = new Date(timeStr);
+      // WSF times are .NET JSON dates: /Date(milliseconds-offset)/
+      const rawTime = s.DepartingTime || s.DepartureTime || s.Time || s.SailingTime || '';
+      if (!rawTime) return '';
+      const ms = rawTime.match(/\/Date\((\d+)/);
+      const sailTime = ms ? new Date(parseInt(ms[1])) : new Date(rawTime);
       if (isNaN(sailTime)) return '';
       const isPast = sailTime < now;
       const isNext = !isPast && sailings
         .filter(x => {
-          const t = new Date(x.DepartingTime || x.DepartureTime || x.Time || x.SailingTime || '');
+          const rt = x.DepartingTime || x.DepartureTime || x.Time || x.SailingTime || '';
+          const m = rt.match(/\/Date\((\d+)/);
+          const t = m ? new Date(parseInt(m[1])) : new Date(rt);
           return t >= now;
         })
         .indexOf(s) === 0;
