@@ -173,38 +173,52 @@ app.get('/api/weather', cachedEndpoint('weather', 10 * 60 * 1000, async () => {
   return r.json();
 }));
 
-// ── Ferry Schedule (WSF) ───────────────────────────────────────────────
-app.get('/api/ferry', cachedEndpoint('ferry', 5 * 60 * 1000, async () => {
-  if (!WSF_API_KEY) return { error: 'WSF_API_KEY not configured', sailings: [] };
-  const url = `https://www.wsdot.wa.gov/ferries/api/schedule/rest/scheduletoday` +
-    `/${CONFIG.WSF_DEPARTING_TERMINAL}/${CONFIG.WSF_ARRIVING_TERMINAL}/false` +
-    `?apiaccesscode=${WSF_API_KEY}`;
-  const r = await fetchWithRetry(url, { headers: { Accept: 'application/json' } });
-  return r.json();
-}));
+// ── Ferry schedule helper (reusable for either direction) ────────────
+function ferryScheduleEndpoint(cacheKey, fromTerminal, toTerminal) {
+  return cachedEndpoint(cacheKey, 5 * 60 * 1000, async () => {
+    if (!WSF_API_KEY) return { error: 'WSF_API_KEY not configured', sailings: [] };
+    const url = `https://www.wsdot.wa.gov/ferries/api/schedule/rest/scheduletoday` +
+      `/${fromTerminal}/${toTerminal}/false?apiaccesscode=${WSF_API_KEY}`;
+    const r = await fetchWithRetry(url, { headers: { Accept: 'application/json' } });
+    return r.json();
+  });
+}
 
-// ── Ferry Sailing Space (vessel name + capacity per departure) ────────
-app.get('/api/ferry/space', cachedEndpoint('ferry_space', 5 * 60 * 1000, async () => {
-  if (!WSF_API_KEY) return { error: 'WSF_API_KEY not configured' };
-  const url = `https://www.wsdot.wa.gov/ferries/api/terminals/rest/terminalsailingspace` +
-    `/${CONFIG.WSF_DEPARTING_TERMINAL}?apiaccesscode=${WSF_API_KEY}`;
-  const r = await fetchWithRetry(url, { headers: { Accept: 'application/json' } });
-  const data = await r.json();
-  // Build a lookup map: departure timestamp (ms string) -> vessel + space info
-  const byDeparture = {};
-  for (const dep of (data.DepartingSpaces || [])) {
-    const ms = dep.Departure?.match(/\/Date\((\d+)/)?.[1];
-    if (!ms) continue;
-    const space = dep.SpaceForArrivalTerminals?.find(t => t.TerminalID === CONFIG.WSF_ARRIVING_TERMINAL);
-    byDeparture[ms] = {
-      vesselName: dep.VesselName,
-      driveUpSpaces: space?.DriveUpSpaceCount ?? null,
-      maxSpaces: dep.MaxSpaceCount,
-      hexColor: space?.DriveUpSpaceHexColor ?? null,
-    };
-  }
-  return byDeparture;
-}));
+// ── Ferry space helper (reusable for either terminal) ─────────────────
+function ferrySpaceEndpoint(cacheKey, fromTerminal, toTerminal) {
+  return cachedEndpoint(cacheKey, 5 * 60 * 1000, async () => {
+    if (!WSF_API_KEY) return { error: 'WSF_API_KEY not configured' };
+    const url = `https://www.wsdot.wa.gov/ferries/api/terminals/rest/terminalsailingspace` +
+      `/${fromTerminal}?apiaccesscode=${WSF_API_KEY}`;
+    const r = await fetchWithRetry(url, { headers: { Accept: 'application/json' } });
+    const data = await r.json();
+    const byDeparture = {};
+    for (const dep of (data.DepartingSpaces || [])) {
+      const ms = dep.Departure?.match(/\/Date\((\d+)/)?.[1];
+      if (!ms) continue;
+      const space = dep.SpaceForArrivalTerminals?.find(t => t.TerminalID === toTerminal);
+      byDeparture[ms] = {
+        vesselName: dep.VesselName,
+        driveUpSpaces: space?.DriveUpSpaceCount ?? null,
+        maxSpaces: dep.MaxSpaceCount,
+        hexColor: space?.DriveUpSpaceHexColor ?? null,
+      };
+    }
+    return byDeparture;
+  });
+}
+
+// Clinton → Mukilteo
+app.get('/api/ferry/clinton', ferryScheduleEndpoint('ferry_clinton', 5, 14));
+app.get('/api/ferry/clinton/space', ferrySpaceEndpoint('ferry_clinton_space', 5, 14));
+
+// Mukilteo → Clinton
+app.get('/api/ferry/mukilteo', ferryScheduleEndpoint('ferry_mukilteo', 14, 5));
+app.get('/api/ferry/mukilteo/space', ferrySpaceEndpoint('ferry_mukilteo_space', 14, 5));
+
+// Legacy alias (keep working during transition)
+app.get('/api/ferry', ferryScheduleEndpoint('ferry_clinton', 5, 14));
+app.get('/api/ferry/space', ferrySpaceEndpoint('ferry_clinton_space', 5, 14));
 
 // ── Cache status (debug) ───────────────────────────────────────────────
 app.get('/api/cache-status', (req, res) => {
