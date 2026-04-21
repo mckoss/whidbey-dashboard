@@ -666,6 +666,10 @@ function getTideDirection(predictions) {
   const currentFt = fromH + (toH - fromH) * (1 - Math.cos(Math.PI * t)) / 2;
   return { rising: isRising, currentFt, fromHeight: fromH, toHeight: toH, nextEvent };
 }
+// ── Tide data cache (used by loadTides + refreshTideVisual) ─────────────────────
+let _lastHourlyPredictions = null;
+let _lastHiloPredictions   = null;
+
 // ── Tides ──────────────────────────────────────────────────────────────
 async function loadTides() {
   const el = document.getElementById('tides');
@@ -950,9 +954,6 @@ async function loadFerry() {
 }
 
 // ── Tide visual 1-minute refresh ───────────────────────────────────────────────────
-let _lastHourlyPredictions = null;
-let _lastHiloPredictions   = null;
-
 function refreshTideVisual() {
   if (!_lastHourlyPredictions || !_lastHiloPredictions) return;
   const el = document.getElementById('tides');
