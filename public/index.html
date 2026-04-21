@@ -135,63 +135,47 @@
     /* --- TIDES --- */
     #tides { grid-column: 2; display: flex; flex-direction: column; }
 
-    .tide-status-bar {
+    .tide-visual {
       display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 0.5rem;
-      padding: 0.35rem 0.6rem;
-      background: var(--bg);
-      border-radius: 0.5rem;
+      gap: 0.5rem;
+      margin-bottom: 0.4rem;
+      flex: 0 0 auto;
     }
 
-    .tide-direction {
-      font-size: 1rem;
-      font-weight: 600;
+    .tide-thermo-wrap {
       display: flex;
+      flex-direction: column;
       align-items: center;
-      gap: 0.35rem;
+      width: 28px;
+      flex-shrink: 0;
     }
 
-    .tide-direction.rising { color: var(--tide-high); }
-    .tide-direction.falling { color: var(--tide-low); }
-
-    .tide-progress-wrap {
-      flex: 1;
-      margin: 0 0.75rem;
-    }
-
-    .tide-progress-label {
+    .tide-thermo-arrow {
       font-size: 0.7rem;
+      margin-bottom: 0.1rem;
+      line-height: 1;
+    }
+
+    .tide-thermo-svg {
+      flex: 1;
+      width: 100%;
+    }
+
+    .tide-thermo-label {
+      font-size: 0.6rem;
       color: var(--dim);
-      margin-bottom: 0.25rem;
-      display: flex;
-      justify-content: space-between;
+      margin-top: 0.1rem;
     }
-
-    .tide-progress-bar {
-      height: 4px;
-      background: var(--border);
-      border-radius: 2px;
-      overflow: hidden;
-    }
-
-    .tide-progress-fill {
-      height: 100%;
-      border-radius: 2px;
-      transition: width 0.5s ease;
-    }
-    .rising .tide-progress-fill { background: var(--tide-high); }
-    .falling .tide-progress-fill { background: var(--tide-low); }
 
     /* Tide sparkline */
-    .tide-graph-wrap {
-      margin-bottom: 0.4rem;
+    .tide-sparkline-wrap {
+      flex: 1;
+      min-width: 0;
     }
 
     #tide-sparkline {
       width: 100%;
-      height: 48px;
+      height: 72px;
       display: block;
     }
 
@@ -506,38 +490,69 @@ async function loadWeather() {
   }
 }
 
-// ── Tide sparkline ─────────────────────────────────────────────────────
+// ── Tide thermometer ─────────────────────────────────────────────────
+function buildThermometer(currentFt, minFt, maxFt, rising) {
+  const W = 18, H = 90, rx = 4;
+  const trackTop = 2, trackBot = H - 12;
+  const trackH = trackBot - trackTop;
+  const pct = Math.min(1, Math.max(0, (currentFt - minFt) / (maxFt - minFt || 1)));
+  const fillY = trackTop + trackH * (1 - pct);
+  const fillH = trackH * pct;
+  const color = rising ? '#38bdf8' : '#a78bfa';
+  const arrowY = Math.max(trackTop + 5, fillY);
+  const arrow = rising ? '▲' : '▼';
+  return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">
+    <rect x="4" y="${trackTop}" width="${W-8}" height="${trackH}" rx="${rx}" fill="rgba(30,45,69,0.9)"/>
+    <rect x="4" y="${fillY.toFixed(1)}" width="${W-8}" height="${Math.max(0,fillH).toFixed(1)}" rx="${rx}" fill="${color}" opacity="0.85"/>
+    <text x="${W/2}" y="${(arrowY+4).toFixed(1)}" text-anchor="middle" font-size="7" fill="${color}">${arrow}</text>
+    <text x="${W/2}" y="${H}" text-anchor="middle" font-size="6" fill="rgba(148,163,184,0.7)">${currentFt.toFixed(1)}</text>
+  </svg>`;
+}
+
+// ── Tide sparkline with 3-hour time markers ──────────────────────
 function buildSparkline(hourlyPredictions) {
   if (!hourlyPredictions || hourlyPredictions.length < 2) return '';
 
   const values = hourlyPredictions.map(p => parseFloat(p.v));
-  const times = hourlyPredictions.map(p => new Date(p.t));
+  const times  = hourlyPredictions.map(p => new Date(p.t));
   const minV = Math.min(...values);
   const maxV = Math.max(...values);
   const range = maxV - minV || 1;
 
-  const W = 400, H = 60, PAD = 4;
+  const W = 400, H = 72, PAD_T = 4, PAD_B = 14, PAD_X = 2;
+  const plotH = H - PAD_T - PAD_B;
   const n = values.length;
 
-  const pts = values.map((v, i) => {
-    const x = PAD + ((i / (n - 1)) * (W - PAD * 2));
-    const y = H - PAD - ((v - minV) / range) * (H - PAD * 2);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  });
+  const xOf = i => PAD_X + (i / (n - 1)) * (W - PAD_X * 2);
+  const yOf = v => PAD_T + plotH * (1 - (v - minV) / range);
 
-  const now = Date.now();
-  const nowIdx = times.findIndex(t => t.getTime() > now);
+  const pts = values.map((v, i) => `${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`);
+
+  // "Now" marker
+  const nowMs = Date.now();
+  const nowIdx = times.findIndex(t => t.getTime() > nowMs);
   let nowLine = '';
   if (nowIdx > 0) {
-    const nx = PAD + ((nowIdx / (n - 1)) * (W - PAD * 2));
-    nowLine = `<line x1="${nx.toFixed(1)}" y1="0" x2="${nx.toFixed(1)}" y2="${H}" stroke="rgba(255,255,255,0.3)" stroke-width="1.5" stroke-dasharray="3,3"/>`;
+    const nx = xOf(nowIdx);
+    nowLine = `<line x1="${nx.toFixed(1)}" y1="${PAD_T}" x2="${nx.toFixed(1)}" y2="${PAD_T+plotH}" stroke="rgba(255,255,255,0.4)" stroke-width="1.5" stroke-dasharray="3,2"/>`;
   }
 
-  const labels = `
-    <text x="${PAD + 2}" y="${PAD + 8}" fill="rgba(148,163,184,0.6)" font-size="8">${maxV.toFixed(1)}ft</text>
-    <text x="${PAD + 2}" y="${H - PAD}" fill="rgba(148,163,184,0.6)" font-size="8">${minV.toFixed(1)}ft</text>`;
+  // 3-hour tick marks + labels
+  const startMs2 = times[0].getTime();
+  const endMs2   = times[n-1].getTime();
+  const totalMs  = endMs2 - startMs2;
+  let ticks = '';
+  for (let ms = startMs2; ms <= endMs2; ms += 3 * 3600 * 1000) {
+    const frac = (ms - startMs2) / totalMs;
+    const tx = PAD_X + frac * (W - PAD_X * 2);
+    const dt = new Date(ms);
+    const h = dt.getHours();
+    const label = h === 0 ? 'mid' : h === 12 ? '12p' : h < 12 ? `${h}a` : `${h-12}p`;
+    ticks += `<line x1="${tx.toFixed(1)}" y1="${PAD_T+plotH}" x2="${tx.toFixed(1)}" y2="${PAD_T+plotH+3}" stroke="rgba(148,163,184,0.35)" stroke-width="1"/>`;
+    ticks += `<text x="${tx.toFixed(1)}" y="${H-1}" text-anchor="middle" font-size="7" fill="rgba(148,163,184,0.5)">${label}</text>`;
+  }
 
-  const area = `M${pts[0]} L${pts.join(' L')} L${(PAD + (W - PAD * 2)).toFixed(1)},${H} L${PAD},${H} Z`;
+  const area = `M${pts[0]} L${pts.join(' L')} L${xOf(n-1).toFixed(1)},${PAD_T+plotH} L${PAD_X},${PAD_T+plotH} Z`;
   const line = `M${pts[0]} L${pts.join(' L')}`;
 
   return `<svg id="tide-sparkline" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
@@ -547,30 +562,30 @@ function buildSparkline(hourlyPredictions) {
         <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.02"/>
       </linearGradient>
     </defs>
+    ${ticks}
     <path d="${area}" fill="url(#tideGrad)"/>
     <path d="${line}" fill="none" stroke="#38bdf8" stroke-width="1.5" stroke-linejoin="round"/>
     ${nowLine}
-    ${labels}
   </svg>`;
 }
 
-// ── Tide direction ─────────────────────────────────────────────────────
+// ── Tide direction + current height ────────────────────────────────
 function getTideDirection(predictions) {
   const now = Date.now();
   const future = predictions.filter(p => new Date(p.t).getTime() > now);
-  const past = predictions.filter(p => new Date(p.t).getTime() <= now);
+  const past   = predictions.filter(p => new Date(p.t).getTime() <= now);
   if (!future.length || !past.length) return null;
   const lastEvent = past[past.length - 1];
   const nextEvent = future[0];
-  const lastTime = new Date(lastEvent.t).getTime();
-  const nextTime = new Date(nextEvent.t).getTime();
-  const elapsed = now - lastTime;
-  const total = nextTime - lastTime;
-  const progress = Math.min(1, Math.max(0, elapsed / total));
-  const isRising = nextEvent.type === 'H';
-  return { rising: isRising, progress, fromHeight: parseFloat(lastEvent.v), toHeight: parseFloat(nextEvent.v), nextEvent };
+  const isRising  = nextEvent.type === 'H';
+  const lastMs = new Date(lastEvent.t).getTime();
+  const nextMs = new Date(nextEvent.t).getTime();
+  const t = Math.min(1, Math.max(0, (now - lastMs) / (nextMs - lastMs)));
+  const fromH = parseFloat(lastEvent.v);
+  const toH   = parseFloat(nextEvent.v);
+  const currentFt = fromH + (toH - fromH) * (1 - Math.cos(Math.PI * t)) / 2;
+  return { rising: isRising, currentFt, fromHeight: fromH, toHeight: toH, nextEvent };
 }
-
 // ── Tides ──────────────────────────────────────────────────────────────
 async function loadTides() {
   const el = document.getElementById('tides');
@@ -592,32 +607,26 @@ async function loadTides() {
     const predictions = hilo.predictions;
 
     const dir = getTideDirection(predictions);
-    let dirHtml = '';
-    if (dir) {
-      const pct = (dir.progress * 100).toFixed(0);
-      const dirClass = dir.rising ? 'rising' : 'falling';
-      const arrow = dir.rising ? '🔺' : '🔻';
-      const label = dir.rising ? 'Rising' : 'Falling';
-      const nextTimeStr = new Date(dir.nextEvent.t).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-      const nextLabel = dir.nextEvent.type === 'H' ? 'High' : 'Low';
-      dirHtml = `
-        <div class="tide-status-bar ${dirClass}">
-          <div class="tide-direction ${dirClass}">${arrow} ${label}</div>
-          <div class="tide-progress-wrap">
-            <div class="tide-progress-label">
-              <span>${dir.fromHeight.toFixed(1)}ft</span>
-              <span>${nextLabel} ${nextTimeStr} · ${dir.toHeight.toFixed(1)}ft</span>
-            </div>
-            <div class="tide-progress-bar">
-              <div class="tide-progress-fill" style="width:${pct}%"></div>
-            </div>
-          </div>
-        </div>`;
-    }
 
-    const sparkHtml = hourly?.predictions
-      ? `<div class="tide-graph-wrap">${buildSparkline(hourly.predictions)}</div>`
-      : '';
+    // Overall min/max from all predictions for thermometer scale
+    const allHeights = predictions.map(p => parseFloat(p.v));
+    const overallMin = Math.min(...allHeights);
+    const overallMax = Math.max(...allHeights);
+
+    let visualHtml = '';
+    if (dir && hourly?.predictions) {
+      const thermo = buildThermometer(dir.currentFt, overallMin, overallMax, dir.rising);
+      visualHtml = `<div class="tide-visual">
+        <div class="tide-thermo-wrap">
+          <div class="tide-thermo-label-top">${overallMax.toFixed(1)}</div>
+          ${thermo}
+          <div class="tide-thermo-label-bot">${overallMin.toFixed(1)}</div>
+        </div>
+        <div class="tide-sparkline-wrap">${buildSparkline(hourly.predictions)}</div>
+      </div>`;
+    } else if (hourly?.predictions) {
+      visualHtml = `<div class="tide-visual"><div class="tide-sparkline-wrap">${buildSparkline(hourly.predictions)}</div></div>`;
+    }
 
     const cutoff48h = new Date(now.getTime() + 48 * 3600 * 1000);
     const upcoming = predictions
@@ -643,8 +652,7 @@ async function loadTides() {
 
     if (!hilo._stale) markFresh('tides');
     el.innerHTML = `<div class="card-title">Tides · Hansville ${ageTag('tides', hilo)}</div>
-      ${dirHtml}
-      ${sparkHtml}
+      ${visualHtml}
       <div class="tide-list">${items}</div>`;
 
   } catch (e) {
