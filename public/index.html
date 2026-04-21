@@ -45,8 +45,9 @@
 
     .sun-times {
       display: flex;
-      gap: 1rem;
-      align-items: center;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.15rem;
       font-size: 0.8rem;
       color: var(--dim);
     }
@@ -480,7 +481,7 @@ async function loadWeather() {
       const riseStr = new Date(window._sunriseMs).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
       const setStr  = new Date(window._sunsetMs).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
       const sunEl = document.getElementById('sun-times');
-      if (sunEl) sunEl.innerHTML = `<span>🌅 ${riseStr}</span><span>🌇 ${setStr}</span>`;
+      if (sunEl) sunEl.innerHTML = `<span>☀️ ${riseStr}</span><span>🌙 ${setStr}</span>`;
     }
     el.innerHTML = `
       <div class="card-title">Weather · Clinton, WA ${ageTag('weather', d)}</div>
