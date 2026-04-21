@@ -1,47 +1,102 @@
-# Whidbey Island Dashboard
+# South Whidbey Island Dashboard
 
-Ambient dashboard for the Whidbey Island beach house. Displays:
+Ambient dashboard for the Whidbey Island beach house. Designed for always-on TV display — fits a single screen with no scrolling (`height: 100vh; overflow: hidden`).
+
+## Features
 
 - 🕐 Real-time digital clock
-- 🌤 3-day weather forecast (Open-Meteo, no API key needed)
-- 🌊 Tide predictions — Hansville NOAA station (closest to south Whidbey)
-- ⛴ Clinton → Mukilteo ferry schedule + drive-up space estimate
+- 🌤 3-day weather forecast with sunrise/sunset (Open-Meteo)
+- 🌊 Tide predictions — hi/lo table + sparkline with thermometer (NOAA Hansville station)
+- ⛴ Bidirectional ferry: Clinton→Mukilteo and Mukilteo→Clinton, with live space occupancy
+- 🌗 Day/night shading on sparkline (gradient transitions at sunrise/sunset)
+- ⚠ Per-source data staleness indicators
 
 ## Setup
 
 ```bash
-# Install dependencies
 npm install
-
-# Configure environment
 cp .env.example .env
 # Edit .env — add your WSDOT API key (free, see below)
-
-# Run
 npm start
 # Open http://localhost:3000
 ```
 
 ## WSDOT Ferry API Key
 
-The ferry schedule requires a free API key from WSDOT:
-
-1. Register at https://www.wsdot.wa.gov/traffic/api/
-2. Add `WSF_API_KEY=your_key` to your `.env` file
+Free key from https://www.wsdot.wa.gov/traffic/api/ — add as `WSF_API_KEY=your_key` in `.env`.
 
 Weather and tides work without any API keys.
 
-## Data sources
+## Architecture
 
-| Data | Source | Key required |
-|------|--------|-------------|
-| Weather | [Open-Meteo](https://open-meteo.com) | No |
-| Tides | [NOAA CO-OPS](https://tidesandcurrents.noaa.gov) station 9445526 (Hansville) | No |
-| Ferry schedule | [WSDOT Traveler API](https://www.wsdot.wa.gov/ferries/api/) | Yes (free) |
+**Single-file frontend:** `public/index.html` — all HTML, CSS, and JS in one file. No build step, no bundler.
 
-## Display
+**Server:** `server.js` — Express, in-memory cache per endpoint, stale-while-revalidate pattern. If a fresh fetch fails, serves stale data with `_stale: true` flag.
 
-Designed for always-on display on a TV or monitor. Dark theme, auto-refreshes:
-- Weather: every 10 minutes
-- Tides: every 30 minutes
-- Ferry: every 5 minutes
+**Tests:** `npm test` runs `node --test test/api.test.js`. Tests spawn their own server on port 3001.
+
+> **Rule:** Always run `npm test` green before `git commit`.
+
+## Data Sources & Refresh
+
+| Data | Source | API Key | Client Refresh | Server Cache |
+|------|--------|---------|---------------|-------------|
+| Weather | [Open-Meteo](https://open-meteo.com) | No | 1 hour | 1 hour |
+| Tides (hi/lo) | [NOAA CO-OPS](https://tidesandcurrents.noaa.gov) station 9445526 | No | 2 hours | 2 hours |
+| Tides (hourly) | NOAA (cosine-interpolated from hi/lo) | No | 2 hours | 2 hours |
+| Ferry schedule | [WSDOT Traveler API](https://www.wsdot.wa.gov/ferries/api/) | Yes (free) | 5 min | 5 min |
+| Ferry space | WSDOT Traveler API | Yes (free) | 5 min | 5 min |
+
+Data windows include headroom beyond the refresh interval (e.g., tide hourly fetches 52h for a 48h display with 2h refresh cycle).
+
+## Staleness Indicators
+
+Each card shows an inline age tag after the title. Thresholds are per-source:
+
+- **Fresh (✓ live):** within 1× the refresh interval
+- **Amber (⚠ Xm old):** 1.5× the refresh interval
+- **Red/pulsing (⚠ Xm old):** beyond 2.5× the refresh interval
+
+## API Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/weather` | 3-day forecast + current conditions + sunrise/sunset |
+| `GET /api/tides` | Hi/lo predictions, 3 days |
+| `GET /api/tides/hourly` | Cosine-interpolated hourly predictions, 52h |
+| `GET /api/ferry/clinton` | Clinton→Mukilteo schedule (today) |
+| `GET /api/ferry/mukilteo` | Mukilteo→Clinton schedule (today) |
+| `GET /api/ferry/clinton/space` | Drive-up space by departure (Clinton) |
+| `GET /api/ferry/mukilteo/space` | Drive-up space by departure (Mukilteo) |
+| `GET /api/ferry` | Legacy alias for `/api/ferry/clinton` |
+| `GET /api/cache-status` | Debug: cache metadata for all endpoints |
+
+## Ferry Display
+
+- Two panels: one per direction, each in its own card
+- Shows last departed + next 3 sailings (count-based)
+- "🔔 Last" label on the final sailing of the day
+- Live countdown badge, advances every 30s
+- Slide animation when the next sailing transitions
+- Space occupancy: vessel name, fill bar (WSF hex colors), space count
+- Empty ferry (all spaces open) shows "N open" text without a bar
+
+## Tide Display
+
+- Hi/lo table: exactly 4 rows, past events dimmed
+- Sparkline: 48h of cosine-interpolated hourly data
+- Thermometer: vertical bar with gradient fill matching sparkline, inset from rounded tube outline
+- Arrow (▲/▼) at waterline indicates rising/falling
+- Axis labels: blue for high, purple for low (matching table colors)
+- Day/night: full-height background rectangles (blue-tinted white for day, black for night) with 1-hour gradient transitions at sunrise/sunset
+- Time markers: 6am, noon, 6pm, midnight — bold for noon/midnight, dashed for 6am/6pm
+- Now-line: white dashed vertical line at current time
+- Visual refreshes every 1 minute without re-fetching data
+
+## Key Technical Notes
+
+- NOAA station 9445526 (Hansville) is a subordinate station — only provides hi/lo predictions, not hourly. Hourly data is generated server-side via cosine interpolation.
+- NOAA sometimes returns HTTP 200 with an error body instead of a proper error code. The server guards against caching these.
+- `window._sunriseMs` / `window._sunsetMs` are globals used by both the sparkline and the weather card.
+- Ferry WSF API uses `/Date(ms)/` format for timestamps.
+- The `preserveAspectRatio="none"` on sparkline/thermometer SVGs is intentional — they stretch to fill their flex containers.
