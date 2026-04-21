@@ -652,11 +652,15 @@ function sailingCard(s, parsedSailings, spaceMap) {
 
   const space = spaceMap[String(s.sailTime.getTime())] || null;
   let fillHtml = '';
-  if (space && space.maxSpaces > 0 && !isPast) {
-    const filled = space.maxSpaces - (space.driveUpSpaces ?? space.maxSpaces);
+  if (space && space.maxSpaces > 0 && !isPast && space.driveUpSpaces !== null) {
+    const filled = space.maxSpaces - space.driveUpSpaces;
     const pct = Math.min(100, (filled / space.maxSpaces) * 100).toFixed(0);
     const color = space.hexColor || '#38bdf8';
-    fillHtml = `<div class="sail-fill-wrap"><div class="sail-fill-bar"><div class="sail-fill-fill" style="width:${pct}%;background:${color}"></div></div><div class="sail-fill-label">${space.driveUpSpaces}/${space.maxSpaces}</div></div>`;
+    // Only show bar if at least some cars are aboard (avoids misleading empty-bar = no data)
+    const label = filled > 0
+      ? `<div class="sail-fill-bar"><div class="sail-fill-fill" style="width:${pct}%;background:${color}"></div></div><div class="sail-fill-label">${space.driveUpSpaces}/${space.maxSpaces}</div>`
+      : `<div class="sail-fill-label" style="color:var(--accent2)">${space.driveUpSpaces} open</div>`;
+    fillHtml = `<div class="sail-fill-wrap">${label}</div>`;
   }
   const vesselHtml = space?.vesselName ? `<div class="sail-vessel">${space.vesselName}</div>` : '';
   return `<div class="${cssClass}"><div class="sail-time">${display}</div>${vesselHtml}<div class="sail-status">${statusText}</div>${fillHtml}</div>`;
