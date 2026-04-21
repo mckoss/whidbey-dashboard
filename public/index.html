@@ -293,9 +293,14 @@
     .sailing.last-of-day { border-color: var(--warn); }
 
     .sailing .sail-time { font-size: 0.9rem; font-variant-numeric: tabular-nums; }
-    .sailing .sail-status { font-size: 0.65rem; color: var(--dim); margin-top: 0.15rem; }
+    .sailing .sail-vessel { font-size: 0.6rem; color: var(--dim); margin-top: 0.1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sailing .sail-status { font-size: 0.65rem; color: var(--dim); margin-top: 0.1rem; }
     .sailing.next .sail-status { color: var(--accent2); }
     .sailing.last-of-day .sail-status { color: var(--warn); }
+    .sail-fill-wrap { margin-top: 0.25rem; }
+    .sail-fill-bar { height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
+    .sail-fill-fill { height: 100%; border-radius: 2px; transition: width 0.4s ease; }
+    .sail-fill-label { font-size: 0.58rem; color: var(--dim); margin-top: 0.1rem; }
 
     .loading { color: var(--dim); font-size: 0.9rem; padding: 1rem 0; }
     .error-msg { color: var(--danger); font-size: 0.85rem; }
@@ -647,13 +652,13 @@ function updateCountdown() {
 async function loadFerry() {
   const el = document.getElementById('ferry');
 
-  const [schedRes, waitRes] = await Promise.allSettled([
+  const [schedRes, spaceRes] = await Promise.allSettled([
     fetch('/api/ferry').then(r => r.json()),
-    fetch('/api/ferry/wait').then(r => r.json()),
+    fetch('/api/ferry/space').then(r => r.json()),
   ]);
 
   const sched = schedRes.status === 'fulfilled' ? schedRes.value : null;
-  const wait = waitRes.status === 'fulfilled' ? waitRes.value : null;
+  const spaceMap = (spaceRes.status === 'fulfilled' && !spaceRes.value?.error) ? spaceRes.value : {};
 
   if (!sched || sched.error === 'WSF_API_KEY not configured') {
     el.innerHTML = `<div class="card-title">Clinton → Mukilteo Ferry Schedule</div>
@@ -691,13 +696,9 @@ async function loadFerry() {
       .filter(Boolean)
       .sort((a, b) => a.sailTime - b.sailTime);
 
-    // Wait time badge
-    let waitText = null;
-    if (wait && !wait.error && Array.isArray(wait)) {
-      const terminal = wait[0];
-      if (terminal?.DepartingSpaces?.[0]?.SpaceCount !== undefined) {
-        waitText = `~${terminal.DepartingSpaces[0].SpaceCount} drive-up spaces`;
-      }
+    // Space map helper: look up by sailing time (ms)
+    function getSpace(sailTime) {
+      return spaceMap[String(sailTime.getTime())] || null;
     }
 
     if (!parsedSailings.length) {
@@ -739,9 +740,24 @@ async function loadFerry() {
         statusText = '🔔 Last';
       }
 
+      const space = getSpace(s.sailTime);
+      let fillHtml = '';
+      if (space && space.maxSpaces > 0 && !isPast) {
+        const filled = space.maxSpaces - (space.driveUpSpaces ?? space.maxSpaces);
+        const pct = Math.min(100, (filled / space.maxSpaces) * 100).toFixed(0);
+        const color = space.hexColor || '#38bdf8';
+        fillHtml = `<div class="sail-fill-wrap">
+          <div class="sail-fill-bar"><div class="sail-fill-fill" style="width:${pct}%;background:${color}"></div></div>
+          <div class="sail-fill-label">${space.driveUpSpaces}/${space.maxSpaces} spaces</div>
+        </div>`;
+      }
+      const vesselHtml = space?.vesselName ? `<div class="sail-vessel">${space.vesselName}</div>` : '';
+
       return `<div class="${cssClass}">
         <div class="sail-time">${display}</div>
+        ${vesselHtml}
         <div class="sail-status">${statusText}</div>
+        ${fillHtml}
       </div>`;
     }).join('');
 
@@ -753,7 +769,7 @@ async function loadFerry() {
         <span class="ferry-route">⛴ Clinton → Mukilteo</span>
         <div class="ferry-meta">
           <span id="ferry-countdown" class="countdown-badge">⛴ calculating...</span>
-          ${nextIsLast && ferryNextTime ? '<span class="last-sailing-note">⚠ Last sailing today</span>' : ''}
+          ${nextIsLast ? '<span class="last-sailing-note">⚠ Last sailing today</span>' : ''}
           ${waitText ? `<span class="wait-badge">🚗 ${waitText}</span>` : ''}
         </div>
       </div>

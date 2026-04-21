@@ -183,13 +183,27 @@ app.get('/api/ferry', cachedEndpoint('ferry', 5 * 60 * 1000, async () => {
   return r.json();
 }));
 
-// ── Ferry Wait Times ───────────────────────────────────────────────────
-app.get('/api/ferry/wait', cachedEndpoint('ferry_wait', 2 * 60 * 1000, async () => {
+// ── Ferry Sailing Space (vessel name + capacity per departure) ────────
+app.get('/api/ferry/space', cachedEndpoint('ferry_space', 5 * 60 * 1000, async () => {
   if (!WSF_API_KEY) return { error: 'WSF_API_KEY not configured' };
-  const url = `https://www.wsdot.wa.gov/ferries/api/terminals/rest/terminaldepartures` +
+  const url = `https://www.wsdot.wa.gov/ferries/api/terminals/rest/terminalsailingspace` +
     `/${CONFIG.WSF_DEPARTING_TERMINAL}?apiaccesscode=${WSF_API_KEY}`;
   const r = await fetchWithRetry(url, { headers: { Accept: 'application/json' } });
-  return r.json();
+  const data = await r.json();
+  // Build a lookup map: departure timestamp (ms string) -> vessel + space info
+  const byDeparture = {};
+  for (const dep of (data.DepartingSpaces || [])) {
+    const ms = dep.Departure?.match(/\/Date\((\d+)/)?.[1];
+    if (!ms) continue;
+    const space = dep.SpaceForArrivalTerminals?.find(t => t.TerminalID === CONFIG.WSF_ARRIVING_TERMINAL);
+    byDeparture[ms] = {
+      vesselName: dep.VesselName,
+      driveUpSpaces: space?.DriveUpSpaceCount ?? null,
+      maxSpaces: dep.MaxSpaceCount,
+      hexColor: space?.DriveUpSpaceHexColor ?? null,
+    };
+  }
+  return byDeparture;
 }));
 
 // ── Cache status (debug) ───────────────────────────────────────────────
