@@ -101,7 +101,9 @@ app.get('/api/tides', cachedEndpoint('tides', 60 * 60 * 1000, async () => {
     `&product=predictions&datum=MLLW&time_zone=lst_ldt` +
     `&interval=hilo&units=english&application=whidbey_dashboard&format=json`;
   const r = await fetchWithRetry(url);
-  return r.json();
+  const data = await r.json();
+  if (data.error) throw new Error(data.error.message || 'NOAA returned error');
+  return data;
 }));
 
 // ── Tides (hourly interpolated, 48h) — for sparkline graph ──────────────
@@ -118,8 +120,8 @@ app.get('/api/tides/hourly', cachedEndpoint('tides_hourly', 60 * 60 * 1000, asyn
     `&interval=hilo&units=english&application=whidbey_dashboard&format=json`;
   const r = await fetchWithRetry(url);
   const data = await r.json();
-
-  if (!data.predictions) return data; // pass through error
+  if (data.error) throw new Error(data.error.message || 'NOAA returned error');
+  if (!data.predictions) throw new Error('NOAA returned no predictions');
 
   // Cosine interpolation between hi/lo events → hourly points
   const events = data.predictions.map(p => ({
