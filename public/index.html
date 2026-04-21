@@ -531,8 +531,7 @@ function buildThermometer(currentFt, minFt, maxFt, rising, plotH, padT) {
         <stop offset="100%" stop-color="#0c1a2e" stop-opacity="0.95"/>
       </linearGradient>
     </defs>
-    <!-- tube border/outline -->
-    <rect x="${tx}" y="${trackTop}" width="${TW}" height="${trackH}" rx="${rx}" fill="none" stroke="rgba(255,255,255,0.25)" stroke-width="1"/>
+
     <!-- empty (dark) section above waterline -->
     <rect x="${tx+1}" y="${trackTop}" width="${TW-2}" height="${Math.max(0,fillY-trackTop).toFixed(1)}" fill="#0c1a2e"/>
     <!-- filled (teal) section -->
