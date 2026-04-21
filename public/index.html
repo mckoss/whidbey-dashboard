@@ -25,12 +25,13 @@
       background: var(--bg);
       color: var(--text);
       font-family: 'Segoe UI', system-ui, sans-serif;
-      min-height: 100vh;
-      padding: 1.5rem;
+      height: 100vh;
+      overflow: hidden;
+      padding: 0.75rem;
       display: grid;
-      grid-template-rows: auto 1fr 1fr;
+      grid-template-rows: auto 1fr auto;
       grid-template-columns: 1fr 1fr;
-      gap: 1.25rem;
+      gap: 0.75rem;
     }
 
     header {
@@ -43,28 +44,28 @@
     h1 { font-size: 1.4rem; color: var(--accent); font-weight: 300; letter-spacing: 0.1em; text-transform: uppercase; }
 
     #clock {
-      font-size: 3.5rem;
+      font-size: 2.5rem;
       font-weight: 200;
       letter-spacing: 0.05em;
       font-variant-numeric: tabular-nums;
       color: var(--text);
     }
-    #date-display { color: var(--dim); font-size: 0.9rem; text-align: right; margin-top: 0.25rem; }
+    #date-display { color: var(--dim); font-size: 0.8rem; text-align: right; margin-top: 0.1rem; }
 
     .card {
       background: var(--card);
       border: 1px solid var(--border);
-      border-radius: 1rem;
-      padding: 1.25rem;
+      border-radius: 0.75rem;
+      padding: 0.75rem;
       overflow: hidden;
     }
 
     .card-title {
-      font-size: 0.75rem;
+      font-size: 0.7rem;
       text-transform: uppercase;
       letter-spacing: 0.12em;
       color: var(--dim);
-      margin-bottom: 1rem;
+      margin-bottom: 0.5rem;
       display: flex;
       align-items: center;
       gap: 0.5rem;
@@ -85,34 +86,34 @@
     .weather-days {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 0.75rem;
+      gap: 0.5rem;
     }
 
     .weather-day {
       background: var(--bg);
-      border-radius: 0.75rem;
-      padding: 0.75rem;
+      border-radius: 0.5rem;
+      padding: 0.5rem;
       text-align: center;
     }
 
-    .weather-day .day-name { font-size: 0.8rem; color: var(--dim); margin-bottom: 0.4rem; }
-    .weather-day .weather-icon { font-size: 2.2rem; margin: 0.3rem 0; }
-    .weather-day .temp-high { font-size: 1.4rem; font-weight: 600; }
-    .weather-day .temp-low { font-size: 0.95rem; color: var(--dim); }
-    .weather-day .precip { font-size: 0.75rem; color: var(--accent); margin-top: 0.3rem; }
-    .weather-day .wind { font-size: 0.75rem; color: var(--dim); margin-top: 0.2rem; }
+    .weather-day .day-name { font-size: 0.75rem; color: var(--dim); margin-bottom: 0.25rem; }
+    .weather-day .weather-icon { font-size: 1.6rem; margin: 0.2rem 0; }
+    .weather-day .temp-high { font-size: 1.2rem; font-weight: 600; }
+    .weather-day .temp-low { font-size: 0.85rem; color: var(--dim); }
+    .weather-day .precip { font-size: 0.7rem; color: var(--accent); margin-top: 0.2rem; }
+    .weather-day .wind { font-size: 0.7rem; color: var(--dim); margin-top: 0.15rem; }
 
     .current-weather {
       display: flex;
       align-items: center;
-      gap: 1rem;
-      margin-bottom: 1rem;
-      padding-bottom: 1rem;
+      gap: 0.75rem;
+      margin-bottom: 0.6rem;
+      padding-bottom: 0.6rem;
       border-bottom: 1px solid var(--border);
     }
-    .current-weather .now-icon { font-size: 3rem; }
-    .current-weather .now-temp { font-size: 2.8rem; font-weight: 200; }
-    .current-weather .now-details { color: var(--dim); font-size: 0.85rem; line-height: 1.6; }
+    .current-weather .now-icon { font-size: 2.2rem; }
+    .current-weather .now-temp { font-size: 2.2rem; font-weight: 200; }
+    .current-weather .now-details { color: var(--dim); font-size: 0.8rem; line-height: 1.5; }
 
     /* --- TIDES --- */
     #tides { grid-column: 2; }
@@ -121,8 +122,8 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 0.75rem;
-      padding: 0.5rem 0.75rem;
+      margin-bottom: 0.5rem;
+      padding: 0.35rem 0.6rem;
       background: var(--bg);
       border-radius: 0.5rem;
     }
@@ -168,30 +169,30 @@
 
     /* Tide sparkline */
     .tide-graph-wrap {
-      margin-bottom: 0.75rem;
+      margin-bottom: 0.4rem;
     }
 
     #tide-sparkline {
       width: 100%;
-      height: 60px;
+      height: 48px;
       display: block;
     }
 
-    .tide-list { display: flex; flex-direction: column; gap: 0.5rem; }
+    .tide-list { display: flex; flex-direction: column; gap: 0.35rem; }
 
     .tide-item {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 0.6rem 0.8rem;
-      border-radius: 0.5rem;
+      padding: 0.4rem 0.65rem;
+      border-radius: 0.4rem;
       background: var(--bg);
       transition: opacity 0.3s;
     }
 
     .tide-item.past { opacity: 0.4; }
 
-    .tide-item .tide-time { font-size: 0.95rem; font-variant-numeric: tabular-nums; }
+    .tide-item .tide-time { font-size: 0.9rem; font-variant-numeric: tabular-nums; }
     .tide-item .tide-label {
       font-size: 0.75rem;
       font-weight: 600;
@@ -202,21 +203,21 @@
     }
     .tide-item.high .tide-label { background: rgba(56,189,248,0.15); color: var(--tide-high); }
     .tide-item.low .tide-label { background: rgba(167,139,250,0.15); color: var(--tide-low); }
-    .tide-item .tide-height { font-size: 1.1rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .tide-item .tide-height { font-size: 1rem; font-weight: 600; font-variant-numeric: tabular-nums; }
     .tide-item.high .tide-height { color: var(--tide-high); }
     .tide-item.low .tide-height { color: var(--tide-low); }
     .tide-item .tide-day { font-size: 0.75rem; color: var(--dim); }
 
     /* --- FERRY --- */
-    #ferry { grid-column: 1 / -1; }
+    #ferry { grid-column: 1 / -1; overflow: hidden; }
 
     .ferry-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 1rem;
+      margin-bottom: 0.5rem;
       flex-wrap: wrap;
-      gap: 0.5rem;
+      gap: 0.35rem;
     }
 
     .ferry-route { font-size: 0.95rem; color: var(--accent2); }
@@ -269,14 +270,14 @@
 
     .sailings-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
-      gap: 0.5rem;
+      grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+      gap: 0.35rem;
     }
 
     .sailing {
       background: var(--bg);
-      border-radius: 0.5rem;
-      padding: 0.6rem 0.75rem;
+      border-radius: 0.4rem;
+      padding: 0.4rem 0.5rem;
       text-align: center;
       border: 1px solid transparent;
       transition: border-color 0.3s, opacity 0.3s;
@@ -291,8 +292,8 @@
 
     .sailing.last-of-day { border-color: var(--warn); }
 
-    .sailing .sail-time { font-size: 1.05rem; font-variant-numeric: tabular-nums; }
-    .sailing .sail-status { font-size: 0.7rem; color: var(--dim); margin-top: 0.2rem; }
+    .sailing .sail-time { font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+    .sailing .sail-status { font-size: 0.65rem; color: var(--dim); margin-top: 0.15rem; }
     .sailing.next .sail-status { color: var(--accent2); }
     .sailing.last-of-day .sail-status { color: var(--warn); }
 
@@ -576,11 +577,11 @@ async function loadTides() {
       ? `<div class="tide-graph-wrap">${buildSparkline(hourly.predictions)}</div>`
       : '';
 
-    // Hi/lo list — next 7 events
+    // Hi/lo list — within 48 hours from now
+    const cutoff48h = new Date(now.getTime() + 48 * 3600 * 1000);
     const upcoming = predictions
       .map(p => ({ ...p, date: new Date(p.t) }))
-      .filter(p => p.date >= new Date(now.getTime() - 3600000))
-      .slice(0, 7);
+      .filter(p => p.date >= new Date(now.getTime() - 3600000) && p.date <= cutoff48h);
 
     const items = upcoming.map(p => {
       const isToday = p.date.toDateString() === now.toDateString();
@@ -704,14 +705,22 @@ async function loadFerry() {
       return;
     }
 
+    // Filter sailings: only within 4 hours ahead (plus last 1 departed for context)
+    const fourHoursOut = new Date(now.getTime() + 4 * 3600 * 1000);
+    const lastDeparted = [...parsedSailings].reverse().find(s => s.sailTime < now);
+    const windowSailings = parsedSailings.filter(s =>
+      (lastDeparted && s.sailTime.getTime() === lastDeparted.sailTime.getTime()) ||
+      (s.sailTime >= now && s.sailTime <= fourHoursOut)
+    );
+
     // Find next sailing
-    const nextIdx = parsedSailings.findIndex(s => s.sailTime >= now);
-    const lastIdx = parsedSailings.length - 1;
+    const nextIdx = windowSailings.findIndex(s => s.sailTime >= now);
+    const lastIdx = windowSailings.length - 1;
 
     // Set countdown target
     ferryNextTime = nextIdx >= 0 ? parsedSailings[nextIdx].sailTime.getTime() : null;
 
-    const sailingEls = parsedSailings.map((s, i) => {
+    const sailingEls = windowSailings.map((s, i) => {
       const isPast = s.sailTime < now;
       const isNext = i === nextIdx;
       const isLast = i === lastIdx;
@@ -736,8 +745,8 @@ async function loadFerry() {
       </div>`;
     }).join('');
 
-    // Is the next sailing also the last?
-    const nextIsLast = nextIdx === lastIdx;
+    // Is the next sailing the last in our window?
+    const nextIsLast = nextIdx === lastIdx && nextIdx >= 0;
 
     el.innerHTML = `<div class="card-title">Clinton → Mukilteo Ferry Schedule${staleBadge(sched)}</div>
       <div class="ferry-header">
