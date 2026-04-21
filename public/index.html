@@ -154,11 +154,9 @@
     }
 
     .tide-thermo-wrap {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      width: 28px;
       flex-shrink: 0;
+      display: flex;
+      align-items: stretch;
     }
 
     .tide-thermo-arrow {
@@ -511,23 +509,39 @@ async function loadWeather() {
 }
 
 // ── Tide thermometer ─────────────────────────────────────────────────
-function buildThermometer(currentFt, minFt, maxFt, rising) {
-  const W = 18, H = 70, rx = 4;
-  const trackTop = 2, trackBot = H - 12;
-  const trackH = trackBot - trackTop;
+function buildThermometer(currentFt, minFt, maxFt, rising, plotH, padT) {
+  // Thermometer sized to exactly match the sparkline plot area
+  // W: tube(8) + gap(2) + arrow(10) + gap(2) + label(20) = 42
+  const TW = 8, W = 42, rx = 3;
+  const trackTop = padT, trackBot = padT + plotH;
+  const trackH = plotH;
+  const H = padT + plotH; // SVG height matches sparkline plot area top
   const pct = Math.min(1, Math.max(0, (currentFt - minFt) / (maxFt - minFt || 1)));
   const fillY = trackTop + trackH * (1 - pct);
   const fillH = trackH * pct;
-  const color = rising ? '#38bdf8' : '#a78bfa';
-  const arrowY = Math.max(trackTop + 5, fillY);
+  const arrowY = fillY; // arrow at waterline
   const arrow = rising ? '▲' : '▼';
-  return `<svg viewBox="0 0 ${W} ${H+16}" width="${W}" height="100%">
-    <text x="${W/2}" y="7" text-anchor="middle" font-size="6" fill="rgba(148,163,184,0.6)">${maxFt.toFixed(1)}</text>
-    <rect x="4" y="${trackTop}" width="${W-8}" height="${trackH}" rx="${rx}" fill="rgba(30,45,69,0.9)"/>
-    <rect x="4" y="${fillY.toFixed(1)}" width="${W-8}" height="${Math.max(0,fillH).toFixed(1)}" rx="${rx}" fill="${color}" opacity="0.85"/>
-    <text x="${W/2}" y="${(arrowY+4).toFixed(1)}" text-anchor="middle" font-size="7" fill="${color}">${arrow}</text>
-    <text x="${W/2}" y="${H+2}" text-anchor="middle" font-size="6" fill="rgba(148,163,184,0.6)">${minFt.toFixed(1)}</text>
-    <text x="${W/2}" y="${H+10}" text-anchor="middle" font-size="6" fill="${color}">${currentFt.toFixed(1)}</text>
+  // Tube x positions
+  const tx = 1; // tube left edge
+  return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="100%">
+    <defs>
+      <linearGradient id="thermoGrad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.75"/>
+        <stop offset="60%" stop-color="#0ea5e9" stop-opacity="0.4"/>
+        <stop offset="100%" stop-color="#0c1a2e" stop-opacity="0.95"/>
+      </linearGradient>
+    </defs>
+    <!-- tube border/outline -->
+    <rect x="${tx}" y="${trackTop}" width="${TW}" height="${trackH}" rx="${rx}" fill="none" stroke="rgba(255,255,255,0.25)" stroke-width="1"/>
+    <!-- empty (dark) section above waterline -->
+    <rect x="${tx+1}" y="${trackTop+1}" width="${TW-2}" height="${Math.max(0,fillY-trackTop-1).toFixed(1)}" rx="${rx}" fill="#0c1a2e"/>
+    <!-- filled (teal) section -->
+    <rect x="${tx+1}" y="${fillY.toFixed(1)}" width="${TW-2}" height="${Math.max(0,fillH-1).toFixed(1)}" rx="${rx}" fill="url(#thermoGrad)"/>
+    <!-- red direction arrow to the right of tube -->
+    <text x="${tx+TW+6}" y="${(arrowY+4).toFixed(1)}" text-anchor="middle" font-size="9" fill="#f87171">${arrow}</text>
+    <!-- axis labels: high at top, low at bottom -->
+    <text x="${tx+TW+14}" y="${(trackTop+6).toFixed(1)}" text-anchor="start" font-size="6.5" fill="rgba(148,163,184,0.7)">${maxFt.toFixed(1)}</text>
+    <text x="${tx+TW+14}" y="${(trackBot).toFixed(1)}" text-anchor="start" font-size="6.5" fill="rgba(148,163,184,0.7)">${minFt.toFixed(1)}</text>
   </svg>`;
 }
 
@@ -702,7 +716,7 @@ async function loadTides() {
 
     let visualHtml = '';
     if (dir && hourly?.predictions) {
-      const thermo = buildThermometer(dir.currentFt, overallMin, overallMax, dir.rising);
+      const thermo = buildThermometer(dir.currentFt, overallMin, overallMax, dir.rising, 42, 2);
       visualHtml = `<div class="tide-visual">
         <div class="tide-thermo-wrap">
           ${thermo}
@@ -966,7 +980,7 @@ function refreshTideVisual() {
   const allH = _lastHiloPredictions.map(p => parseFloat(p.v));
   visualWrap.innerHTML = `
     <div class="tide-thermo-wrap">
-      ${buildThermometer(dir.currentFt, Math.min(...allH), Math.max(...allH), dir.rising)}
+      ${buildThermometer(dir.currentFt, Math.min(...allH), Math.max(...allH), dir.rising, 42, 2)}
     </div>
     <div class="tide-sparkline-wrap">${buildSparkline(_lastHourlyPredictions)}</div>`;
 }
