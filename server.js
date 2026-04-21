@@ -186,7 +186,7 @@ function ferryScheduleEndpoint(cacheKey, fromTerminal, toTerminal) {
 
 // ── Ferry space helper (reusable for either terminal) ─────────────────
 function ferrySpaceEndpoint(cacheKey, fromTerminal, toTerminal) {
-  return cachedEndpoint(cacheKey, 5 * 60 * 1000, async () => {
+  return cachedEndpoint(cacheKey, 2 * 60 * 1000, async () => {
     if (!WSF_API_KEY) return { error: 'WSF_API_KEY not configured' };
     const url = `https://www.wsdot.wa.gov/ferries/api/terminals/rest/terminalsailingspace` +
       `/${fromTerminal}?apiaccesscode=${WSF_API_KEY}`;
