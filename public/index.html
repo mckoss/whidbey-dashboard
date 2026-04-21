@@ -836,11 +836,15 @@ function sailingCard(s, parsedSailings, spaceMap) {
   let fillHtml = '';
   if (space && space.maxSpaces > 0 && !isPast && space.driveUpSpaces !== null) {
     const filled = space.maxSpaces - space.driveUpSpaces;
-    const pct = Math.min(100, (filled / space.maxSpaces) * 100).toFixed(0);
-    const color = space.hexColor || '#38bdf8';
-    // Only show bar if at least some cars are aboard (avoids misleading empty-bar = no data)
+    const pctFull = Math.min(100, (filled / space.maxSpaces) * 100);
+    // Color based on how full: green < 75%, orange 75-99%, red 100%
+    let barColor;
+    if (pctFull >= 100) barColor = '#ef4444';       // red — full
+    else if (pctFull >= 75) barColor = '#f59e0b';   // orange — filling up
+    else barColor = '#34d399';                       // green — plenty of room
+    // Bar shows fill percentage (left=empty, right=full); label shows open spaces
     const label = filled > 0
-      ? `<div class="sail-fill-bar"><div class="sail-fill-fill" style="width:${pct}%;background:${color}"></div></div><div class="sail-fill-label">${space.driveUpSpaces}/${space.maxSpaces}</div>`
+      ? `<div class="sail-fill-bar"><div class="sail-fill-fill" style="width:${pctFull.toFixed(0)}%;background:${barColor}"></div></div><div class="sail-fill-label">${space.driveUpSpaces} open</div>`
       : `<div class="sail-fill-label" style="color:var(--accent2)">${space.driveUpSpaces} open</div>`;
     fillHtml = `<div class="sail-fill-wrap">${label}</div>`;
   }
