@@ -640,7 +640,7 @@ function buildSparkline(hourlyPredictions) {
       const tx = toX(tr.ms);
       const w = tx - curX;
       if (w > 0) {
-        dayNightBar += `<rect x="${curX.toFixed(1)}" y="${PAD_T}" width="${w.toFixed(1)}" height="${plotH}" fill="${curDay ? '#ffffff' : '#000000'}"/>`;
+        dayNightBar += `<rect x="${curX.toFixed(1)}" y="${PAD_T}" width="${w.toFixed(1)}" height="${plotH}" fill="${curDay ? 'rgba(255,255,255,0.25)' : '#000000'}"/>`;
       }
       curX = tx;
       curDay = tr.day;
@@ -649,7 +649,7 @@ function buildSparkline(hourlyPredictions) {
     const endX = PAD_X + (W - PAD_X * 2);
     if (curX < endX) {
       const w = endX - curX;
-      dayNightBar += `<rect x="${curX.toFixed(1)}" y="${PAD_T}" width="${w.toFixed(1)}" height="${plotH}" fill="${curDay ? '#ffffff' : '#000000'}"/>`;
+      dayNightBar += `<rect x="${curX.toFixed(1)}" y="${PAD_T}" width="${w.toFixed(1)}" height="${plotH}" fill="${curDay ? 'rgba(255,255,255,0.25)' : '#000000'}"/>`;
     }
   }
 
