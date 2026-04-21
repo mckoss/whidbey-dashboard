@@ -679,9 +679,9 @@ function buildSparkline(hourlyPredictions) {
   return `<svg id="tide-sparkline" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
     <defs>
       <linearGradient id="tideGrad" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#2d94c6"/>
-        <stop offset="60%" stop-color="#0d5279"/>
-        <stop offset="100%" stop-color="#0c1a2e"/>
+        <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.75"/>
+        <stop offset="60%" stop-color="#0ea5e9" stop-opacity="0.4"/>
+        <stop offset="100%" stop-color="#0c1a2e" stop-opacity="0.15"/>
       </linearGradient>
     </defs>
     ${dayNightRects}
