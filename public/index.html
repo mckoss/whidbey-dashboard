@@ -116,7 +116,7 @@
     .current-weather .now-details { color: var(--dim); font-size: 0.8rem; line-height: 1.5; }
 
     /* --- TIDES --- */
-    #tides { grid-column: 2; }
+    #tides { grid-column: 2; display: flex; flex-direction: column; }
 
     .tide-status-bar {
       display: flex;
@@ -178,7 +178,7 @@
       display: block;
     }
 
-    .tide-list { display: flex; flex-direction: column; gap: 0.35rem; }
+    .tide-list { display: flex; flex-direction: column; gap: 0.35rem; overflow: hidden; flex: 1; min-height: 0; }
 
     .tide-item {
       display: flex;
