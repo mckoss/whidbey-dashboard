@@ -80,6 +80,17 @@
       letter-spacing: 0.05em;
     }
 
+    .data-age {
+      font-size: 0.62rem;
+      padding: 0.15rem 0.45rem;
+      border-radius: 0.25rem;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.03em;
+    }
+    .data-age.fresh { color: var(--dim); background: transparent; }
+    .data-age.warn  { color: var(--warn); background: rgba(251,191,36,0.15); }
+    .data-age.old   { color: var(--danger); background: rgba(248,113,113,0.15); animation: pulse 2s ease-in-out infinite; }
+
     /* --- WEATHER --- */
     #weather { grid-column: 1; display: flex; flex-direction: column; }
 
@@ -400,7 +411,43 @@ function windDir(deg) {
   return dirs[Math.round(deg / 45) % 8];
 }
 
-// ── Stale indicator helper ─────────────────────────────────────────────
+// ── Data freshness tracking ───────────────────────────────────────────
+const dataUpdatedAt = {};  // key → timestamp ms of last successful fresh fetch
+
+function markFresh(key) {
+  dataUpdatedAt[key] = Date.now();
+}
+
+function ageLabel(key, staleData) {
+  // If server flagged stale, use server's age; else use client-side timestamp
+  if (staleData && staleData._stale) {
+    const m = staleData._staleAgeMinutes;
+    const cls = m > 30 ? 'old' : 'warn';
+    return `<span class="data-age ${cls}">⚠ ${m}m old</span>`;
+  }
+  const t = dataUpdatedAt[key];
+  if (!t) return '';
+  const ageMin = Math.round((Date.now() - t) / 60000);
+  if (ageMin < 2) return `<span class="data-age fresh">✓ live</span>`;
+  if (ageMin < 15) return `<span class="data-age fresh">${ageMin}m ago</span>`;
+  if (ageMin < 30) return `<span class="data-age warn">⚠ ${ageMin}m ago</span>`;
+  return `<span class="data-age old">⚠ ${ageMin}m ago</span>`;
+}
+
+// Refresh age labels every minute so they stay current between data reloads
+setInterval(() => {
+  for (const [key, elId] of [
+    ['weather',        'weather-age'],
+    ['tides',          'tides-age'],
+    ['ferry-clinton',  'ferry-clinton-age'],
+    ['ferry-mukilteo', 'ferry-mukilteo-age'],
+  ]) {
+    const el = document.getElementById(elId);
+    if (el) el.outerHTML = `<span id="${elId}">${ageLabel(key, null)}</span>`;
+  }
+}, 60000);
+
+// ── Stale indicator helper (legacy, kept for compatibility) ────────────
 function staleBadge(data) {
   if (data && data._stale) {
     return ` <span class="stale-badge">⚠ stale ${data._staleAgeMinutes}m</span>`;
@@ -431,8 +478,9 @@ async function loadWeather() {
       };
     });
 
+    if (!d._stale) markFresh('weather');
     el.innerHTML = `
-      <div class="card-title">Weather · Clinton, WA${staleBadge(d)}</div>
+      <div class="card-title">Weather · Clinton, WA <span id="weather-age">${ageLabel('weather', d)}</span></div>
       <div class="current-weather">
         <div class="now-icon">${weatherIcon(cur.weather_code)}</div>
         <div class="now-temp">${Math.round(cur.temperature_2m)}°F</div>
@@ -593,7 +641,8 @@ async function loadTides() {
       </div>`;
     }).join('');
 
-    el.innerHTML = `<div class="card-title">Tides · Hansville${staleBadge(hilo)}</div>
+    if (!hilo._stale) markFresh('tides');
+    el.innerHTML = `<div class="card-title">Tides · Hansville <span id="tides-age">${ageLabel('tides', hilo)}</span></div>
       ${dirHtml}
       ${sparkHtml}
       <div class="tide-list">${items}</div>`;
@@ -736,7 +785,8 @@ function updateFerryCards(panelId, countdownId, parsedSailings, spaceMap, animat
   }, 420); // slightly before animation ends so it's seamless
 }
 
-function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spaceMap, isStale) {
+function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spaceMap, schedData) {
+  const isStale = schedData && schedData._stale;
   const el = document.getElementById(panelId);
   if (!el) return;
   if (!parsedSailings.length) { el.innerHTML = `<div class="error-msg">No sailings found.</div>`; return; }
@@ -756,7 +806,7 @@ function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spac
       <span class="ferry-route">⛴ ${routeLabel}</span>
       <span id="${countdownId}" class="countdown-badge">⛴ ...</span>
       ${nextIsLast ? '<span class="last-sailing-note">⚠ Last</span>' : ''}
-      ${isStale ? '<span class="stale-badge">⚠ stale</span>' : ''}
+      <span id="${panelId}-age">${ageLabel(panelId, schedData)}</span>
     </div>
     <div class="sailings-grid">${cards}</div>`;
 
@@ -799,8 +849,14 @@ async function loadFerry() {
     return;
   }
 
-  if (mukilteoData) renderFerryPanel('ferry-mukilteo', 'countdown-mukilteo', 'Mukilteo → Clinton', parseSailings(mukilteoData), mukilteoSp, mukilteoData._stale);
-  if (clintonData)  renderFerryPanel('ferry-clinton',  'countdown-clinton',  'Clinton → Mukilteo',  parseSailings(clintonData),  clintonSp,  clintonData._stale);
+  if (mukilteoData) {
+    if (!mukilteoData._stale) markFresh('ferry-mukilteo');
+    renderFerryPanel('ferry-mukilteo', 'countdown-mukilteo', 'Mukilteo → Clinton', parseSailings(mukilteoData), mukilteoSp, mukilteoData);
+  }
+  if (clintonData) {
+    if (!clintonData._stale) markFresh('ferry-clinton');
+    renderFerryPanel('ferry-clinton',  'countdown-clinton',  'Clinton → Mukilteo',  parseSailings(clintonData),  clintonSp,  clintonData);
+  }
 }
 
 // ── Init ───────────────────────────────────────────────────────────────
