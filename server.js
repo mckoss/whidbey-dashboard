@@ -91,7 +91,7 @@ function cachedEndpoint(cacheKey, ttlMs, fetcher) {
 app.use(express.static(join(__dirname, 'public')));
 
 // ── Tides (hi/lo, 3 days) ─────────────────────────────────────────────
-app.get('/api/tides', cachedEndpoint('tides', 60 * 60 * 1000, async () => {
+app.get('/api/tides', cachedEndpoint('tides', 2 * 60 * 60 * 1000, async () => {
   const today = new Date();
   const begin = formatDate(today);
   const end = formatDate(new Date(today.getTime() + 3 * 86400000));
@@ -109,7 +109,7 @@ app.get('/api/tides', cachedEndpoint('tides', 60 * 60 * 1000, async () => {
 // ── Tides (hourly interpolated, 48h) — for sparkline graph ──────────────
 // Station 9445526 is a subordinate station (hi/lo only).
 // We generate smooth hourly points via cosine interpolation between hi/lo events.
-app.get('/api/tides/hourly', cachedEndpoint('tides_hourly', 60 * 60 * 1000, async () => {
+app.get('/api/tides/hourly', cachedEndpoint('tides_hourly', 2 * 60 * 60 * 1000, async () => {
   const today = new Date();
   const begin = formatDate(today);
   const end = formatDate(new Date(today.getTime() + 3 * 86400000));
@@ -163,7 +163,7 @@ app.get('/api/tides/hourly', cachedEndpoint('tides_hourly', 60 * 60 * 1000, asyn
 }));
 
 // ── Weather (Open-Meteo) ───────────────────────────────────────────────
-app.get('/api/weather', cachedEndpoint('weather', 10 * 60 * 1000, async () => {
+app.get('/api/weather', cachedEndpoint('weather', 60 * 60 * 1000, async () => {
   const url = `https://api.open-meteo.com/v1/forecast` +
     `?latitude=${CONFIG.LAT}&longitude=${CONFIG.LON}` +
     `&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max,wind_direction_10m_dominant,sunrise,sunset` +

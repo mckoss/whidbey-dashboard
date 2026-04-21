@@ -416,10 +416,10 @@ function markFresh(key) {
 
 // Refresh intervals per data source (minutes)
 const REFRESH_INTERVALS = {
-  'weather': 10,
-  'tides': 30,
-  'ferry-clinton': 2,
-  'ferry-mukilteo': 2,
+  'weather': 60,
+  'tides': 120,
+  'ferry-clinton': 5,
+  'ferry-mukilteo': 5,
 };
 
 function ageTag(key, staleData) {
@@ -434,7 +434,8 @@ function ageTag(key, staleData) {
     ageMin = Math.round((Date.now() - t) / 60000);
   }
   if (ageMin <= thresholdMin) return `<span class="age-tag fresh" id="${key}-age">✓ live</span>`;
-  if (ageMin <= thresholdMin * 2) return `<span class="age-tag warn" id="${key}-age">⚠ ${ageMin}m old</span>`;
+  if (ageMin <= thresholdMin * 1.5) return `<span class="age-tag warn" id="${key}-age">⚠ ${ageMin}m old</span>`;
+  if (ageMin <= thresholdMin * 2.5) return `<span class="age-tag warn" id="${key}-age">⚠ ${ageMin}m old</span>`;
   return `<span class="age-tag old" id="${key}-age">⚠ ${ageMin}m old</span>`;
 }
 
@@ -1029,9 +1030,9 @@ loadWeather();
 loadTides();
 loadFerry();
 
-setInterval(loadWeather, 10 * 60 * 1000);
-setInterval(loadTides,   30 * 60 * 1000);
-setInterval(loadFerry,    2 * 60 * 1000);  // 2min: keeps space occupancy fresh
+setInterval(loadWeather, 60 * 60 * 1000);  // 1 hour
+setInterval(loadTides,  120 * 60 * 1000);  // 2 hours
+setInterval(loadFerry,    5 * 60 * 1000);  // 5 min
 
 </script>
 </body>
