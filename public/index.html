@@ -521,11 +521,13 @@ function buildThermometer(currentFt, minFt, maxFt, rising) {
   const color = rising ? '#38bdf8' : '#a78bfa';
   const arrowY = Math.max(trackTop + 5, fillY);
   const arrow = rising ? '▲' : '▼';
-  return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="100%">
+  return `<svg viewBox="0 0 ${W} ${H+16}" width="${W}" height="100%">
+    <text x="${W/2}" y="7" text-anchor="middle" font-size="6" fill="rgba(148,163,184,0.6)">${maxFt.toFixed(1)}</text>
     <rect x="4" y="${trackTop}" width="${W-8}" height="${trackH}" rx="${rx}" fill="rgba(30,45,69,0.9)"/>
     <rect x="4" y="${fillY.toFixed(1)}" width="${W-8}" height="${Math.max(0,fillH).toFixed(1)}" rx="${rx}" fill="${color}" opacity="0.85"/>
     <text x="${W/2}" y="${(arrowY+4).toFixed(1)}" text-anchor="middle" font-size="7" fill="${color}">${arrow}</text>
-    <text x="${W/2}" y="${H}" text-anchor="middle" font-size="6" fill="rgba(148,163,184,0.7)">${currentFt.toFixed(1)}</text>
+    <text x="${W/2}" y="${H+2}" text-anchor="middle" font-size="6" fill="rgba(148,163,184,0.6)">${minFt.toFixed(1)}</text>
+    <text x="${W/2}" y="${H+10}" text-anchor="middle" font-size="6" fill="${color}">${currentFt.toFixed(1)}</text>
   </svg>`;
 }
 
@@ -616,12 +618,12 @@ function buildSparkline(hourlyPredictions) {
         // Close out final segment
         const endX = PAD_X + (W - PAD_X * 2);
         const w = endX - curX;
-        if (w > 0) if (curDay) segments += `<rect x="${curX.toFixed(1)}" y="${PAD_T}" width="${w.toFixed(1)}" height="${plotH}" fill="rgba(255,255,255,0.08)"/>`;
+        if (w > 0) if (curDay) segments += `<rect x="${curX.toFixed(1)}" y="${PAD_T}" width="${w.toFixed(1)}" height="${plotH}" fill="rgba(255,255,255,0.12)"/>`;
         curX = endX; break;
       }
       const tx = toX(tr.ms);
       const w = tx - curX;
-      if (w > 0) if (curDay) segments += `<rect x="${curX.toFixed(1)}" y="${PAD_T}" width="${w.toFixed(1)}" height="${plotH}" fill="rgba(255,255,255,0.08)"/>`;
+      if (w > 0) if (curDay) segments += `<rect x="${curX.toFixed(1)}" y="${PAD_T}" width="${w.toFixed(1)}" height="${plotH}" fill="rgba(255,255,255,0.12)"/>`;
       curX = tx;
       curDay = tr.day;
     }
@@ -629,7 +631,7 @@ function buildSparkline(hourlyPredictions) {
     const endX = PAD_X + (W - PAD_X * 2);
     if (curX < endX) {
       const w = endX - curX;
-      if (curDay) segments += `<rect x="${curX.toFixed(1)}" y="${PAD_T}" width="${w.toFixed(1)}" height="${plotH}" fill="rgba(255,255,255,0.08)"/>`;
+      if (curDay) segments += `<rect x="${curX.toFixed(1)}" y="${PAD_T}" width="${w.toFixed(1)}" height="${plotH}" fill="rgba(255,255,255,0.12)"/>`;
     }
     daylightRect = segments;
   }
@@ -702,9 +704,7 @@ async function loadTides() {
       const thermo = buildThermometer(dir.currentFt, overallMin, overallMax, dir.rising);
       visualHtml = `<div class="tide-visual">
         <div class="tide-thermo-wrap">
-          <div class="tide-thermo-label-top">${overallMax.toFixed(1)}</div>
           ${thermo}
-          <div class="tide-thermo-label-bot">${overallMin.toFixed(1)}</div>
         </div>
         <div class="tide-sparkline-wrap">${buildSparkline(hourly.predictions)}</div>
       </div>`;
@@ -965,9 +965,7 @@ function refreshTideVisual() {
   const allH = _lastHiloPredictions.map(p => parseFloat(p.v));
   visualWrap.innerHTML = `
     <div class="tide-thermo-wrap">
-      <div class="tide-thermo-label-top">${Math.max(...allH).toFixed(1)}</div>
       ${buildThermometer(dir.currentFt, Math.min(...allH), Math.max(...allH), dir.rising)}
-      <div class="tide-thermo-label-bot">${Math.min(...allH).toFixed(1)}</div>
     </div>
     <div class="tide-sparkline-wrap">${buildSparkline(_lastHourlyPredictions)}</div>`;
 }
