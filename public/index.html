@@ -81,12 +81,13 @@
     }
 
     /* --- WEATHER --- */
-    #weather { grid-column: 1; }
+    #weather { grid-column: 1; display: flex; flex-direction: column; }
 
     .weather-days {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      display: flex;
       gap: 0.5rem;
+      flex: 1;
+      min-height: 0;
     }
 
     .weather-day {
@@ -94,6 +95,10 @@
       border-radius: 0.5rem;
       padding: 0.5rem;
       text-align: center;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      flex: 1;
     }
 
     .weather-day .day-name { font-size: 0.75rem; color: var(--dim); margin-bottom: 0.25rem; }
@@ -184,7 +189,7 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 0.3rem 0.65rem;
+      padding: 0.45rem 0.75rem;
       border-radius: 0.4rem;
       background: var(--bg);
       transition: opacity 0.3s;
@@ -207,10 +212,10 @@
     .tide-item .tide-height { font-size: 1rem; font-weight: 600; font-variant-numeric: tabular-nums; }
     .tide-item.high .tide-height { color: var(--tide-high); }
     .tide-item.low .tide-height { color: var(--tide-low); }
-    .tide-item .tide-day { font-size: 0.75rem; color: var(--dim); }
+    .tide-item .tide-day { font-size: 0.7rem; color: var(--dim); margin-top: 0.15rem; }
 
     /* --- FERRY --- */
-    #ferry { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; min-height: 155px; }
+    #ferry { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
 
     .ferry-panel {
       background: var(--card);
@@ -264,12 +269,13 @@
       display: grid;
       grid-template-columns: repeat(4, 1fr);
       gap: 0.35rem;
+      align-content: start;
     }
 
     .sailing {
       background: var(--bg);
       border-radius: 0.4rem;
-      padding: 0.4rem 0.5rem;
+      padding: 0.5rem 0.5rem;
       text-align: center;
       border: 1px solid transparent;
       transition: border-color 0.3s, opacity 0.3s;
