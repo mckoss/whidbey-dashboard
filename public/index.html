@@ -705,7 +705,12 @@ async function loadFerry() {
       return;
     }
 
-    // Filter sailings: only within 4 hours ahead (plus last 1 departed for context)
+    // Find the actual next sailing from the full list (for countdown)
+    const trueNextIdx = parsedSailings.findIndex(s => s.sailTime >= now);
+    const trueLastIdx = parsedSailings.length - 1;
+    ferryNextTime = trueNextIdx >= 0 ? parsedSailings[trueNextIdx].sailTime.getTime() : null;
+
+    // Filter display window: last departed + sailings within 4 hours ahead
     const fourHoursOut = new Date(now.getTime() + 4 * 3600 * 1000);
     const lastDeparted = [...parsedSailings].reverse().find(s => s.sailTime < now);
     const windowSailings = parsedSailings.filter(s =>
@@ -713,17 +718,11 @@ async function loadFerry() {
       (s.sailTime >= now && s.sailTime <= fourHoursOut)
     );
 
-    // Find next sailing
-    const nextIdx = windowSailings.findIndex(s => s.sailTime >= now);
-    const lastIdx = windowSailings.length - 1;
-
-    // Set countdown target
-    ferryNextTime = nextIdx >= 0 ? parsedSailings[nextIdx].sailTime.getTime() : null;
-
-    const sailingEls = windowSailings.map((s, i) => {
+    const sailingEls = windowSailings.map((s) => {
       const isPast = s.sailTime < now;
-      const isNext = i === nextIdx;
-      const isLast = i === lastIdx;
+      const isNext = trueNextIdx >= 0 && s.sailTime.getTime() === parsedSailings[trueNextIdx].sailTime.getTime();
+      // Only show "Last" bell if this is the last sailing of the entire day
+      const isTrueLast = s.sailTime.getTime() === parsedSailings[trueLastIdx].sailTime.getTime();
       const display = s.sailTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 
       let statusText = '';
@@ -734,7 +733,7 @@ async function loadFerry() {
       } else if (isNext) {
         cssClass += ' next';
         statusText = '▶ Next';
-      } else if (isLast) {
+      } else if (isTrueLast) {
         cssClass += ' last-of-day';
         statusText = '🔔 Last';
       }
@@ -745,8 +744,8 @@ async function loadFerry() {
       </div>`;
     }).join('');
 
-    // Is the next sailing the last in our window?
-    const nextIsLast = nextIdx === lastIdx && nextIdx >= 0;
+    // Only show "Last sailing today" warning if next sailing IS truly the last of the day
+    const nextIsLast = trueNextIdx === trueLastIdx && trueNextIdx >= 0;
 
     el.innerHTML = `<div class="card-title">Clinton → Mukilteo Ferry Schedule${staleBadge(sched)}</div>
       <div class="ferry-header">
