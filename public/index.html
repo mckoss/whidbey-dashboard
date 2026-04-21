@@ -618,12 +618,12 @@ function buildSparkline(hourlyPredictions) {
         // Close out final segment
         const endX = PAD_X + (W - PAD_X * 2);
         const w = endX - curX;
-        if (w > 0) if (curDay) segments += `<rect x="${curX.toFixed(1)}" y="${PAD_T}" width="${w.toFixed(1)}" height="${plotH}" fill="rgba(255,255,255,0.12)"/>`;
+        if (w > 0) if (curDay) segments += `<rect x="${curX.toFixed(1)}" y="${PAD_T}" width="${w.toFixed(1)}" height="${plotH}" fill="rgba(255,255,255,0.05)"/>`;
         curX = endX; break;
       }
       const tx = toX(tr.ms);
       const w = tx - curX;
-      if (w > 0) if (curDay) segments += `<rect x="${curX.toFixed(1)}" y="${PAD_T}" width="${w.toFixed(1)}" height="${plotH}" fill="rgba(255,255,255,0.12)"/>`;
+      if (w > 0) if (curDay) segments += `<rect x="${curX.toFixed(1)}" y="${PAD_T}" width="${w.toFixed(1)}" height="${plotH}" fill="rgba(255,255,255,0.05)"/>`;
       curX = tx;
       curDay = tr.day;
     }
@@ -631,7 +631,7 @@ function buildSparkline(hourlyPredictions) {
     const endX = PAD_X + (W - PAD_X * 2);
     if (curX < endX) {
       const w = endX - curX;
-      if (curDay) segments += `<rect x="${curX.toFixed(1)}" y="${PAD_T}" width="${w.toFixed(1)}" height="${plotH}" fill="rgba(255,255,255,0.12)"/>`;
+      if (curDay) segments += `<rect x="${curX.toFixed(1)}" y="${PAD_T}" width="${w.toFixed(1)}" height="${plotH}" fill="rgba(255,255,255,0.05)"/>`;
     }
     daylightRect = segments;
   }
