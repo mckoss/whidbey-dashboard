@@ -43,6 +43,15 @@
 
     h1 { font-size: 1.4rem; color: var(--accent); font-weight: 300; letter-spacing: 0.1em; text-transform: uppercase; }
 
+    .sun-times {
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+      font-size: 0.8rem;
+      color: var(--dim);
+    }
+    .sun-times span { display: flex; align-items: center; gap: 0.3rem; }
+
     #clock {
       font-size: 2.5rem;
       font-weight: 200;
@@ -326,6 +335,7 @@
 
 <header>
   <h1>🌊 South Whidbey Island</h1>
+  <div class="sun-times" id="sun-times"></div>
   <div>
     <div id="clock">--:--:--</div>
     <div id="date-display">Loading...</div>
@@ -464,6 +474,14 @@ async function loadWeather() {
     });
 
     if (!d._stale) markFresh('weather');
+    if (d.daily?.sunrise?.[0]) {
+      window._sunriseMs = new Date(d.daily.sunrise[0]).getTime();
+      window._sunsetMs  = new Date(d.daily.sunset[0]).getTime();
+      const riseStr = new Date(window._sunriseMs).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      const setStr  = new Date(window._sunsetMs).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      const sunEl = document.getElementById('sun-times');
+      if (sunEl) sunEl.innerHTML = `<span>🌅 ${riseStr}</span><span>🌇 ${setStr}</span>`;
+    }
     el.innerHTML = `
       <div class="card-title">Weather · Clinton, WA ${ageTag('weather', d)}</div>
       <div class="current-weather">
@@ -566,6 +584,16 @@ function buildSparkline(hourlyPredictions) {
   const area = `M${pts[0]} L${pts.join(' L')} L${xOf(n-1).toFixed(1)},${PAD_T+plotH} L${PAD_X},${PAD_T+plotH} Z`;
   const line = `M${pts[0]} L${pts.join(' L')}`;
 
+  // Daylight band
+  let daylightRect = '';
+  if (window._sunriseMs && window._sunsetMs) {
+    const rFrac = Math.min(1, Math.max(0, (window._sunriseMs - startMs2) / totalMs));
+    const sFrac = Math.min(1, Math.max(0, (window._sunsetMs  - startMs2) / totalMs));
+    const rx1 = PAD_X + rFrac * (W - PAD_X * 2);
+    const rx2 = PAD_X + sFrac * (W - PAD_X * 2);
+    if (rx2 > rx1) daylightRect = `<rect x="${rx1.toFixed(1)}" y="${PAD_T}" width="${(rx2-rx1).toFixed(1)}" height="${plotH}" fill="rgba(251,191,36,0.07)" rx="2"/>`;
+  }
+
   return `<svg id="tide-sparkline" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
     <defs>
       <linearGradient id="tideGrad" x1="0" y1="0" x2="0" y2="1">
@@ -573,6 +601,7 @@ function buildSparkline(hourlyPredictions) {
         <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.02"/>
       </linearGradient>
     </defs>
+    ${daylightRect}
     ${ticks}
     <path d="${area}" fill="url(#tideGrad)"/>
     <path d="${line}" fill="none" stroke="#38bdf8" stroke-width="1.5" stroke-linejoin="round"/>
@@ -661,6 +690,8 @@ async function loadTides() {
       </div>`;
     }).join('');
 
+    _lastHiloPredictions   = predictions;
+    _lastHourlyPredictions = hourly?.predictions || null;
     if (!hilo._stale) markFresh('tides');
     el.innerHTML = `<div class="card-title">Tides · Hansville ${ageTag('tides', hilo)}</div>
       ${visualHtml}
@@ -877,6 +908,29 @@ async function loadFerry() {
     renderFerryPanel('ferry-clinton',  'countdown-clinton',  'Clinton → Mukilteo',  parseSailings(clintonData),  clintonSp,  clintonData);
   }
 }
+
+// ── Tide visual 1-minute refresh ───────────────────────────────────────────────────
+let _lastHourlyPredictions = null;
+let _lastHiloPredictions   = null;
+
+function refreshTideVisual() {
+  if (!_lastHourlyPredictions || !_lastHiloPredictions) return;
+  const el = document.getElementById('tides');
+  if (!el) return;
+  const visualWrap = el.querySelector('.tide-visual');
+  if (!visualWrap) return;
+  const dir = getTideDirection(_lastHiloPredictions);
+  if (!dir) return;
+  const allH = _lastHiloPredictions.map(p => parseFloat(p.v));
+  visualWrap.innerHTML = `
+    <div class="tide-thermo-wrap">
+      <div class="tide-thermo-label-top">${Math.max(...allH).toFixed(1)}</div>
+      ${buildThermometer(dir.currentFt, Math.min(...allH), Math.max(...allH), dir.rising)}
+      <div class="tide-thermo-label-bot">${Math.min(...allH).toFixed(1)}</div>
+    </div>
+    <div class="tide-sparkline-wrap">${buildSparkline(_lastHourlyPredictions)}</div>`;
+}
+setInterval(refreshTideVisual, 60 * 1000);
 
 // ── Init ───────────────────────────────────────────────────────────────
 loadWeather();
