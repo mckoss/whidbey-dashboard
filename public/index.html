@@ -592,7 +592,16 @@ function buildSparkline(hourlyPredictions) {
     const sFrac = Math.min(1, Math.max(0, (window._sunsetMs  - startMs2) / totalMs));
     const rx1 = PAD_X + rFrac * (W - PAD_X * 2);
     const rx2 = PAD_X + sFrac * (W - PAD_X * 2);
-    if (rx2 > rx1) daylightRect = `<rect x="${rx1.toFixed(1)}" y="${PAD_T}" width="${(rx2-rx1).toFixed(1)}" height="${plotH}" fill="rgba(251,191,36,0.07)" rx="2"/>`;
+    if (rx2 > rx1) {
+      // Night left
+      const leftW = rx1 - PAD_X;
+      const rightX = rx2;
+      const rightW = (W - PAD_X) - rx2;
+      daylightRect =
+        (leftW  > 0 ? `<rect x="${PAD_X}" y="${PAD_T}" width="${leftW.toFixed(1)}" height="${plotH}" fill="rgba(0,0,0,0.65)"/>` : '') +
+        `<rect x="${rx1.toFixed(1)}" y="${PAD_T}" width="${(rx2-rx1).toFixed(1)}" height="${plotH}" fill="rgba(251,191,36,0.18)" rx="2"/>` +
+        (rightW > 0 ? `<rect x="${rightX.toFixed(1)}" y="${PAD_T}" width="${rightW.toFixed(1)}" height="${plotH}" fill="rgba(0,0,0,0.65)"/>` : '');
+    }
   }
 
   return `<svg id="tide-sparkline" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
