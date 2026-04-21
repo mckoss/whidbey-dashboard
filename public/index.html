@@ -610,7 +610,7 @@ async function loadTides() {
 }
 
 // ── Ferry countdown ────────────────────────────────────────────────────
-let ferryNextTime = null;
+let allSailings = [];   // full day's parsed sailings, kept fresh by loadFerry
 let countdownInterval = null;
 
 function formatCountdown(ms) {
@@ -625,18 +625,19 @@ function formatCountdown(ms) {
 
 function updateCountdown() {
   const el = document.getElementById('ferry-countdown');
-  if (!el || !ferryNextTime) return;
+  if (!el) return;
 
-  const remaining = ferryNextTime - Date.now();
-  const text = formatCountdown(remaining);
-
-  if (!text) {
+  // Always recompute next sailing from the live list so we advance past departed sailings
+  const now = Date.now();
+  const next = allSailings.find(s => s.sailTime.getTime() >= now);
+  if (!next) {
     el.textContent = 'No more sailings today';
     el.className = 'countdown-badge';
-    clearInterval(countdownInterval);
     return;
   }
 
+  const remaining = next.sailTime.getTime() - now;
+  const text = formatCountdown(remaining);
   const urgent = remaining < 15 * 60 * 1000;
   el.textContent = `⛴ Next in ${text}`;
   el.className = `countdown-badge${urgent ? ' urgent' : ''}`;
@@ -705,10 +706,10 @@ async function loadFerry() {
       return;
     }
 
-    // Find the actual next sailing from the full list (for countdown)
+    // Store full list so updateCountdown() can always find the live next sailing
+    allSailings = parsedSailings;
     const trueNextIdx = parsedSailings.findIndex(s => s.sailTime >= now);
     const trueLastIdx = parsedSailings.length - 1;
-    ferryNextTime = trueNextIdx >= 0 ? parsedSailings[trueNextIdx].sailTime.getTime() : null;
 
     // Filter display window: last departed + sailings within 4 hours ahead
     const fourHoursOut = new Date(now.getTime() + 4 * 3600 * 1000);
@@ -751,19 +752,17 @@ async function loadFerry() {
       <div class="ferry-header">
         <span class="ferry-route">⛴ Clinton → Mukilteo</span>
         <div class="ferry-meta">
-          ${ferryNextTime ? `<span id="ferry-countdown" class="countdown-badge">⛴ calculating...</span>` : '<span class="countdown-badge">No more sailings today</span>'}
+          <span id="ferry-countdown" class="countdown-badge">⛴ calculating...</span>
           ${nextIsLast && ferryNextTime ? '<span class="last-sailing-note">⚠ Last sailing today</span>' : ''}
           ${waitText ? `<span class="wait-badge">🚗 ${waitText}</span>` : ''}
         </div>
       </div>
       <div class="sailings-grid">${sailingEls}</div>`;
 
-    // Start / restart countdown
+    // Start / restart countdown (runs every 30s; updateCountdown recomputes next sailing live)
     if (countdownInterval) clearInterval(countdownInterval);
     updateCountdown();
-    if (ferryNextTime) {
-      countdownInterval = setInterval(updateCountdown, 30000);
-    }
+    countdownInterval = setInterval(updateCountdown, 30000);
 
   } catch (e) {
     el.innerHTML = `<div class="card-title">Ferry</div><div class="error-msg">Failed: ${e.message}</div>`;
