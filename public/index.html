@@ -414,8 +414,17 @@ function markFresh(key) {
   dataUpdatedAt[key] = Date.now();
 }
 
+// Refresh intervals per data source (minutes)
+const REFRESH_INTERVALS = {
+  'weather': 10,
+  'tides': 30,
+  'ferry-clinton': 2,
+  'ferry-mukilteo': 2,
+};
+
 function ageTag(key, staleData) {
-  // Inline age indicator — always rendered, dim when fresh, amber/red when stale.
+  // Inline age indicator — only warns when data is older than its refresh interval.
+  const thresholdMin = REFRESH_INTERVALS[key] || 5;
   let ageMin;
   if (staleData && staleData._stale) {
     ageMin = staleData._staleAgeMinutes;
@@ -424,10 +433,9 @@ function ageTag(key, staleData) {
     if (!t) return `<span class="age-tag fresh" id="${key}-age">✓ live</span>`;
     ageMin = Math.round((Date.now() - t) / 60000);
   }
-  if (ageMin < 2)  return `<span class="age-tag fresh" id="${key}-age">✓ live</span>`;
-  if (ageMin < 5)  return `<span class="age-tag fresh" id="${key}-age">${ageMin}m ago</span>`;
-  if (ageMin < 20) return `<span class="age-tag warn"  id="${key}-age">⚠ ${ageMin}m old</span>`;
-  return               `<span class="age-tag old"   id="${key}-age">⚠ ${ageMin}m old</span>`;
+  if (ageMin <= thresholdMin) return `<span class="age-tag fresh" id="${key}-age">✓ live</span>`;
+  if (ageMin <= thresholdMin * 2) return `<span class="age-tag warn" id="${key}-age">⚠ ${ageMin}m old</span>`;
+  return `<span class="age-tag old" id="${key}-age">⚠ ${ageMin}m old</span>`;
 }
 
 // Refresh age tags every minute
@@ -943,9 +951,9 @@ function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spac
   el.innerHTML = `
     <div class="ferry-panel-header">
       <span class="ferry-route">⛴ ${routeLabel}</span>
+      ${ageTag(panelId, schedData)}
       <span id="${countdownId}" class="countdown-badge">⛴ ...</span>
       ${nextIsLast ? '<span class="last-sailing-note">⚠ Last</span>' : ''}
-      ${ageTag(panelId, schedData)}
     </div>
     <div class="sailings-grid">${cards}</div>`;
 
