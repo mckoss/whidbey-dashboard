@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Whidbey Dashboard</title>
+  <style>
+    :root {
+      --bg: #0a0e1a;
+      --card: #111827;
+      --border: #1e2d45;
+      --text: #e2e8f0;
+      --dim: #94a3b8;
+      --accent: #38bdf8;
+      --accent2: #34d399;
+      --warn: #fbbf24;
+      --danger: #f87171;
+      --tide-high: #38bdf8;
+      --tide-low: #7c3aed;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      min-height: 100vh;
+      padding: 1.5rem;
+      display: grid;
+      grid-template-rows: auto 1fr 1fr;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.25rem;
+    }
+
+    header {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    h1 { font-size: 1.4rem; color: var(--accent); font-weight: 300; letter-spacing: 0.1em; text-transform: uppercase; }
+
+    #clock {
+      font-size: 3.5rem;
+      font-weight: 200;
+      letter-spacing: 0.05em;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+    }
+    #date-display { color: var(--dim); font-size: 0.9rem; text-align: right; margin-top: 0.25rem; }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 1rem;
+      padding: 1.25rem;
+      overflow: hidden;
+    }
+
+    .card-title {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--dim);
+      margin-bottom: 1rem;
+    }
+
+    /* --- WEATHER --- */
+    #weather { grid-column: 1; }
+
+    .weather-days {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.75rem;
+    }
+
+    .weather-day {
+      background: var(--bg);
+      border-radius: 0.75rem;
+      padding: 0.75rem;
+      text-align: center;
+    }
+
+    .weather-day .day-name { font-size: 0.8rem; color: var(--dim); margin-bottom: 0.4rem; }
+    .weather-day .weather-icon { font-size: 2.2rem; margin: 0.3rem 0; }
+    .weather-day .temp-high { font-size: 1.4rem; font-weight: 600; }
+    .weather-day .temp-low { font-size: 0.95rem; color: var(--dim); }
+    .weather-day .precip { font-size: 0.75rem; color: var(--accent); margin-top: 0.3rem; }
+    .weather-day .wind { font-size: 0.75rem; color: var(--dim); margin-top: 0.2rem; }
+
+    .current-weather {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 1rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .current-weather .now-icon { font-size: 3rem; }
+    .current-weather .now-temp { font-size: 2.8rem; font-weight: 200; }
+    .current-weather .now-details { color: var(--dim); font-size: 0.85rem; line-height: 1.6; }
+
+    /* --- TIDES --- */
+    #tides { grid-column: 2; }
+
+    .tide-list { display: flex; flex-direction: column; gap: 0.5rem; }
+
+    .tide-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.6rem 0.8rem;
+      border-radius: 0.5rem;
+      background: var(--bg);
+    }
+
+    .tide-item .tide-time { font-size: 0.95rem; font-variant-numeric: tabular-nums; }
+    .tide-item .tide-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 0.2rem 0.5rem;
+      border-radius: 0.3rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .tide-item.high .tide-label { background: rgba(56,189,248,0.15); color: var(--tide-high); }
+    .tide-item.low .tide-label { background: rgba(124,58,237,0.15); color: #a78bfa; }
+    .tide-item .tide-height { font-size: 1.1rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .tide-item.high .tide-height { color: var(--tide-high); }
+    .tide-item.low .tide-height { color: #a78bfa; }
+    .tide-item .tide-day { font-size: 0.75rem; color: var(--dim); }
+
+    /* --- FERRY --- */
+    #ferry { grid-column: 1 / -1; }
+
+    .ferry-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+
+    .ferry-route { font-size: 0.95rem; color: var(--accent2); }
+
+    .wait-badge {
+      font-size: 0.8rem;
+      padding: 0.25rem 0.75rem;
+      border-radius: 999px;
+      background: rgba(251,191,36,0.15);
+      color: var(--warn);
+    }
+
+    .sailings-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+      gap: 0.5rem;
+    }
+
+    .sailing {
+      background: var(--bg);
+      border-radius: 0.5rem;
+      padding: 0.6rem 0.75rem;
+      text-align: center;
+      border: 1px solid transparent;
+      transition: border-color 0.3s;
+    }
+
+    .sailing.next { border-color: var(--accent2); }
+    .sailing.departed { opacity: 0.35; }
+
+    .sailing .sail-time { font-size: 1.05rem; font-variant-numeric: tabular-nums; }
+    .sailing .sail-status { font-size: 0.7rem; color: var(--dim); margin-top: 0.2rem; }
+    .sailing.next .sail-status { color: var(--accent2); }
+
+    .loading { color: var(--dim); font-size: 0.9rem; padding: 1rem 0; }
+    .error-msg { color: var(--danger); font-size: 0.85rem; }
+
+    .no-ferry-key {
+      color: var(--dim);
+      font-size: 0.85rem;
+      padding: 0.5rem 0;
+    }
+    .no-ferry-key a { color: var(--accent); }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🌊 Whidbey Island</h1>
+  <div>
+    <div id="clock">--:--:--</div>
+    <div id="date-display">Loading...</div>
+  </div>
+</header>
+
+<div class="card" id="weather">
+  <div class="card-title">Weather · Clinton, WA</div>
+  <div class="loading">Loading weather...</div>
+</div>
+
+<div class="card" id="tides">
+  <div class="card-title">Tides · Hansville Station</div>
+  <div class="loading">Loading tides...</div>
+</div>
+
+<div class="card" id="ferry">
+  <div class="card-title">Clinton → Mukilteo Ferry Schedule</div>
+  <div class="loading">Loading ferry schedule...</div>
+</div>
+
+<script type="module">
+
+// ── Clock ──────────────────────────────────────────────────────────────
+const clockEl = document.getElementById('clock');
+const dateEl = document.getElementById('date-display');
+const DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function updateClock() {
+  const now = new Date();
+  const h = String(now.getHours()).padStart(2, '0');
+  const m = String(now.getMinutes()).padStart(2, '0');
+  const s = String(now.getSeconds()).padStart(2, '0');
+  clockEl.textContent = `${h}:${m}:${s}`;
+  dateEl.textContent = `${DAYS[now.getDay()]}, ${MONTHS[now.getMonth()]} ${now.getDate()}, ${now.getFullYear()}`;
+}
+updateClock();
+setInterval(updateClock, 1000);
+
+// ── Weather codes → emoji ──────────────────────────────────────────────
+function weatherIcon(code) {
+  if (code === 0) return '☀️';
+  if (code <= 2) return '⛅';
+  if (code === 3) return '☁️';
+  if (code <= 49) return '🌫️';
+  if (code <= 59) return '🌦️';
+  if (code <= 69) return '🌧️';
+  if (code <= 79) return '🌨️';
+  if (code <= 84) return '🌧️';
+  if (code <= 94) return '⛈️';
+  return '🌩️';
+}
+
+function weatherDesc(code) {
+  if (code === 0) return 'Clear';
+  if (code <= 2) return 'Partly cloudy';
+  if (code === 3) return 'Overcast';
+  if (code <= 49) return 'Foggy';
+  if (code <= 59) return 'Drizzle';
+  if (code <= 69) return 'Rain';
+  if (code <= 79) return 'Snow';
+  if (code <= 84) return 'Rain showers';
+  if (code <= 94) return 'Thunderstorm';
+  return 'Storm';
+}
+
+function windDir(deg) {
+  const dirs = ['N','NE','E','SE','S','SW','W','NW'];
+  return dirs[Math.round(deg / 45) % 8];
+}
+
+// ── Weather ────────────────────────────────────────────────────────────
+async function loadWeather() {
+  const el = document.getElementById('weather');
+  try {
+    const res = await fetch('/api/weather');
+    const d = await res.json();
+    const cur = d.current;
+    const daily = d.daily;
+
+    const days = daily.time.slice(0, 3).map((t, i) => {
+      const date = new Date(t + 'T12:00:00');
+      const name = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : DAYS[date.getDay()];
+      return { name, icon: weatherIcon(daily.weather_code[i]),
+        hi: Math.round(daily.temperature_2m_max[i]),
+        lo: Math.round(daily.temperature_2m_min[i]),
+        precip: daily.precipitation_probability_max[i],
+        wind: Math.round(daily.wind_speed_10m_max[i]),
+        windDir: windDir(daily.wind_direction_10m_dominant[i]) };
+    });
+
+    el.innerHTML = `
+      <div class="card-title">Weather · Clinton, WA</div>
+      <div class="current-weather">
+        <div class="now-icon">${weatherIcon(cur.weather_code)}</div>
+        <div class="now-temp">${Math.round(cur.temperature_2m)}°F</div>
+        <div class="now-details">
+          ${weatherDesc(cur.weather_code)}<br>
+          Wind: ${Math.round(cur.wind_speed_10m)} mph ${windDir(cur.wind_direction_10m)}<br>
+          Humidity: ${cur.relative_humidity_2m}%
+        </div>
+      </div>
+      <div class="weather-days">
+        ${days.map(day => `
+          <div class="weather-day">
+            <div class="day-name">${day.name}</div>
+            <div class="weather-icon">${day.icon}</div>
+            <div class="temp-high">${day.hi}°</div>
+            <div class="temp-low">${day.lo}°</div>
+            <div class="precip">💧 ${day.precip}%</div>
+            <div class="wind">💨 ${day.wind} mph ${day.windDir}</div>
+          </div>`).join('')}
+      </div>`;
+  } catch (e) {
+    el.innerHTML = `<div class="card-title">Weather</div><div class="error-msg">Failed to load weather: ${e.message}</div>`;
+  }
+}
+
+// ── Tides ──────────────────────────────────────────────────────────────
+async function loadTides() {
+  const el = document.getElementById('tides');
+  try {
+    const res = await fetch('/api/tides');
+    const d = await res.json();
+
+    if (!d.predictions) {
+      el.innerHTML = `<div class="card-title">Tides</div><div class="error-msg">${d.error?.message || 'No tide data'}</div>`;
+      return;
+    }
+
+    const now = new Date();
+    // Show next 8 tide events
+    const upcoming = d.predictions
+      .map(p => ({ ...p, date: new Date(p.t) }))
+      .filter(p => p.date >= new Date(now.getTime() - 3600000)) // include last hour
+      .slice(0, 8);
+
+    const items = upcoming.map(p => {
+      const dt = p.date;
+      const isToday = dt.toDateString() === now.toDateString();
+      const isTomorrow = dt.toDateString() === new Date(now.getTime() + 86400000).toDateString();
+      const dayLabel = isToday ? '' : isTomorrow ? 'Tomorrow' : DAYS[dt.getDay()];
+      const timeStr = dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      const isPast = dt < now;
+      return `<div class="tide-item ${p.type === 'H' ? 'high' : 'low'} ${isPast ? 'departed' : ''}">
+        <div>
+          <div class="tide-time">${timeStr}</div>
+          ${dayLabel ? `<div class="tide-day">${dayLabel}</div>` : ''}
+        </div>
+        <span class="tide-label">${p.type === 'H' ? 'High' : 'Low'}</span>
+        <div class="tide-height">${parseFloat(p.v).toFixed(1)} ft</div>
+      </div>`;
+    }).join('');
+
+    el.innerHTML = `<div class="card-title">Tides · Hansville Station</div>
+      <div class="tide-list">${items}</div>`;
+  } catch (e) {
+    el.innerHTML = `<div class="card-title">Tides</div><div class="error-msg">Failed: ${e.message}</div>`;
+  }
+}
+
+// ── Ferry ──────────────────────────────────────────────────────────────
+async function loadFerry() {
+  const el = document.getElementById('ferry');
+
+  // Fetch schedule and wait times in parallel
+  const [schedRes, waitRes] = await Promise.allSettled([
+    fetch('/api/ferry').then(r => r.json()),
+    fetch('/api/ferry/wait').then(r => r.json()),
+  ]);
+
+  const sched = schedRes.status === 'fulfilled' ? schedRes.value : null;
+  const wait = waitRes.status === 'fulfilled' ? waitRes.value : null;
+
+  if (!sched || sched.error === 'WSF_API_KEY not configured') {
+    el.innerHTML = `<div class="card-title">Clinton → Mukilteo Ferry Schedule</div>
+      <div class="no-ferry-key">
+        Ferry schedule requires a free WSDOT API key.<br>
+        <a href="https://www.wsdot.wa.gov/traffic/api/" target="_blank">Register here</a>, then add it to your <code>.env</code> file as <code>WSF_API_KEY</code>.
+      </div>`;
+    return;
+  }
+
+  try {
+    const now = new Date();
+    let sailings = [];
+
+    // WSF schedule response structure: array of departure times
+    if (Array.isArray(sched)) {
+      sailings = sched;
+    } else if (sched.ScheduleTimes) {
+      sailings = sched.ScheduleTimes;
+    } else if (sched.Times) {
+      sailings = sched.Times;
+    }
+
+    // Extract wait time if available
+    let waitText = null;
+    if (wait && !wait.error && Array.isArray(wait)) {
+      const terminal = wait[0];
+      if (terminal?.DepartingSpaces) {
+        const spaces = terminal.DepartingSpaces[0];
+        if (spaces?.SpaceCount !== undefined) {
+          waitText = `~${spaces.SpaceCount} drive-up spaces`;
+        }
+      }
+    }
+
+    if (!sailings.length) {
+      el.innerHTML = `<div class="card-title">Clinton → Mukilteo Ferry</div>
+        <div class="ferry-header">
+          <span class="ferry-route">Clinton → Mukilteo</span>
+          ${waitText ? `<span class="wait-badge">🚗 ${waitText}</span>` : ''}
+        </div>
+        <div class="error-msg">No sailings found for today. Check WSF API response format.</div>`;
+      return;
+    }
+
+    const sailingEls = sailings.map(s => {
+      // Try various time field names WSF might use
+      const timeStr = s.DepartingTime || s.DepartureTime || s.Time || s.SailingTime || '';
+      if (!timeStr) return '';
+      const sailTime = new Date(timeStr);
+      if (isNaN(sailTime)) return '';
+      const isPast = sailTime < now;
+      const isNext = !isPast && sailings
+        .filter(x => {
+          const t = new Date(x.DepartingTime || x.DepartureTime || x.Time || x.SailingTime || '');
+          return t >= now;
+        })
+        .indexOf(s) === 0;
+
+      const display = sailTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      return `<div class="sailing ${isPast ? 'departed' : ''} ${isNext ? 'next' : ''}">
+        <div class="sail-time">${display}</div>
+        <div class="sail-status">${isNext ? '▶ Next' : isPast ? 'Departed' : ''}</div>
+      </div>`;
+    }).join('');
+
+    el.innerHTML = `<div class="card-title">Clinton → Mukilteo Ferry Schedule</div>
+      <div class="ferry-header">
+        <span class="ferry-route">⛴ Clinton → Mukilteo</span>
+        ${waitText ? `<span class="wait-badge">🚗 ${waitText}</span>` : ''}
+      </div>
+      <div class="sailings-grid">${sailingEls}</div>`;
+
+  } catch (e) {
+    el.innerHTML = `<div class="card-title">Ferry</div><div class="error-msg">Failed: ${e.message}</div>`;
+  }
+}
+
+// ── Init ───────────────────────────────────────────────────────────────
+loadWeather();
+loadTides();
+loadFerry();
+
+// Refresh data periodically
+setInterval(loadWeather, 10 * 60 * 1000);   // every 10 min
+setInterval(loadTides, 30 * 60 * 1000);     // every 30 min
+setInterval(loadFerry, 5 * 60 * 1000);      // every 5 min
+
+</script>
+</body>
+</html>
