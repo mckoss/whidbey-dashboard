@@ -558,9 +558,6 @@ function buildSparkline(hourlyPredictions) {
   }
 
   // Key time markers: 6am, noon, 6pm, midnight — bold lines, minimal labels
-  const startMs2 = times[0].getTime();
-  const endMs2   = times[n-1].getTime();
-  const totalMs  = endMs2 - startMs2;
   let ticks = '';
   // Find next occurrence of 6, 12, 18, 0 hours from start
   const keyHours = [0, 6, 12, 18];
@@ -584,6 +581,11 @@ function buildSparkline(hourlyPredictions) {
 
   const area = `M${pts[0]} L${pts.join(' L')} L${xOf(n-1).toFixed(1)},${PAD_T+plotH} L${PAD_X},${PAD_T+plotH} Z`;
   const line = `M${pts[0]} L${pts.join(' L')}`;
+
+  // Time range (needed for daylight band and tick marks)
+  const startMs2 = times[0].getTime();
+  const endMs2   = times[n-1].getTime();
+  const totalMs  = endMs2 - startMs2;
 
   // Daylight band
   let daylightRect = '';
