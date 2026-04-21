@@ -106,29 +106,80 @@ test('tides/hourly endpoint — returns hourly predictions', async () => {
   assert.ok(!isNaN(v), 'first prediction has numeric value');
 });
 
-test('ferry endpoint — returns TerminalCombos with Times array', async () => {
-  const d = await getJson('/api/ferry');
-
-  // If no API key configured, accept the error response
+// ── Ferry schedule helper ──────────────────────────────────────────────
+function assertFerrySchedule(d, label) {
   if (d.error === 'WSF_API_KEY not configured') {
-    console.log('  (skipping ferry schedule assertions — WSF_API_KEY not set)');
+    console.log(`  (skipping ${label} assertions — WSF_API_KEY not set)`);
+    return false;
+  }
+  assert.ok(!d.error, `no error in ${label} response (got: ${d.error})`);
+  assert.ok(d.TerminalCombos, `${label} has TerminalCombos`);
+  assert.ok(Array.isArray(d.TerminalCombos), `${label} TerminalCombos is array`);
+  assert.ok(d.TerminalCombos.length > 0, `${label} has at least one terminal combo`);
+  const combo = d.TerminalCombos[0];
+  assert.ok(combo.Times && Array.isArray(combo.Times) && combo.Times.length > 0,
+    `${label} has Times array with entries`);
+  const firstTime = combo.Times[0].DepartingTime || combo.Times[0].DepartureTime || '';
+  assert.ok(firstTime, `${label} first sailing has time field`);
+  assert.match(firstTime, /\/Date\(\d+/, `${label} time is in .NET JSON date format`);
+  return true;
+}
+
+test('ferry/clinton endpoint — Clinton→Mukilteo schedule', async () => {
+  const d = await getJson('/api/ferry/clinton');
+  assertFerrySchedule(d, 'clinton ferry');
+});
+
+test('ferry/mukilteo endpoint — Mukilteo→Clinton schedule', async () => {
+  const d = await getJson('/api/ferry/mukilteo');
+  assertFerrySchedule(d, 'mukilteo ferry');
+});
+
+test('ferry/clinton/space endpoint — vessel name and capacity per sailing', async () => {
+  const d = await getJson('/api/ferry/clinton/space');
+  if (d.error === 'WSF_API_KEY not configured') {
+    console.log('  (skipping clinton space assertions — WSF_API_KEY not set)');
     return;
   }
+  assert.ok(typeof d === 'object', 'returns an object');
+  const keys = Object.keys(d);
+  assert.ok(keys.length > 0, 'has at least one departure entry');
+  // Keys should be ms timestamps (all digits)
+  assert.ok(keys.every(k => /^\d+$/.test(k)), 'keys are numeric ms timestamps');
+  const first = d[keys[0]];
+  assert.ok(typeof first.vesselName === 'string' && first.vesselName.length > 0,
+    `vesselName is a non-empty string (got: ${first.vesselName})`);
+  assert.ok(typeof first.maxSpaces === 'number' && first.maxSpaces > 0,
+    `maxSpaces is a positive number (got: ${first.maxSpaces})`);
+  assert.ok(first.driveUpSpaces === null || typeof first.driveUpSpaces === 'number',
+    `driveUpSpaces is null or number (got: ${first.driveUpSpaces})`);
+  if (first.driveUpSpaces !== null) {
+    assert.ok(first.driveUpSpaces >= 0 && first.driveUpSpaces <= first.maxSpaces,
+      `driveUpSpaces (${first.driveUpSpaces}) is between 0 and maxSpaces (${first.maxSpaces})`);
+  }
+});
 
-  assert.ok(!d.error, `no error in ferry response (got: ${d.error})`);
-  assert.ok(d.TerminalCombos, 'has TerminalCombos');
-  assert.ok(Array.isArray(d.TerminalCombos), 'TerminalCombos is array');
-  assert.ok(d.TerminalCombos.length > 0, 'at least one terminal combo');
+test('ferry/mukilteo/space endpoint — vessel name and capacity per sailing', async () => {
+  const d = await getJson('/api/ferry/mukilteo/space');
+  if (d.error === 'WSF_API_KEY not configured') {
+    console.log('  (skipping mukilteo space assertions — WSF_API_KEY not set)');
+    return;
+  }
+  assert.ok(typeof d === 'object', 'returns an object');
+  const keys = Object.keys(d);
+  assert.ok(keys.length > 0, 'has at least one departure entry');
+  assert.ok(keys.every(k => /^\d+$/.test(k)), 'keys are numeric ms timestamps');
+});
 
-  const combo = d.TerminalCombos[0];
-  assert.ok(combo.Times, 'first combo has Times');
-  assert.ok(Array.isArray(combo.Times), 'Times is array');
-  assert.ok(combo.Times.length > 0, `at least one sailing time (got ${combo.Times.length})`);
-
-  // Check time format — WSF uses /Date(milliseconds)/ format
-  const firstTime = combo.Times[0].DepartingTime || combo.Times[0].DepartureTime || '';
-  assert.ok(firstTime, 'first sailing has a time field');
-  assert.match(firstTime, /\/Date\(\d+/, 'time is in .NET JSON date format');
+test('ferry legacy alias — /api/ferry still works', async () => {
+  const d = await getJson('/api/ferry');
+  // Should return same shape as /api/ferry/clinton
+  if (d.error === 'WSF_API_KEY not configured') {
+    console.log('  (skipping legacy ferry alias — WSF_API_KEY not set)');
+    return;
+  }
+  assert.ok(!d.error, 'no error in legacy ferry response');
+  assert.ok(d.TerminalCombos, 'legacy alias returns TerminalCombos');
 });
 
 test('cache-status endpoint — returns cache metadata', async () => {
@@ -147,11 +198,13 @@ test('static HTML — index.html contains required elements', async () => {
   assert.ok(res.ok, 'index.html responds OK');
   const html = await res.text();
 
-  assert.ok(html.includes('<div id="clock"'), 'has #clock element');
-  assert.ok(html.includes('<div class="card" id="weather"') ||
-            html.includes('id="weather"'), 'has #weather element');
+  assert.ok(html.includes('id="clock"'), 'has #clock element');
+  assert.ok(html.includes('id="weather"'), 'has #weather element');
   assert.ok(html.includes('id="tides"'), 'has #tides element');
-  assert.ok(html.includes('id="ferry"'), 'has #ferry element');
+  assert.ok(html.includes('id="ferry"'), 'has #ferry container');
+  // Two-panel layout
+  assert.ok(html.includes('id="ferry-clinton"'), 'has #ferry-clinton panel');
+  assert.ok(html.includes('id="ferry-mukilteo"'), 'has #ferry-mukilteo panel');
   assert.ok(html.includes('Whidbey'), 'mentions Whidbey');
 });
 
