@@ -516,9 +516,9 @@ function buildThermometer(currentFt, minFt, maxFt, rising) {
   const TW = 12, TUBE_X = 1, rx = 3;
   const INSET = 2; // gap between tube wall and fill
   // Arrow column sits right of tube; labels further right
-  const ARROW_X = TUBE_X + TW + 4;  // center of arrow column
-  const LABEL_X = ARROW_X + 7;       // labels start past arrow
-  const W = LABEL_X + 20;            // enough room for "12.3"
+  const ARROW_X = TUBE_X + TW + 6;  // center of arrow column (gap from tube)
+  const LABEL_X = ARROW_X + 9;       // labels start past arrow
+  const W = LABEL_X + 22;            // enough room for "12.3"
 
   const range = maxFt - minFt || 1;
   const pct = Math.min(1, Math.max(0, (currentFt - minFt) / range));
@@ -556,8 +556,8 @@ function buildThermometer(currentFt, minFt, maxFt, rising) {
     <!-- arrow at waterline -->
     <path d="${arrowPath}" fill="#f87171"/>
     <!-- axis labels (right of arrow column) -->
-    <text x="${LABEL_X}" y="${PLOT_TOP + 6}" text-anchor="start" font-size="11" fill="rgba(203,213,225,0.9)">${maxFt.toFixed(1)}</text>
-    <text x="${LABEL_X}" y="${PLOT_TOP + PLOT_H}" text-anchor="start" font-size="11" fill="rgba(203,213,225,0.9)">${minFt.toFixed(1)}</text>
+    <text x="${LABEL_X}" y="${PLOT_TOP + 6}" text-anchor="start" font-size="11" fill="#38bdf8">${maxFt.toFixed(1)}</text>
+    <text x="${LABEL_X}" y="${PLOT_TOP + PLOT_H}" text-anchor="start" font-size="11" fill="#a78bfa">${minFt.toFixed(1)}</text>
   </svg>`;
 }
 
@@ -619,52 +619,7 @@ function buildSparkline(hourlyPredictions) {
   const area = `M${pts[0]} L${pts.join(' L')} L${xOf(n-1).toFixed(1)},${PAD_T+plotH} L${PAD_X},${PAD_T+plotH} Z`;
   const line = `M${pts[0]} L${pts.join(' L')}`;
 
-  // Daylight — covers both today and tomorrow (48h sparkline)
-  let daylightRect = '';
-  if (window._sunriseMs && window._sunsetMs) {
-    const dayMs = 24 * 3600 * 1000;
-    // Build sorted list of night/day transitions across the 48h window
-    // Start with full night, then alternate day/night for each sunrise/sunset
-    const transitions = [
-      { ms: window._sunriseMs,        day: true  },
-      { ms: window._sunsetMs,         day: false },
-      { ms: window._sunriseMs + dayMs, day: true  },
-      { ms: window._sunsetMs  + dayMs, day: false },
-    ].sort((a, b) => a.ms - b.ms);
-
-    const toX = ms => PAD_X + Math.min(1, Math.max(0, (ms - startMs2) / totalMs)) * (W - PAD_X * 2);
-    let segments = '';
-    let prevX = PAD_X;
-    let isDaySegment = window._sunriseMs > startMs2; // starts as night if before sunrise
-
-    // Start state: are we in day or night at sparkline start?
-    let startIsDay = window._sunriseMs <= startMs2 && window._sunsetMs > startMs2;
-    let curDay = startIsDay;
-    let curX = PAD_X;
-
-    for (const tr of transitions) {
-      if (tr.ms <= startMs2) { curDay = tr.day; continue; }
-      if (tr.ms >= startMs2 + totalMs) {
-        // Close out final segment
-        const endX = PAD_X + (W - PAD_X * 2);
-        const w = endX - curX;
-        if (w > 0) if (curDay) segments += `<rect x="${curX.toFixed(1)}" y="${PAD_T}" width="${w.toFixed(1)}" height="${plotH}" fill="rgba(255,255,255,0.05)"/>`;
-        curX = endX; break;
-      }
-      const tx = toX(tr.ms);
-      const w = tx - curX;
-      if (w > 0) if (curDay) segments += `<rect x="${curX.toFixed(1)}" y="${PAD_T}" width="${w.toFixed(1)}" height="${plotH}" fill="rgba(255,255,255,0.05)"/>`;
-      curX = tx;
-      curDay = tr.day;
-    }
-    // Final segment if not closed
-    const endX = PAD_X + (W - PAD_X * 2);
-    if (curX < endX) {
-      const w = endX - curX;
-      if (curDay) segments += `<rect x="${curX.toFixed(1)}" y="${PAD_T}" width="${w.toFixed(1)}" height="${plotH}" fill="rgba(255,255,255,0.05)"/>`;
-    }
-    daylightRect = segments;
-  }
+  // Daylight shading removed — background matches tile color (transparent)
 
   return `<svg id="tide-sparkline" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
     <defs>
@@ -674,7 +629,6 @@ function buildSparkline(hourlyPredictions) {
         <stop offset="100%" stop-color="#0c1a2e" stop-opacity="0.95"/>
       </linearGradient>
     </defs>
-    ${daylightRect}
     ${ticks}
     <path d="${area}" fill="url(#tideGrad)"/>
     <path d="${line}" fill="none" stroke="#7dd3fc" stroke-width="2" stroke-linejoin="round"/>
