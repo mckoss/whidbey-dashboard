@@ -550,14 +550,14 @@ function buildThermometer(currentFt, minFt, maxFt, rising) {
       </linearGradient>
     </defs>
     <!-- dark rounded tube outline -->
-    <rect x="${TUBE_X}" y="${PLOT_TOP}" width="${TW}" height="${PLOT_H}" rx="${rx}" fill="#0c1a2e" stroke="#38bdf8" stroke-opacity="0.35" stroke-width="0.5"/>
+    <rect x="${TUBE_X}" y="${PLOT_TOP}" width="${TW}" height="${PLOT_H}" rx="${rx}" fill="#0c1a2e" stroke="rgba(148,163,184,0.5)" stroke-width="1"/>
     <!-- water fill with matching gradient, flat rect inset from tube -->
     <rect x="${TUBE_X + INSET}" y="${fillY.toFixed(1)}" width="${TW - 2 * INSET}" height="${Math.max(0, fillH).toFixed(1)}" fill="url(#thermoGrad)"/>
     <!-- arrow at waterline -->
     <path d="${arrowPath}" fill="#f87171"/>
     <!-- axis labels (right of arrow column) -->
-    <text x="${LABEL_X}" y="${PLOT_TOP + 5}" text-anchor="start" font-size="7" fill="rgba(203,213,225,0.9)">${maxFt.toFixed(1)}</text>
-    <text x="${LABEL_X}" y="${PLOT_TOP + PLOT_H - 1}" text-anchor="start" font-size="7" fill="rgba(203,213,225,0.9)">${minFt.toFixed(1)}</text>
+    <text x="${LABEL_X}" y="${PLOT_TOP + 6}" text-anchor="start" font-size="11" fill="rgba(203,213,225,0.9)">${maxFt.toFixed(1)}</text>
+    <text x="${LABEL_X}" y="${PLOT_TOP + PLOT_H}" text-anchor="start" font-size="11" fill="rgba(203,213,225,0.9)">${minFt.toFixed(1)}</text>
   </svg>`;
 }
 
