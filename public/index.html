@@ -81,19 +81,16 @@
       letter-spacing: 0.05em;
     }
 
-    .age-banner {
-      position: absolute;
-      top: 0.4rem;
-      right: 0.4rem;
+    .age-tag {
       font-size: 0.6rem;
-      padding: 0.15rem 0.45rem;
+      padding: 0.15rem 0.4rem;
       border-radius: 0.25rem;
       font-variant-numeric: tabular-nums;
-      pointer-events: none;
-      display: none;
+      white-space: nowrap;
     }
-    .age-banner.warn { display: block; background: rgba(251,191,36,0.2); color: var(--warn); }
-    .age-banner.old  { display: block; background: rgba(248,113,113,0.2); color: var(--danger); animation: pulse 2s ease-in-out infinite; }
+    .age-tag.fresh { color: var(--dim); }
+    .age-tag.warn  { color: var(--warn); background: rgba(251,191,36,0.15); }
+    .age-tag.old   { color: var(--danger); background: rgba(248,113,113,0.15); animation: pulse 2s ease-in-out infinite; }
 
     /* --- WEATHER --- */
     #weather { grid-column: 1; display: flex; flex-direction: column; }
@@ -423,30 +420,29 @@ function markFresh(key) {
   dataUpdatedAt[key] = Date.now();
 }
 
-function ageBanner(key, staleData) {
-  // Returns an absolutely-positioned corner badge, only visible when data > 5 min old.
-  // If server flagged stale, trust server's age; otherwise use client timestamp.
+function ageTag(key, staleData) {
+  // Inline age indicator — always rendered, dim when fresh, amber/red when stale.
   let ageMin;
   if (staleData && staleData._stale) {
     ageMin = staleData._staleAgeMinutes;
   } else {
     const t = dataUpdatedAt[key];
-    if (!t) return `<span class="age-banner" id="${key}-age"></span>`;
+    if (!t) return `<span class="age-tag fresh" id="${key}-age">✓ live</span>`;
     ageMin = Math.round((Date.now() - t) / 60000);
   }
-  if (ageMin < 5) return `<span class="age-banner" id="${key}-age"></span>`;
-  const cls = ageMin >= 20 ? 'old' : 'warn';
-  return `<span class="age-banner ${cls}" id="${key}-age">⚠ ${ageMin}m old</span>`;
+  if (ageMin < 2)  return `<span class="age-tag fresh" id="${key}-age">✓ live</span>`;
+  if (ageMin < 5)  return `<span class="age-tag fresh" id="${key}-age">${ageMin}m ago</span>`;
+  if (ageMin < 20) return `<span class="age-tag warn"  id="${key}-age">⚠ ${ageMin}m old</span>`;
+  return               `<span class="age-tag old"   id="${key}-age">⚠ ${ageMin}m old</span>`;
 }
 
-// Refresh age banners every minute
+// Refresh age tags every minute
 setInterval(() => {
   for (const key of ['weather', 'tides', 'ferry-clinton', 'ferry-mukilteo']) {
     const el = document.getElementById(`${key}-age`);
     if (!el) continue;
-    const fresh = ageBanner(key, null);
     const tmp = document.createElement('span');
-    tmp.innerHTML = fresh;
+    tmp.innerHTML = ageTag(key, null);
     el.replaceWith(tmp.firstChild);
   }
 }, 60000);
@@ -484,8 +480,7 @@ async function loadWeather() {
 
     if (!d._stale) markFresh('weather');
     el.innerHTML = `
-      ${ageBanner('weather', d)}
-      <div class="card-title">Weather · Clinton, WA</div>
+      <div class="card-title">Weather · Clinton, WA ${ageTag('weather', d)}</div>
       <div class="current-weather">
         <div class="now-icon">${weatherIcon(cur.weather_code)}</div>
         <div class="now-temp">${Math.round(cur.temperature_2m)}°F</div>
@@ -647,7 +642,7 @@ async function loadTides() {
     }).join('');
 
     if (!hilo._stale) markFresh('tides');
-    el.innerHTML = `${ageBanner('tides', hilo)}<div class="card-title">Tides · Hansville</div>
+    el.innerHTML = `<div class="card-title">Tides · Hansville ${ageTag('tides', hilo)}</div>
       ${dirHtml}
       ${sparkHtml}
       <div class="tide-list">${items}</div>`;
@@ -807,11 +802,11 @@ function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spac
   const cards = displayList.map(s => sailingCard(s, parsedSailings, spaceMap)).join('');
 
   el.innerHTML = `
-    ${ageBanner(panelId, schedData)}
     <div class="ferry-panel-header">
       <span class="ferry-route">⛴ ${routeLabel}</span>
       <span id="${countdownId}" class="countdown-badge">⛴ ...</span>
       ${nextIsLast ? '<span class="last-sailing-note">⚠ Last</span>' : ''}
+      ${ageTag(panelId, schedData)}
     </div>
     <div class="sailings-grid">${cards}</div>`;
 
