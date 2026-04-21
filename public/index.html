@@ -558,9 +558,11 @@ function buildThermometer(currentFt, minFt, maxFt, rising) {
         <stop offset="100%" stop-color="#0c1a2e"/>
       </linearGradient>
     </defs>
-    <!-- tube outline: border rect behind, then dark fill inset by 1px -->
-    <rect x="${TUBE_X}" y="${PLOT_TOP}" width="${TW}" height="${PLOT_H}" rx="${rx}" fill="#4a5568"/>
-    <rect x="${TUBE_X + 1}" y="${PLOT_TOP + 1}" width="${TW - 2}" height="${PLOT_H - 2}" rx="${Math.max(0, rx - 1)}" fill="#0c1a2e"/>
+    <!-- tube: thin border lines (no fill, no stroke attr — max TV compat) -->
+    <line x1="${TUBE_X}" y1="${PLOT_TOP}" x2="${TUBE_X}" y2="${PLOT_TOP + PLOT_H}" stroke="#4a5568" stroke-width="1"/>
+    <line x1="${TUBE_X + TW}" y1="${PLOT_TOP}" x2="${TUBE_X + TW}" y2="${PLOT_TOP + PLOT_H}" stroke="#4a5568" stroke-width="1"/>
+    <line x1="${TUBE_X}" y1="${PLOT_TOP}" x2="${TUBE_X + TW}" y2="${PLOT_TOP}" stroke="#4a5568" stroke-width="1"/>
+    <line x1="${TUBE_X}" y1="${PLOT_TOP + PLOT_H}" x2="${TUBE_X + TW}" y2="${PLOT_TOP + PLOT_H}" stroke="#4a5568" stroke-width="1"/>
     <!-- water fill with matching gradient, flat rect inset from tube -->
     <rect x="${TUBE_X + INSET}" y="${fillY.toFixed(1)}" width="${TW - 2 * INSET}" height="${Math.max(0, fillH).toFixed(1)}" fill="url(#thermoGrad)"/>
     <!-- arrow at waterline -->
@@ -655,11 +657,11 @@ function buildSparkline(hourlyPredictions) {
       const tx = toX(tr.ms);
       const w = tx - curX;
       if (w > 0) {
-        // Pre-blended flat colors (no opacity — TV compat)
-        // Day: noticeably lighter blue-grey; Night: near-black
-        dayNightRects += curDay
-          ? `<rect x="${curX.toFixed(1)}" y="${PAD_T}" width="${w.toFixed(1)}" height="${plotH}" fill="#1e3a55"/>`
-          : `<rect x="${curX.toFixed(1)}" y="${PAD_T}" width="${w.toFixed(1)}" height="${plotH}" fill="#030508"/>`;
+        // Day: lighter blue-grey (#1e3a55); Night: card-bg-dark (#030508)
+        // Only draw day rects — night is just the card background showing through
+        if (curDay) {
+          dayNightRects += `<rect x="${curX.toFixed(1)}" y="${PAD_T}" width="${w.toFixed(1)}" height="${plotH}" fill="#1e3a55"/>`;
+        }
       }
       curX = tx;
       curDay = tr.day;
@@ -668,9 +670,9 @@ function buildSparkline(hourlyPredictions) {
     // Final segment
     if (curX < maxX) {
       const w = maxX - curX;
-      dayNightRects += curDay
-        ? `<rect x="${curX.toFixed(1)}" y="${PAD_T}" width="${w.toFixed(1)}" height="${plotH}" fill="#1e3a55"/>`
-        : `<rect x="${curX.toFixed(1)}" y="${PAD_T}" width="${w.toFixed(1)}" height="${plotH}" fill="#030508"/>`;
+      if (curDay) {
+          dayNightRects += `<rect x="${curX.toFixed(1)}" y="${PAD_T}" width="${w.toFixed(1)}" height="${plotH}" fill="#1e3a55"/>`;
+        }
     }
   }
 
