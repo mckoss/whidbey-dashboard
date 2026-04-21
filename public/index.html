@@ -16,7 +16,7 @@
       --warn: #fbbf24;
       --danger: #f87171;
       --tide-high: #38bdf8;
-      --tide-low: #7c3aed;
+      --tide-low: #a78bfa;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -65,6 +65,18 @@
       letter-spacing: 0.12em;
       color: var(--dim);
       margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .stale-badge {
+      font-size: 0.65rem;
+      padding: 0.1rem 0.4rem;
+      border-radius: 0.25rem;
+      background: rgba(251,191,36,0.15);
+      color: var(--warn);
+      letter-spacing: 0.05em;
     }
 
     /* --- WEATHER --- */
@@ -105,6 +117,66 @@
     /* --- TIDES --- */
     #tides { grid-column: 2; }
 
+    .tide-status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 0.75rem;
+      padding: 0.5rem 0.75rem;
+      background: var(--bg);
+      border-radius: 0.5rem;
+    }
+
+    .tide-direction {
+      font-size: 1rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .tide-direction.rising { color: var(--tide-high); }
+    .tide-direction.falling { color: var(--tide-low); }
+
+    .tide-progress-wrap {
+      flex: 1;
+      margin: 0 0.75rem;
+    }
+
+    .tide-progress-label {
+      font-size: 0.7rem;
+      color: var(--dim);
+      margin-bottom: 0.25rem;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .tide-progress-bar {
+      height: 4px;
+      background: var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .tide-progress-fill {
+      height: 100%;
+      border-radius: 2px;
+      transition: width 0.5s ease;
+    }
+    .rising .tide-progress-fill { background: var(--tide-high); }
+    .falling .tide-progress-fill { background: var(--tide-low); }
+
+    /* Tide sparkline */
+    .tide-graph-wrap {
+      margin-bottom: 0.75rem;
+    }
+
+    #tide-sparkline {
+      width: 100%;
+      height: 60px;
+      display: block;
+    }
+
     .tide-list { display: flex; flex-direction: column; gap: 0.5rem; }
 
     .tide-item {
@@ -114,7 +186,10 @@
       padding: 0.6rem 0.8rem;
       border-radius: 0.5rem;
       background: var(--bg);
+      transition: opacity 0.3s;
     }
+
+    .tide-item.past { opacity: 0.4; }
 
     .tide-item .tide-time { font-size: 0.95rem; font-variant-numeric: tabular-nums; }
     .tide-item .tide-label {
@@ -126,10 +201,10 @@
       letter-spacing: 0.08em;
     }
     .tide-item.high .tide-label { background: rgba(56,189,248,0.15); color: var(--tide-high); }
-    .tide-item.low .tide-label { background: rgba(124,58,237,0.15); color: #a78bfa; }
+    .tide-item.low .tide-label { background: rgba(167,139,250,0.15); color: var(--tide-low); }
     .tide-item .tide-height { font-size: 1.1rem; font-weight: 600; font-variant-numeric: tabular-nums; }
     .tide-item.high .tide-height { color: var(--tide-high); }
-    .tide-item.low .tide-height { color: #a78bfa; }
+    .tide-item.low .tide-height { color: var(--tide-low); }
     .tide-item .tide-day { font-size: 0.75rem; color: var(--dim); }
 
     /* --- FERRY --- */
@@ -140,9 +215,18 @@
       justify-content: space-between;
       align-items: center;
       margin-bottom: 1rem;
+      flex-wrap: wrap;
+      gap: 0.5rem;
     }
 
     .ferry-route { font-size: 0.95rem; color: var(--accent2); }
+
+    .ferry-meta {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
 
     .wait-badge {
       font-size: 0.8rem;
@@ -150,6 +234,37 @@
       border-radius: 999px;
       background: rgba(251,191,36,0.15);
       color: var(--warn);
+    }
+
+    .countdown-badge {
+      font-size: 0.9rem;
+      font-weight: 600;
+      padding: 0.3rem 0.9rem;
+      border-radius: 999px;
+      background: rgba(52,211,153,0.15);
+      color: var(--accent2);
+      font-variant-numeric: tabular-nums;
+      min-width: 120px;
+      text-align: center;
+    }
+
+    .countdown-badge.urgent {
+      background: rgba(251,191,36,0.2);
+      color: var(--warn);
+      animation: pulse 1s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+
+    .last-sailing-note {
+      font-size: 0.8rem;
+      color: var(--warn);
+      padding: 0.2rem 0.6rem;
+      border-radius: 999px;
+      background: rgba(251,191,36,0.1);
     }
 
     .sailings-grid {
@@ -164,15 +279,22 @@
       padding: 0.6rem 0.75rem;
       text-align: center;
       border: 1px solid transparent;
-      transition: border-color 0.3s;
+      transition: border-color 0.3s, opacity 0.3s;
     }
 
-    .sailing.next { border-color: var(--accent2); }
-    .sailing.departed { opacity: 0.35; }
+    .sailing.next {
+      border-color: var(--accent2);
+      background: rgba(52,211,153,0.06);
+    }
+
+    .sailing.past { opacity: 0.3; }
+
+    .sailing.last-of-day { border-color: var(--warn); }
 
     .sailing .sail-time { font-size: 1.05rem; font-variant-numeric: tabular-nums; }
     .sailing .sail-status { font-size: 0.7rem; color: var(--dim); margin-top: 0.2rem; }
     .sailing.next .sail-status { color: var(--accent2); }
+    .sailing.last-of-day .sail-status { color: var(--warn); }
 
     .loading { color: var(--dim); font-size: 0.9rem; padding: 1rem 0; }
     .error-msg { color: var(--danger); font-size: 0.85rem; }
@@ -229,7 +351,7 @@ function updateClock() {
 updateClock();
 setInterval(updateClock, 1000);
 
-// ── Weather codes → emoji ──────────────────────────────────────────────
+// ── Weather codes ──────────────────────────────────────────────────────
 function weatherIcon(code) {
   if (code === 0) return '☀️';
   if (code <= 2) return '⛅';
@@ -261,6 +383,14 @@ function windDir(deg) {
   return dirs[Math.round(deg / 45) % 8];
 }
 
+// ── Stale indicator helper ─────────────────────────────────────────────
+function staleBadge(data) {
+  if (data && data._stale) {
+    return ` <span class="stale-badge">⚠ stale ${data._staleAgeMinutes}m</span>`;
+  }
+  return '';
+}
+
 // ── Weather ────────────────────────────────────────────────────────────
 async function loadWeather() {
   const el = document.getElementById('weather');
@@ -273,16 +403,19 @@ async function loadWeather() {
     const days = daily.time.slice(0, 3).map((t, i) => {
       const date = new Date(t + 'T12:00:00');
       const name = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : DAYS[date.getDay()];
-      return { name, icon: weatherIcon(daily.weather_code[i]),
+      return {
+        name,
+        icon: weatherIcon(daily.weather_code[i]),
         hi: Math.round(daily.temperature_2m_max[i]),
         lo: Math.round(daily.temperature_2m_min[i]),
         precip: daily.precipitation_probability_max[i],
         wind: Math.round(daily.wind_speed_10m_max[i]),
-        windDir: windDir(daily.wind_direction_10m_dominant[i]) };
+        windDir: windDir(daily.wind_direction_10m_dominant[i]),
+      };
     });
 
     el.innerHTML = `
-      <div class="card-title">Weather · Clinton, WA</div>
+      <div class="card-title">Weather · Clinton, WA${staleBadge(d)}</div>
       <div class="current-weather">
         <div class="now-icon">${weatherIcon(cur.weather_code)}</div>
         <div class="now-temp">${Math.round(cur.temperature_2m)}°F</div>
@@ -308,33 +441,154 @@ async function loadWeather() {
   }
 }
 
+// ── Tide sparkline ─────────────────────────────────────────────────────
+function buildSparkline(hourlyPredictions) {
+  if (!hourlyPredictions || hourlyPredictions.length < 2) return '';
+
+  const values = hourlyPredictions.map(p => parseFloat(p.v));
+  const times = hourlyPredictions.map(p => new Date(p.t));
+  const minV = Math.min(...values);
+  const maxV = Math.max(...values);
+  const range = maxV - minV || 1;
+
+  const W = 400, H = 60, PAD = 4;
+  const n = values.length;
+
+  // Build SVG path
+  const pts = values.map((v, i) => {
+    const x = PAD + ((i / (n - 1)) * (W - PAD * 2));
+    const y = H - PAD - ((v - minV) / range) * (H - PAD * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+
+  // Current time marker
+  const now = Date.now();
+  const nowIdx = times.findIndex(t => t.getTime() > now);
+  let nowLine = '';
+  if (nowIdx > 0) {
+    const nx = PAD + ((nowIdx / (n - 1)) * (W - PAD * 2));
+    nowLine = `<line x1="${nx.toFixed(1)}" y1="0" x2="${nx.toFixed(1)}" y2="${H}" stroke="rgba(255,255,255,0.3)" stroke-width="1.5" stroke-dasharray="3,3"/>`;
+  }
+
+  // Y-axis labels
+  const midV = ((minV + maxV) / 2).toFixed(1);
+  const labels = `
+    <text x="${PAD + 2}" y="${PAD + 8}" fill="rgba(148,163,184,0.6)" font-size="8">${maxV.toFixed(1)}ft</text>
+    <text x="${PAD + 2}" y="${H - PAD}" fill="rgba(148,163,184,0.6)" font-size="8">${minV.toFixed(1)}ft</text>`;
+
+  // Filled area under curve
+  const area = `M${pts[0]} L${pts.join(' L')} L${(PAD + (W - PAD * 2)).toFixed(1)},${H} L${PAD},${H} Z`;
+  const line = `M${pts[0]} L${pts.join(' L')}`;
+
+  return `<svg id="tide-sparkline" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+    <defs>
+      <linearGradient id="tideGrad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.3"/>
+        <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.02"/>
+      </linearGradient>
+    </defs>
+    <path d="${area}" fill="url(#tideGrad)"/>
+    <path d="${line}" fill="none" stroke="#38bdf8" stroke-width="1.5" stroke-linejoin="round"/>
+    ${nowLine}
+    ${labels}
+  </svg>`;
+}
+
+// ── Tide direction ─────────────────────────────────────────────────────
+function getTideDirection(predictions) {
+  const now = Date.now();
+  // Find surrounding hi/lo events
+  const future = predictions.filter(p => new Date(p.t).getTime() > now);
+  const past = predictions.filter(p => new Date(p.t).getTime() <= now);
+
+  if (!future.length || !past.length) return null;
+
+  const lastEvent = past[past.length - 1];
+  const nextEvent = future[0];
+
+  const lastTime = new Date(lastEvent.t).getTime();
+  const nextTime = new Date(nextEvent.t).getTime();
+  const elapsed = now - lastTime;
+  const total = nextTime - lastTime;
+  const progress = Math.min(1, Math.max(0, elapsed / total));
+
+  const isRising = nextEvent.type === 'H';
+  const fromHeight = parseFloat(lastEvent.v);
+  const toHeight = parseFloat(nextEvent.v);
+
+  return {
+    rising: isRising,
+    progress,
+    fromHeight,
+    toHeight,
+    nextEvent,
+  };
+}
+
 // ── Tides ──────────────────────────────────────────────────────────────
 async function loadTides() {
   const el = document.getElementById('tides');
   try {
-    const res = await fetch('/api/tides');
-    const d = await res.json();
+    // Fetch hi/lo and hourly in parallel
+    const [hiloRes, hourlyRes] = await Promise.allSettled([
+      fetch('/api/tides').then(r => r.json()),
+      fetch('/api/tides/hourly').then(r => r.json()),
+    ]);
 
-    if (!d.predictions) {
-      el.innerHTML = `<div class="card-title">Tides</div><div class="error-msg">${d.error?.message || 'No tide data'}</div>`;
+    const hilo = hiloRes.status === 'fulfilled' ? hiloRes.value : null;
+    const hourly = hourlyRes.status === 'fulfilled' ? hourlyRes.value : null;
+
+    if (!hilo || !hilo.predictions) {
+      el.innerHTML = `<div class="card-title">Tides</div><div class="error-msg">${hilo?.error?.message || 'No tide data'}</div>`;
       return;
     }
 
     const now = new Date();
-    // Show next 8 tide events
-    const upcoming = d.predictions
+    const predictions = hilo.predictions;
+
+    // Direction indicator
+    const dir = getTideDirection(predictions);
+    let dirHtml = '';
+    if (dir) {
+      const pct = (dir.progress * 100).toFixed(0);
+      const dirClass = dir.rising ? 'rising' : 'falling';
+      const arrow = dir.rising ? '🔺' : '🔻';
+      const label = dir.rising ? 'Rising' : 'Falling';
+      const nextTimeStr = new Date(dir.nextEvent.t).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      const nextLabel = dir.nextEvent.type === 'H' ? 'High' : 'Low';
+      dirHtml = `
+        <div class="tide-status-bar ${dirClass}">
+          <div class="tide-direction ${dirClass}">${arrow} ${label}</div>
+          <div class="tide-progress-wrap">
+            <div class="tide-progress-label">
+              <span>${dir.fromHeight.toFixed(1)}ft</span>
+              <span>${nextLabel} ${nextTimeStr} · ${dir.toHeight.toFixed(1)}ft</span>
+            </div>
+            <div class="tide-progress-bar">
+              <div class="tide-progress-fill" style="width:${pct}%"></div>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    // Sparkline
+    const sparkHtml = hourly?.predictions
+      ? `<div class="tide-graph-wrap">${buildSparkline(hourly.predictions)}</div>`
+      : '';
+
+    // Hi/lo list — next 7 events
+    const upcoming = predictions
       .map(p => ({ ...p, date: new Date(p.t) }))
-      .filter(p => p.date >= new Date(now.getTime() - 3600000)) // include last hour
-      .slice(0, 8);
+      .filter(p => p.date >= new Date(now.getTime() - 3600000))
+      .slice(0, 7);
 
     const items = upcoming.map(p => {
-      const dt = p.date;
-      const isToday = dt.toDateString() === now.toDateString();
-      const isTomorrow = dt.toDateString() === new Date(now.getTime() + 86400000).toDateString();
-      const dayLabel = isToday ? '' : isTomorrow ? 'Tomorrow' : DAYS[dt.getDay()];
-      const timeStr = dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-      const isPast = dt < now;
-      return `<div class="tide-item ${p.type === 'H' ? 'high' : 'low'} ${isPast ? 'departed' : ''}">
+      const isToday = p.date.toDateString() === now.toDateString();
+      const isTomorrow = p.date.toDateString() === new Date(now.getTime() + 86400000).toDateString();
+      const dayLabel = isToday ? '' : isTomorrow ? 'Tomorrow' : DAYS[p.date.getDay()];
+      const timeStr = p.date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      const isPast = p.date < now;
+      return `<div class="tide-item ${p.type === 'H' ? 'high' : 'low'} ${isPast ? 'past' : ''}">
         <div>
           <div class="tide-time">${timeStr}</div>
           ${dayLabel ? `<div class="tide-day">${dayLabel}</div>` : ''}
@@ -344,18 +598,53 @@ async function loadTides() {
       </div>`;
     }).join('');
 
-    el.innerHTML = `<div class="card-title">Tides · Hansville Station</div>
+    el.innerHTML = `<div class="card-title">Tides · Hansville${staleBadge(hilo)}</div>
+      ${dirHtml}
+      ${sparkHtml}
       <div class="tide-list">${items}</div>`;
+
   } catch (e) {
     el.innerHTML = `<div class="card-title">Tides</div><div class="error-msg">Failed: ${e.message}</div>`;
   }
+}
+
+// ── Ferry countdown ────────────────────────────────────────────────────
+let ferryNextTime = null;
+let countdownInterval = null;
+
+function formatCountdown(ms) {
+  if (ms < 0) return null;
+  const totalMin = Math.floor(ms / 60000);
+  const hours = Math.floor(totalMin / 60);
+  const mins = totalMin % 60;
+  if (hours > 0) return `${hours}h ${mins}m`;
+  if (totalMin < 1) return 'Departing now!';
+  return `${mins} min`;
+}
+
+function updateCountdown() {
+  const el = document.getElementById('ferry-countdown');
+  if (!el || !ferryNextTime) return;
+
+  const remaining = ferryNextTime - Date.now();
+  const text = formatCountdown(remaining);
+
+  if (!text) {
+    el.textContent = 'No more sailings today';
+    el.className = 'countdown-badge';
+    clearInterval(countdownInterval);
+    return;
+  }
+
+  const urgent = remaining < 15 * 60 * 1000;
+  el.textContent = `⛴ Next in ${text}`;
+  el.className = `countdown-badge${urgent ? ' urgent' : ''}`;
 }
 
 // ── Ferry ──────────────────────────────────────────────────────────────
 async function loadFerry() {
   const el = document.getElementById('ferry');
 
-  // Fetch schedule and wait times in parallel
   const [schedRes, waitRes] = await Promise.allSettled([
     fetch('/api/ferry').then(r => r.json()),
     fetch('/api/ferry/wait').then(r => r.json()),
@@ -368,7 +657,7 @@ async function loadFerry() {
     el.innerHTML = `<div class="card-title">Clinton → Mukilteo Ferry Schedule</div>
       <div class="no-ferry-key">
         Ferry schedule requires a free WSDOT API key.<br>
-        <a href="https://www.wsdot.wa.gov/traffic/api/" target="_blank">Register here</a>, then add it to your <code>.env</code> file as <code>WSF_API_KEY</code>.
+        <a href="https://www.wsdot.wa.gov/traffic/api/" target="_blank">Register here</a>, then add it to your <code>.env</code> as <code>WSF_API_KEY</code>.
       </div>`;
     return;
   }
@@ -377,7 +666,6 @@ async function loadFerry() {
     const now = new Date();
     let sailings = [];
 
-    // WSF scheduletoday response: { TerminalCombos: [{ Times: [...] }] }
     if (Array.isArray(sched)) {
       sailings = sched;
     } else if (sched.TerminalCombos?.[0]?.Times) {
@@ -388,59 +676,86 @@ async function loadFerry() {
       sailings = sched.Times;
     }
 
-    // Extract wait time if available
+    // Parse sailing times
+    const parsedSailings = sailings
+      .map(s => {
+        const rawTime = s.DepartingTime || s.DepartureTime || s.Time || s.SailingTime || '';
+        if (!rawTime) return null;
+        const ms = rawTime.match(/\/Date\((\d+)/);
+        const sailTime = ms ? new Date(parseInt(ms[1])) : new Date(rawTime);
+        if (isNaN(sailTime)) return null;
+        return { ...s, sailTime };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.sailTime - b.sailTime);
+
+    // Wait time badge
     let waitText = null;
     if (wait && !wait.error && Array.isArray(wait)) {
       const terminal = wait[0];
-      if (terminal?.DepartingSpaces) {
-        const spaces = terminal.DepartingSpaces[0];
-        if (spaces?.SpaceCount !== undefined) {
-          waitText = `~${spaces.SpaceCount} drive-up spaces`;
-        }
+      if (terminal?.DepartingSpaces?.[0]?.SpaceCount !== undefined) {
+        waitText = `~${terminal.DepartingSpaces[0].SpaceCount} drive-up spaces`;
       }
     }
 
-    if (!sailings.length) {
-      el.innerHTML = `<div class="card-title">Clinton → Mukilteo Ferry</div>
-        <div class="ferry-header">
-          <span class="ferry-route">Clinton → Mukilteo</span>
-          ${waitText ? `<span class="wait-badge">🚗 ${waitText}</span>` : ''}
-        </div>
-        <div class="error-msg">No sailings found for today. Check WSF API response format.</div>`;
+    if (!parsedSailings.length) {
+      el.innerHTML = `<div class="card-title">Clinton → Mukilteo Ferry${staleBadge(sched)}</div>
+        <div class="error-msg">No sailings found for today.</div>`;
       return;
     }
 
-    const sailingEls = sailings.map(s => {
-      // Try various time field names WSF might use
-      // WSF times are .NET JSON dates: /Date(milliseconds-offset)/
-      const rawTime = s.DepartingTime || s.DepartureTime || s.Time || s.SailingTime || '';
-      if (!rawTime) return '';
-      const ms = rawTime.match(/\/Date\((\d+)/);
-      const sailTime = ms ? new Date(parseInt(ms[1])) : new Date(rawTime);
-      if (isNaN(sailTime)) return '';
-      const isPast = sailTime < now;
-      const isNext = !isPast && sailings
-        .filter(x => {
-          const rt = x.DepartingTime || x.DepartureTime || x.Time || x.SailingTime || '';
-          const m = rt.match(/\/Date\((\d+)/);
-          const t = m ? new Date(parseInt(m[1])) : new Date(rt);
-          return t >= now;
-        })
-        .indexOf(s) === 0;
+    // Find next sailing
+    const nextIdx = parsedSailings.findIndex(s => s.sailTime >= now);
+    const lastIdx = parsedSailings.length - 1;
 
-      const display = sailTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-      return `<div class="sailing ${isPast ? 'departed' : ''} ${isNext ? 'next' : ''}">
+    // Set countdown target
+    ferryNextTime = nextIdx >= 0 ? parsedSailings[nextIdx].sailTime.getTime() : null;
+
+    const sailingEls = parsedSailings.map((s, i) => {
+      const isPast = s.sailTime < now;
+      const isNext = i === nextIdx;
+      const isLast = i === lastIdx;
+      const display = s.sailTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+
+      let statusText = '';
+      let cssClass = 'sailing';
+      if (isPast) {
+        cssClass += ' past';
+        statusText = 'Departed';
+      } else if (isNext) {
+        cssClass += ' next';
+        statusText = '▶ Next';
+      } else if (isLast) {
+        cssClass += ' last-of-day';
+        statusText = '🔔 Last';
+      }
+
+      return `<div class="${cssClass}">
         <div class="sail-time">${display}</div>
-        <div class="sail-status">${isNext ? '▶ Next' : isPast ? 'Departed' : ''}</div>
+        <div class="sail-status">${statusText}</div>
       </div>`;
     }).join('');
 
-    el.innerHTML = `<div class="card-title">Clinton → Mukilteo Ferry Schedule</div>
+    // Is the next sailing also the last?
+    const nextIsLast = nextIdx === lastIdx;
+
+    el.innerHTML = `<div class="card-title">Clinton → Mukilteo Ferry Schedule${staleBadge(sched)}</div>
       <div class="ferry-header">
         <span class="ferry-route">⛴ Clinton → Mukilteo</span>
-        ${waitText ? `<span class="wait-badge">🚗 ${waitText}</span>` : ''}
+        <div class="ferry-meta">
+          ${ferryNextTime ? `<span id="ferry-countdown" class="countdown-badge">⛴ calculating...</span>` : '<span class="countdown-badge">No more sailings today</span>'}
+          ${nextIsLast && ferryNextTime ? '<span class="last-sailing-note">⚠ Last sailing today</span>' : ''}
+          ${waitText ? `<span class="wait-badge">🚗 ${waitText}</span>` : ''}
+        </div>
       </div>
       <div class="sailings-grid">${sailingEls}</div>`;
+
+    // Start / restart countdown
+    if (countdownInterval) clearInterval(countdownInterval);
+    updateCountdown();
+    if (ferryNextTime) {
+      countdownInterval = setInterval(updateCountdown, 30000);
+    }
 
   } catch (e) {
     el.innerHTML = `<div class="card-title">Ferry</div><div class="error-msg">Failed: ${e.message}</div>`;
@@ -452,10 +767,9 @@ loadWeather();
 loadTides();
 loadFerry();
 
-// Refresh data periodically
-setInterval(loadWeather, 10 * 60 * 1000);   // every 10 min
-setInterval(loadTides, 30 * 60 * 1000);     // every 30 min
-setInterval(loadFerry, 5 * 60 * 1000);      // every 5 min
+setInterval(loadWeather, 10 * 60 * 1000);
+setInterval(loadTides,   30 * 60 * 1000);
+setInterval(loadFerry,    5 * 60 * 1000);
 
 </script>
 </body>
