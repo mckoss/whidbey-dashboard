@@ -29,7 +29,7 @@
       overflow: hidden;
       padding: 0.75rem;
       display: grid;
-      grid-template-rows: auto 1fr 1fr;
+      grid-template-rows: auto 1fr auto;
       grid-template-columns: 1fr 1fr;
       gap: 0.75rem;
     }
@@ -209,7 +209,7 @@
     .tide-item .tide-day { font-size: 0.75rem; color: var(--dim); }
 
     /* --- FERRY --- */
-    #ferry { grid-column: 1 / -1; overflow: hidden; display: flex; flex-direction: column; }
+    #ferry { grid-column: 1 / -1; overflow: hidden; display: flex; flex-direction: column; min-height: 155px; }
 
     .ferry-panels {
       display: grid;
