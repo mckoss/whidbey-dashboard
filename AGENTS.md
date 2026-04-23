@@ -9,6 +9,7 @@ An ambient TV dashboard for Mike Koss's Whidbey Island beach house. Single-scree
 ## Hard Rules
 
 1. **`npm test` green before every `git commit`.** No exceptions.
+2. **Commit at feature completion, not turn-by-turn.** Interactive sessions involve many back-and-forth turns to refine a feature. Don't commit after every edit — wait until the feature or fix feels complete. When you think it's a good checkpoint, ask: "Shall I commit now?" and wait for confirmation before running `git commit`. **Exception:** if Mike hasn't responded in 15+ minutes and there are uncommitted changes at a clean stopping point, go ahead and commit without asking.
 2. **No bundlers.** Single-file frontend (`public/index.html`), plain Express server (`server.js`). This is intentional.
 3. **No scrolling.** `height: 100vh; overflow: hidden` on body. Everything must fit one TV screen.
 4. **Restart after server changes.** `bash restart.sh` kills the old process and starts fresh.
