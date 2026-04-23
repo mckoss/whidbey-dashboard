@@ -366,10 +366,12 @@ const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov
 
 function updateClock() {
   const now = new Date();
-  const h = String(now.getHours()).padStart(2, '0');
+  let hr = now.getHours();
+  const ampm = hr >= 12 ? 'pm' : 'am';
+  hr = hr % 12 || 12;
   const m = String(now.getMinutes()).padStart(2, '0');
   const s = String(now.getSeconds()).padStart(2, '0');
-  clockEl.textContent = `${h}:${m}:${s}`;
+  clockEl.textContent = `${hr}:${m}:${s} ${ampm}`;
   dateEl.textContent = `${DAYS[now.getDay()]}, ${MONTHS[now.getMonth()]} ${now.getDate()}, ${now.getFullYear()}`;
 }
 updateClock();
