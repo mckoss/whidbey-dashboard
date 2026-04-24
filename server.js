@@ -124,8 +124,9 @@ app.get('/api/tides/hourly', cachedEndpoint('tides_hourly', 2 * 60 * 60 * 1000, 
   if (!data.predictions) throw new Error('NOAA returned no predictions');
 
   // Cosine interpolation between hi/lo events → hourly points
+  // NOAA returns GMT timestamps as "YYYY-MM-DD HH:MM" — parse as UTC explicitly
   const events = data.predictions.map(p => ({
-    t: new Date(p.t).getTime(),
+    t: new Date(p.t.replace(' ', 'T') + 'Z').getTime(),
     v: parseFloat(p.v),
   }));
 
@@ -154,8 +155,8 @@ app.get('/api/tides/hourly', cachedEndpoint('tides_hourly', 2 * 60 * 60 * 1000, 
       continue;
     }
     const dt = new Date(ms);
-    const tStr = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')} ` +
-      `${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;
+    // Output as ISO UTC so client parses unambiguously regardless of browser timezone
+    const tStr = dt.toISOString();
     predictions.push({ t: tStr, v: v.toFixed(3) });
   }
 
