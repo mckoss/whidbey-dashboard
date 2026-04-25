@@ -371,7 +371,7 @@
 <body>
 
 <header>
-  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.3.0</span></h1>
+  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.3.1</span></h1>
   <div class="sun-times" id="sun-times"></div>
   <div id="moon-phase"></div>
   <div>
@@ -451,7 +451,7 @@ function renderMoon() {
   if (illumination < 0.01) {
     // New moon: thin outline, dark interior
     el.innerHTML = `<svg width="40" height="40" viewBox="0 0 40 40">
-      <circle cx="${cx}" cy="${cy}" r="${R}" fill="#0a0e1a" stroke="#4a5568" stroke-width="0.8"/>
+      <circle cx="${cx}" cy="${cy}" r="${R}" fill="#000000" stroke="#4a5568" stroke-width="0.8"/>
     </svg>`;
     return;
   }
@@ -494,7 +494,7 @@ function renderMoon() {
   }
 
   el.innerHTML = `<svg width="40" height="40" viewBox="0 0 40 40">
-    <circle cx="${cx}" cy="${cy}" r="${R}" fill="#0a0e1a" stroke="#2a3548" stroke-width="0.5"/>
+    <circle cx="${cx}" cy="${cy}" r="${R}" fill="#000000" stroke="#4a5568" stroke-width="0.8"/>
     <path d="${litPath}" fill="#c8d6e5"/>
   </svg>`;
 }
