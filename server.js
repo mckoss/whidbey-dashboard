@@ -190,13 +190,70 @@ app.get('/api/weather', cachedEndpoint('weather', 60 * 60 * 1000, async () => {
 }));
 
 // ── Ferry schedule helper (reusable for either direction) ────────────
+//
+// Midnight carry-over fix (issue #18):
+// After midnight, scheduletoday flips to the new day and drops late-night
+// sailings (e.g. the 12:35 AM boat) that are still in the future.
+// We retain those sailings from the previous response until they depart.
+//
+// Per-direction store: cacheKey → array of sailing Time objects from last fetch
+const previousSailingsStore = new Map();
+
+// Extract the departure epoch ms from a WSF Times entry
+function parseDepartureMs(timeEntry) {
+  const m = timeEntry?.DepartingTime?.match(/\/Date\((\d+)/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
 function ferryScheduleEndpoint(cacheKey, fromTerminal, toTerminal) {
   return cachedEndpoint(cacheKey, 30 * 1000, async () => {
     if (!WSF_API_KEY) return { error: 'WSF_API_KEY not configured', sailings: [] };
     const url = `https://www.wsdot.wa.gov/ferries/api/schedule/rest/scheduletoday` +
       `/${fromTerminal}/${toTerminal}/false?apiaccesscode=${WSF_API_KEY}`;
     const r = await fetchWithRetry(url, { headers: { Accept: 'application/json' } });
-    return r.json();
+    const data = await r.json();
+
+    // Merge carry-over sailings into the new response
+    const combo = data?.TerminalCombos?.[0];
+    if (combo && Array.isArray(combo.Times)) {
+      const now = Date.now();
+      const newSailings = combo.Times;
+
+      // Build a set of departure timestamps from the fresh response for dedup
+      const newMs = new Set(
+        newSailings.map(parseDepartureMs).filter(ms => ms !== null)
+      );
+
+      // Keep previous sailings that are still in the future but absent from the new response
+      const previous = previousSailingsStore.get(cacheKey) || [];
+      const carryOver = previous.filter(s => {
+        const ms = parseDepartureMs(s);
+        return ms !== null && ms > now && !newMs.has(ms);
+      });
+
+      if (carryOver.length > 0) {
+        console.log(`[ferry:${cacheKey}] carrying over ${carryOver.length} late-night sailing(s) past midnight`);
+      }
+
+      // Merge and sort by departure time
+      const merged = [...carryOver, ...newSailings].sort(
+        (a, b) => (parseDepartureMs(a) || 0) - (parseDepartureMs(b) || 0)
+      );
+
+      // Save merged set for the next fetch cycle
+      previousSailingsStore.set(cacheKey, merged);
+
+      // Return response with merged Times, preserving original shape
+      return {
+        ...data,
+        TerminalCombos: [
+          { ...combo, Times: merged },
+          ...data.TerminalCombos.slice(1),
+        ],
+      };
+    }
+
+    return data;
   });
 }
 
