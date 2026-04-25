@@ -222,9 +222,9 @@
     .tide-list { display: grid; grid-template-rows: repeat(4, 1fr); gap: 0.3rem; flex: 1; min-height: 0; overflow: hidden; }
 
     .tide-item {
-      display: flex;
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
       align-items: center;
-      justify-content: space-between;
       padding: 0 0.75rem;
       border-radius: 0.4rem;
       background: var(--bg);
@@ -242,10 +242,13 @@
       border-radius: 0.3rem;
       text-transform: uppercase;
       letter-spacing: 0.08em;
+      justify-self: center;
+      width: 3.2rem;
+      text-align: center;
     }
     .tide-item.high .tide-label { background: rgba(56,189,248,0.15); color: var(--tide-high); }
     .tide-item.low .tide-label { background: rgba(167,139,250,0.15); color: var(--tide-low); }
-    .tide-item .tide-height { font-size: 1rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .tide-item .tide-height { font-size: 1rem; font-weight: 600; font-variant-numeric: tabular-nums; justify-self: end; }
     .tide-item.high .tide-height { color: var(--tide-high); }
     .tide-item.low .tide-height { color: var(--tide-low); }
     .tide-item .tide-day { font-size: 0.7rem; color: var(--dim); margin-top: 0.15rem; }
@@ -368,7 +371,7 @@
 <body>
 
 <header>
-  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.2.0</span></h1>
+  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.2.1</span></h1>
   <div class="sun-times" id="sun-times"></div>
   <div>
     <div id="clock">--:--:--</div>
