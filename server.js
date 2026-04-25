@@ -124,9 +124,9 @@ app.get('/api/tides/hourly', cachedEndpoint('tides_hourly', 2 * 60 * 60 * 1000, 
   if (!data.predictions) throw new Error('NOAA returned no predictions');
 
   // Cosine interpolation between hi/lo events → hourly points
-  // NOAA returns GMT timestamps as "YYYY-MM-DD HH:MM" — parse as UTC explicitly
+  // NOAA returns lst_ldt (local Pacific) timestamps — parse as local time (no Z suffix)
   const events = data.predictions.map(p => ({
-    t: new Date(p.t.replace(' ', 'T') + 'Z').getTime(),
+    t: new Date(p.t.replace(' ', 'T')).getTime(),
     v: parseFloat(p.v),
   }));
 
@@ -155,8 +155,9 @@ app.get('/api/tides/hourly', cachedEndpoint('tides_hourly', 2 * 60 * 60 * 1000, 
       continue;
     }
     const dt = new Date(ms);
-    // Output as ISO UTC so client parses unambiguously regardless of browser timezone
-    const tStr = dt.toISOString();
+    // Output as local Pacific time string so client parses it as local time
+    const tStr = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')} ` +
+      `${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;
     predictions.push({ t: tStr, v: v.toFixed(3) });
   }
 
@@ -237,7 +238,8 @@ app.get('/api/cache-status', (req, res) => {
 });
 
 function formatDate(d) {
-  return d.toISOString().split('T')[0].replace(/-/g, '');
+  // Use local date components to match lst_ldt timezone of NOAA responses
+  return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
 }
 
 app.listen(PORT, () => {
