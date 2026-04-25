@@ -13,6 +13,7 @@ An ambient TV dashboard for Mike Koss's Whidbey Island beach house. Single-scree
 2. **No bundlers.** Single-file frontend (`public/index.html`), plain Express server (`server.js`). This is intentional.
 3. **No scrolling.** `height: 100vh; overflow: hidden` on body. Everything must fit one TV screen.
 4. **Restart after server changes.** `bash restart.sh` kills the old process and starts fresh.
+5. **Bump the version before every push.** The version string lives in `public/index.html` in the `<h1>` tag (e.g. `v1.2.0`). Increment the patch for fixes, minor for features. This is how Mike confirms which build is deployed on Railway.
 
 ## Architecture
 
