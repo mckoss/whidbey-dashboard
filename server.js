@@ -103,7 +103,10 @@ app.get('/api/tides', cachedEndpoint('tides', 2 * 60 * 60 * 1000, async () => {
   const r = await fetchWithRetry(url);
   const data = await r.json();
   if (data.error) throw new Error(data.error.message || 'NOAA returned error');
-  return data;
+  // Stamp each prediction with explicit Pacific offset so clients parse unambiguously
+  const offset = pacificOffset();
+  const predictions = data.predictions.map(p => ({ ...p, t: p.t.replace(' ', 'T') + ':00' + offset }));
+  return { ...data, predictions };
 }));
 
 // ── Tides (hourly interpolated, 48h) — for sparkline graph ──────────────
@@ -131,6 +134,7 @@ app.get('/api/tides/hourly', cachedEndpoint('tides_hourly', 2 * 60 * 60 * 1000, 
   }));
 
   // Get current Pacific hour as a fake-UTC epoch so loop ms values stay in Pacific space.
+  const offset = pacificOffset();
   const predictions = [];
   const nowPac = new Date().toLocaleString('sv-SE', { timeZone: 'America/Los_Angeles' });
   const startMs = new Date(nowPac.slice(0, 13) + ':00:00Z').getTime();
@@ -156,8 +160,9 @@ app.get('/api/tides/hourly', cachedEndpoint('tides_hourly', 2 * 60 * 60 * 1000, 
     }
     const dt = new Date(ms);
     // ms is fake-UTC (Pacific wall-clock value treated as UTC), so getUTC* returns Pacific values
-    const tStr = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth()+1).padStart(2,'0')}-${String(dt.getUTCDate()).padStart(2,'0')} ` +
-      `${String(dt.getUTCHours()).padStart(2,'0')}:${String(dt.getUTCMinutes()).padStart(2,'0')}`;
+    // Append explicit offset so clients parse the timestamp unambiguously regardless of their timezone
+    const tStr = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth()+1).padStart(2,'0')}-${String(dt.getUTCDate()).padStart(2,'0')}` +
+      `T${String(dt.getUTCHours()).padStart(2,'0')}:${String(dt.getUTCMinutes()).padStart(2,'0')}:00${offset}`;
     predictions.push({ t: tStr, v: v.toFixed(3) });
   }
 
@@ -174,7 +179,14 @@ app.get('/api/weather', cachedEndpoint('weather', 60 * 60 * 1000, async () => {
     `&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch` +
     `&timezone=${encodeURIComponent(CONFIG.TIMEZONE)}&forecast_days=3`;
   const r = await fetchWithRetry(url);
-  return r.json();
+  const data = await r.json();
+  // Stamp sunrise/sunset with explicit Pacific offset so clients parse unambiguously
+  const offset = pacificOffset();
+  if (data.daily?.sunrise) {
+    data.daily.sunrise = data.daily.sunrise.map(s => s + ':00' + offset);
+    data.daily.sunset  = data.daily.sunset.map(s  => s + ':00' + offset);
+  }
+  return data;
 }));
 
 // ── Ferry schedule helper (reusable for either direction) ────────────
@@ -236,6 +248,15 @@ app.get('/api/cache-status', (req, res) => {
   }
   res.json(status);
 });
+
+// Returns the current Pacific UTC offset string: "-07:00" (PDT) or "-08:00" (PST)
+function pacificOffset() {
+  const now = new Date();
+  const pacStr = now.toLocaleString('sv-SE', { timeZone: 'America/Los_Angeles' });
+  const pacEpoch = new Date(pacStr.replace(' ', 'T') + 'Z').getTime();
+  const diffH = Math.round((pacEpoch - now.getTime()) / 3600000);
+  return diffH >= 0 ? `+${String(diffH).padStart(2,'0')}:00` : `-${String(-diffH).padStart(2,'0')}:00`;
+}
 
 function formatDate(d) {
   // Always use the Pacific calendar date regardless of server timezone

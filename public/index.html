@@ -394,6 +394,7 @@
 <script type="module">
 
 // ── Clock ──────────────────────────────────────────────────────────────
+const TZ = 'America/Los_Angeles'; // All displays use Pacific time regardless of client timezone
 const clockEl = document.getElementById('clock');
 const dateEl = document.getElementById('date-display');
 const DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
@@ -401,13 +402,9 @@ const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov
 
 function updateClock() {
   const now = new Date();
-  let hr = now.getHours();
-  const ampm = hr >= 12 ? 'pm' : 'am';
-  hr = hr % 12 || 12;
-  const m = String(now.getMinutes()).padStart(2, '0');
-  const s = String(now.getSeconds()).padStart(2, '0');
-  clockEl.textContent = `${hr}:${m}:${s} ${ampm}`;
-  dateEl.textContent = `${DAYS[now.getDay()]}, ${MONTHS[now.getMonth()]} ${now.getDate()}, ${now.getFullYear()}`;
+  const timeStr = now.toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+  clockEl.textContent = timeStr.replace(' AM', ' am').replace(' PM', ' pm');
+  dateEl.textContent = now.toLocaleDateString('en-US', { timeZone: TZ, weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
 }
 updateClock();
 setInterval(updateClock, 1000);
@@ -542,8 +539,8 @@ async function loadWeather() {
     if (d.daily?.sunrise?.[0]) {
       window._sunriseMs = new Date(d.daily.sunrise[0]).getTime();
       window._sunsetMs  = new Date(d.daily.sunset[0]).getTime();
-      const riseStr = new Date(window._sunriseMs).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-      const setStr  = new Date(window._sunsetMs).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      const riseStr = new Date(window._sunriseMs).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
+      const setStr  = new Date(window._sunsetMs).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
       const sunEl = document.getElementById('sun-times');
       if (sunEl) sunEl.innerHTML = `<span>☀️ ${riseStr}</span><span>🌙 ${setStr}</span>`;
     }
@@ -671,11 +668,11 @@ function buildSparkline(hourlyPredictions) {
   const startDt = new Date(startMs2);
   // iterate hours across the full range
   for (let ms = startMs2; ms <= endMs2; ms += 3600 * 1000) {
-    const dt = new Date(ms);
-    const h = dt.getHours();
+    const pacStr = new Date(ms).toLocaleString('sv-SE', { timeZone: TZ });
+    const h = parseInt(pacStr.slice(11, 13));
     if (!keyHours.includes(h)) continue;
-    // only on exact hour boundaries
-    if (dt.getMinutes() !== 0) continue;
+    const min = parseInt(pacStr.slice(14, 16));
+    if (min !== 0) continue;
     const frac = (ms - startMs2) / totalMs;
     const tx = (PAD_X + frac * (W - PAD_X * 2)).toFixed(1);
     const isMidOrNoon = h === 0 || h === 12;
@@ -823,10 +820,12 @@ async function loadTides() {
       .slice(0, 4);  // always exactly 4 rows — matches grid-template-rows
 
     const items = upcoming.map(p => {
-      const isToday = p.date.toDateString() === now.toDateString();
-      const isTomorrow = p.date.toDateString() === new Date(now.getTime() + 86400000).toDateString();
-      const dayLabel = isToday ? '' : isTomorrow ? 'Tomorrow' : DAYS[p.date.getDay()];
-      const timeStr = p.date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      const pacDate = d => new Date(d).toLocaleDateString('en-CA', { timeZone: TZ }); // YYYY-MM-DD
+      const isToday    = pacDate(p.date) === pacDate(now);
+      const isTomorrow = pacDate(p.date) === pacDate(now.getTime() + 86400000);
+      const dayLabel = isToday ? '' : isTomorrow ? 'Tomorrow' :
+        new Date(p.date).toLocaleDateString('en-US', { timeZone: TZ, weekday: 'long' });
+      const timeStr = p.date.toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
       const isPast = p.date < now;
       return `<div class="tide-item ${p.type === 'H' ? 'high' : 'low'} ${isPast ? 'past' : ''}">
         <div>
@@ -914,7 +913,7 @@ function sailingCard(s, parsedSailings, spaceMap) {
   const isPast = s.sailTime < now;
   const isNext = trueNextIdx >= 0 && s.sailTime.getTime() === parsedSailings[trueNextIdx].sailTime.getTime();
   const isTrueLast = s.sailTime.getTime() === parsedSailings[trueLastIdx].sailTime.getTime();
-  const display = s.sailTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  const display = s.sailTime.toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
 
   const confirmed = isPast && isDepartureConfirmed(s, parsedSailings, spaceMap);
 
