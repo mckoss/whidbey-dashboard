@@ -123,18 +123,18 @@ app.get('/api/tides/hourly', cachedEndpoint('tides_hourly', 2 * 60 * 60 * 1000, 
   if (data.error) throw new Error(data.error.message || 'NOAA returned error');
   if (!data.predictions) throw new Error('NOAA returned no predictions');
 
-  // Cosine interpolation between hi/lo events → hourly points
-  // NOAA returns lst_ldt (local Pacific) timestamps — parse as local time (no Z suffix)
+  // NOAA returns lst_ldt Pacific times like "2026-04-24 14:00". Treat as fake-UTC
+  // (append Z) so all arithmetic is consistent regardless of server timezone.
   const events = data.predictions.map(p => ({
-    t: new Date(p.t.replace(' ', 'T')).getTime(),
+    t: new Date(p.t.replace(' ', 'T') + 'Z').getTime(),
     v: parseFloat(p.v),
   }));
 
+  // Get current Pacific hour as a fake-UTC epoch so loop ms values stay in Pacific space.
   const predictions = [];
-  const startDt = new Date(today);
-  startDt.setMinutes(0, 0, 0);
-  const startMs = startDt.getTime();
-  const endMs = startMs + 72 * 3600 * 1000; // 48h display + 24h headroom for data coverage warning
+  const nowPac = new Date().toLocaleString('sv-SE', { timeZone: 'America/Los_Angeles' });
+  const startMs = new Date(nowPac.slice(0, 13) + ':00:00Z').getTime();
+  const endMs = startMs + 72 * 3600 * 1000; // 48h display + 24h headroom
 
   for (let ms = startMs; ms <= endMs; ms += 3600 * 1000) {
     // Find surrounding events
@@ -155,9 +155,9 @@ app.get('/api/tides/hourly', cachedEndpoint('tides_hourly', 2 * 60 * 60 * 1000, 
       continue;
     }
     const dt = new Date(ms);
-    // Output as local Pacific time string so client parses it as local time
-    const tStr = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')} ` +
-      `${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;
+    // ms is fake-UTC (Pacific wall-clock value treated as UTC), so getUTC* returns Pacific values
+    const tStr = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth()+1).padStart(2,'0')}-${String(dt.getUTCDate()).padStart(2,'0')} ` +
+      `${String(dt.getUTCHours()).padStart(2,'0')}:${String(dt.getUTCMinutes()).padStart(2,'0')}`;
     predictions.push({ t: tStr, v: v.toFixed(3) });
   }
 
@@ -238,8 +238,9 @@ app.get('/api/cache-status', (req, res) => {
 });
 
 function formatDate(d) {
-  // Use local date components to match lst_ldt timezone of NOAA responses
-  return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+  // Always use the Pacific calendar date regardless of server timezone
+  const s = d.toLocaleString('sv-SE', { timeZone: 'America/Los_Angeles' });
+  return s.slice(0, 10).replace(/-/g, ''); // "YYYYMMDD"
 }
 
 app.listen(PORT, () => {
