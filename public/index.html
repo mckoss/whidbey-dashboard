@@ -743,9 +743,9 @@ function buildSparkline(hourlyPredictions) {
       </linearGradient>
     </defs>
     ${dayNightRects}
-    ${ticks}
     <path d="${area}" fill="url(#tideGrad)"/>
     <path d="${line}" fill="none" stroke="#7dd3fc" stroke-width="2" stroke-linejoin="round"/>
+    ${ticks}
     ${nowLine}
   </svg>`;
 }
