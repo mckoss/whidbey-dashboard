@@ -371,8 +371,9 @@
 <body>
 
 <header>
-  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.2.1</span></h1>
+  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.3.0</span></h1>
   <div class="sun-times" id="sun-times"></div>
+  <div id="moon-phase"></div>
   <div>
     <div id="clock">--:--:--</div>
     <div id="date-display">Loading...</div>
@@ -411,6 +412,96 @@ function updateClock() {
 }
 updateClock();
 setInterval(updateClock, 1000);
+
+// ── Moon phase ─────────────────────────────────────────────────────────
+// Pure math: synodic period from a known new moon reference.
+// Phase 0..1: 0 = new moon, ~0.5 = full moon, ~1 = next new moon.
+function getMoonPhase(date) {
+  // Known new moon: Jan 6, 2000 18:14 UTC
+  const knownNewMoon = new Date('2000-01-06T18:14:00Z').getTime();
+  const synodicPeriod = 29.53058770576; // days
+  const daysSince = (date.getTime() - knownNewMoon) / (24 * 3600 * 1000);
+  const phase = ((daysSince / synodicPeriod) % 1 + 1) % 1; // 0..1
+  return phase;
+}
+
+function renderMoon() {
+  const el = document.getElementById('moon-phase');
+  if (!el) return;
+
+  const phase = getMoonPhase(new Date());
+  const illumination = 0.5 * (1 - Math.cos(phase * 2 * Math.PI));
+  const waxing = phase < 0.5;
+
+  // SVG moon: 40x40, radius 16, centered at 20,20
+  const R = 16;
+  const cx = 20, cy = 20;
+
+  // The terminator is drawn as an elliptical shape.
+  // terminatorX controls the x-radius of the terminator ellipse.
+  // At new/full moon it equals R (full disc lit or dark).
+  // At quarter moons it equals 0 (straight line down the middle).
+  const terminatorX = Math.abs(Math.cos(phase * 2 * Math.PI)) * R;
+
+  // Determine which half is lit based on waxing/waning
+  // Waxing (0..0.5): right side lit first
+  // Waning (0.5..1): left side lit, right goes dark
+  let litPath;
+
+  if (illumination < 0.01) {
+    // New moon: thin outline, dark interior
+    el.innerHTML = `<svg width="40" height="40" viewBox="0 0 40 40">
+      <circle cx="${cx}" cy="${cy}" r="${R}" fill="#0a0e1a" stroke="#4a5568" stroke-width="0.8"/>
+    </svg>`;
+    return;
+  }
+
+  if (illumination > 0.99) {
+    // Full moon: fully lit disc
+    el.innerHTML = `<svg width="40" height="40" viewBox="0 0 40 40">
+      <circle cx="${cx}" cy="${cy}" r="${R}" fill="#c8d6e5"/>
+    </svg>`;
+    return;
+  }
+
+  // Draw the lit portion using two arcs:
+  // Arc 1: the outer edge of the lit side (always a semicircle, radius R)
+  // Arc 2: the terminator (elliptical arc with varying x-radius)
+  //
+  // Path goes: top of moon → semicircle on lit side → terminator arc back to top
+
+  const top = `${cx},${cy - R}`;
+  const bot = `${cx},${cy + R}`;
+
+  if (waxing) {
+    // Right side lit
+    // Semicircle on the right (large arc, sweep=1 → clockwise)
+    const outerArc = `A ${R} ${R} 0 1 1 ${bot}`;
+    // Terminator from bottom back to top
+    // When phase < 0.25 (crescent), terminator bulges right (sweep=0)
+    // When phase > 0.25 (gibbous), terminator bulges left (sweep=1)
+    const tSweep = phase < 0.25 ? 0 : 1;
+    const termArc = `A ${terminatorX} ${R} 0 0 ${tSweep} ${top}`;
+    litPath = `M ${top} ${outerArc} ${termArc} Z`;
+  } else {
+    // Left side lit
+    // Semicircle on the left (large arc, sweep=0 → counter-clockwise)
+    const outerArc = `A ${R} ${R} 0 1 0 ${bot}`;
+    // Terminator from bottom back to top
+    const tSweep = phase > 0.75 ? 1 : 0;
+    const termArc = `A ${terminatorX} ${R} 0 0 ${tSweep} ${top}`;
+    litPath = `M ${top} ${outerArc} ${termArc} Z`;
+  }
+
+  el.innerHTML = `<svg width="40" height="40" viewBox="0 0 40 40">
+    <circle cx="${cx}" cy="${cy}" r="${R}" fill="#0a0e1a" stroke="#2a3548" stroke-width="0.5"/>
+    <path d="${litPath}" fill="#c8d6e5"/>
+  </svg>`;
+}
+
+renderMoon();
+// Update moon once per hour (it barely changes)
+setInterval(renderMoon, 3600 * 1000);
 
 // ── Weather codes ──────────────────────────────────────────────────────
 function weatherIcon(code) {
