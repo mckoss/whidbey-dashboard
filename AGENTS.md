@@ -14,6 +14,7 @@ An ambient TV dashboard for Mike Koss's Whidbey Island beach house. Single-scree
 3. **No scrolling.** `height: 100vh; overflow: hidden` on body. Everything must fit one TV screen.
 4. **Restart after server changes.** `bash restart.sh` kills the old process and starts fresh.
 5. **Bump the version before every push.** The version string lives in `public/index.html` in the `<h1>` tag (e.g. `v1.2.0`). Increment the patch for fixes, minor for features. This is how Mike confirms which build is deployed on Railway.
+6. **Every commit message must include the current version number** in the format `(vX.Y.Z)` — even README-only or server-only commits that don't bump the version. Use the current version at time of commit, e.g. `README: fix ferry interval (v1.4.3)`. This lets Mike find and revert to any point in history by version.
 
 ## Architecture
 
