@@ -371,7 +371,7 @@
 <body>
 
 <header>
-  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.3.1</span></h1>
+  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.3.2</span></h1>
   <div class="sun-times" id="sun-times"></div>
   <div id="moon-phase"></div>
   <div>
@@ -448,10 +448,17 @@ function renderMoon() {
   // Waning (0.5..1): left side lit, right goes dark
   let litPath;
 
+  // Thin white outline for the full disc (no fill — background shows through)
+  // Then draw ONLY the lit portion as a filled path
+
+  const top = `${cx},${cy - R}`;
+  const bot = `${cx},${cy + R}`;
+  let litPath;
+
   if (illumination < 0.01) {
-    // New moon: thin outline, dark interior
+    // New moon: just the outline, no lit area
     el.innerHTML = `<svg width="40" height="40" viewBox="0 0 40 40">
-      <circle cx="${cx}" cy="${cy}" r="${R}" fill="#000000" stroke="#4a5568" stroke-width="0.8"/>
+      <circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="#555555" stroke-width="1"/>
     </svg>`;
     return;
   }
@@ -459,42 +466,31 @@ function renderMoon() {
   if (illumination > 0.99) {
     // Full moon: fully lit disc
     el.innerHTML = `<svg width="40" height="40" viewBox="0 0 40 40">
-      <circle cx="${cx}" cy="${cy}" r="${R}" fill="#c8d6e5"/>
+      <circle cx="${cx}" cy="${cy}" r="${R}" fill="#c8d6e5" stroke="#555555" stroke-width="1"/>
     </svg>`;
     return;
   }
 
   // Draw the lit portion using two arcs:
-  // Arc 1: the outer edge of the lit side (always a semicircle, radius R)
+  // Arc 1: the outer edge of the lit side (semicircle, radius R)
   // Arc 2: the terminator (elliptical arc with varying x-radius)
-  //
-  // Path goes: top of moon → semicircle on lit side → terminator arc back to top
-
-  const top = `${cx},${cy - R}`;
-  const bot = `${cx},${cy + R}`;
 
   if (waxing) {
     // Right side lit
-    // Semicircle on the right (large arc, sweep=1 → clockwise)
     const outerArc = `A ${R} ${R} 0 1 1 ${bot}`;
-    // Terminator from bottom back to top
-    // When phase < 0.25 (crescent), terminator bulges right (sweep=0)
-    // When phase > 0.25 (gibbous), terminator bulges left (sweep=1)
     const tSweep = phase < 0.25 ? 0 : 1;
     const termArc = `A ${terminatorX} ${R} 0 0 ${tSweep} ${top}`;
     litPath = `M ${top} ${outerArc} ${termArc} Z`;
   } else {
     // Left side lit
-    // Semicircle on the left (large arc, sweep=0 → counter-clockwise)
     const outerArc = `A ${R} ${R} 0 1 0 ${bot}`;
-    // Terminator from bottom back to top
     const tSweep = phase > 0.75 ? 1 : 0;
     const termArc = `A ${terminatorX} ${R} 0 0 ${tSweep} ${top}`;
     litPath = `M ${top} ${outerArc} ${termArc} Z`;
   }
 
   el.innerHTML = `<svg width="40" height="40" viewBox="0 0 40 40">
-    <circle cx="${cx}" cy="${cy}" r="${R}" fill="#000000" stroke="#4a5568" stroke-width="0.8"/>
+    <circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="#555555" stroke-width="1"/>
     <path d="${litPath}" fill="#c8d6e5"/>
   </svg>`;
 }
