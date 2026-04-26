@@ -208,6 +208,17 @@ test('static HTML — index.html contains required elements', async () => {
   assert.ok(html.includes('Whidbey'), 'mentions Whidbey');
 });
 
+test('static HTML — inline JavaScript parses without errors', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
+  const scriptMatch = html.match(/<script[^>]*>([\s\S]*?)<\/script>/);
+  assert.ok(scriptMatch, 'found a <script> block');
+  assert.doesNotThrow(() => new Function(scriptMatch[1]), 'inline JS should parse without syntax errors');
+});
+
 test('weather endpoint — second request is served from cache', async () => {
   // First request populates cache, second should be faster
   const t0 = Date.now();
