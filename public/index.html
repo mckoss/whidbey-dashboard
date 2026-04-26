@@ -367,6 +367,58 @@
     }
     .no-ferry-key a { color: var(--accent); }
 
+    /* ── Large-screen / Tesla layout (wider than mobile, squarish aspect) ─── */
+    /* Targets screens wider than 768px but more square than 16:9 TV,     */
+    /* e.g. Tesla (~4:3), desktop browser windows, iPads in landscape.    */
+    @media (min-width: 769px) {
+      /* Cap weather+tides row height so ferry can claim remaining space */
+      body {
+        grid-template-rows: auto minmax(180px, 300px) 1fr;
+      }
+
+      /* Ferry panel fills its row */
+      #ferry { align-self: stretch; }
+      .ferry-panel { height: 100%; }
+
+      /* Tide list rows: don’t stretch — sit snug at natural height */
+      .tide-list {
+        grid-template-rows: repeat(4, auto);
+        align-content: start;
+      }
+
+      /* ── Ferry tile scale-up for at-a-glance viewing ─────────────── */
+      .sailings-grid { gap: 0.6rem; align-content: center; }
+
+      .sailing { padding: 1rem 0.75rem; }
+
+      .sailing .sail-time {
+        font-size: 1.8rem;
+        font-weight: 200;
+      }
+      .sailing .sail-vessel { font-size: 0.75rem; }
+      .sailing .sail-status { font-size: 0.85rem; margin-top: 0.25rem; }
+
+      /* Fill bar — taller and more visible */
+      .sail-fill-wrap { margin-top: 0.5rem; }
+      .sail-fill-bar {
+        height: 10px;
+        border-radius: 5px;
+      }
+      .sail-fill-fill { border-radius: 5px; }
+
+      /* Space count / “N open” — the main thing to read from across a car */
+      .sail-fill-label {
+        font-size: 1.4rem;
+        font-weight: 600;
+        color: var(--text);
+        margin-top: 0.35rem;
+      }
+
+      /* Ferry header: slightly larger route label and countdown */
+      .ferry-route { font-size: 1rem; }
+      .countdown-badge { font-size: 0.9rem; padding: 0.3rem 0.8rem; }
+    }
+
     /* ── Mobile responsive ─────────────────────────────────────────────── */
     @media (max-width: 768px) {
       body {
@@ -412,7 +464,7 @@
 <body>
 
 <header>
-  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.4.1</span></h1>
+  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.4.2</span></h1>
   <div class="header-meta">
     <div class="sun-times" id="sun-times"></div>
     <div id="moon-phase"></div>
