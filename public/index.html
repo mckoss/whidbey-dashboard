@@ -132,7 +132,8 @@
     }
 
     .weather-day .day-name { font-size: 0.75rem; color: var(--dim); margin-bottom: 0.25rem; }
-    .weather-day .weather-icon { font-size: 1.6rem; margin: 0.2rem 0; }
+    .weather-day .weather-icon { font-size: 1.6rem; margin: 0.2rem 0; line-height: 0; }
+    .weather-day .weather-icon img { width: 40px; height: 40px; }
     .weather-day .temp-high { font-size: 1.2rem; font-weight: 600; }
     .weather-day .temp-low { font-size: 0.85rem; color: var(--dim); }
     .weather-day .precip { font-size: 0.7rem; color: var(--accent); margin-top: 0.2rem; }
@@ -146,7 +147,8 @@
       padding-bottom: 0.6rem;
       border-bottom: 1px solid var(--border);
     }
-    .current-weather .now-icon { font-size: 2.2rem; }
+    .current-weather .now-icon { font-size: 2.2rem; line-height: 0; }
+    .current-weather .now-icon img { width: 52px; height: 52px; }
     .current-weather .now-temp { font-size: 2.2rem; font-weight: 200; }
     .current-weather .now-details { color: var(--dim); font-size: 0.8rem; line-height: 1.5; }
 
@@ -470,7 +472,7 @@
 <body>
 
 <header>
-  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.4.5</span></h1>
+  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.4.6</span></h1>
   <div class="header-meta">
     <div class="sun-times" id="sun-times"></div>
     <div id="moon-phase"></div>
@@ -597,16 +599,24 @@ setInterval(renderMoon, 3600 * 1000);
 
 // ── Weather codes ──────────────────────────────────────────────────────
 function weatherIcon(code) {
-  if (code === 0) return '☀️';
-  if (code <= 2) return '⛅';
-  if (code === 3) return '☁️';
-  if (code <= 49) return '🌫️';
-  if (code <= 59) return '🌦️';
-  if (code <= 69) return '🌧️';
-  if (code <= 79) return '🌨️';
-  if (code <= 84) return '🌧️';
-  if (code <= 94) return '⛈️';
-  return '🌩️';
+  // Returns an <img> tag — PNGs render consistently on all browsers (TV, Tesla, mobile)
+  const icons = {
+    0:  'clear',
+    1:  'partly-cloudy', 2: 'partly-cloudy',
+    3:  'cloudy',
+    45: 'fog', 48: 'fog',
+    51: 'drizzle', 53: 'drizzle', 55: 'drizzle',
+    56: 'drizzle', 57: 'drizzle',
+    61: 'rain', 63: 'rain', 65: 'rain',
+    66: 'rain', 67: 'rain',
+    71: 'snow', 73: 'snow', 75: 'snow', 77: 'snow',
+    80: 'showers', 81: 'showers', 82: 'showers',
+    85: 'snow', 86: 'snow',
+    95: 'thunderstorm',
+    96: 'thunderstorm', 99: 'thunderstorm',
+  };
+  const name = icons[code] || (code <= 49 ? 'fog' : code <= 69 ? 'rain' : code <= 79 ? 'snow' : 'storm');
+  return `<img src="/icons/${name}.png" alt="${name}" style="display:inline-block">`;
 }
 
 function weatherDesc(code) {
