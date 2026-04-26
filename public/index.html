@@ -366,14 +366,57 @@
       padding: 0.5rem 0;
     }
     .no-ferry-key a { color: var(--accent); }
+
+    /* ── Mobile responsive ─────────────────────────────────────────────── */
+    @media (max-width: 768px) {
+      body {
+        height: auto;
+        overflow: auto;
+        grid-template-columns: 1fr;
+        grid-template-rows: auto;
+        padding: 0.6rem;
+        gap: 0.6rem;
+      }
+
+      header {
+        grid-column: 1;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.6rem;
+      }
+
+      h1 { font-size: 1.2rem; }
+
+      .header-meta {
+        display: flex;
+        align-items: center;
+        gap: 1.2rem;
+        width: 100%;
+      }
+
+      #clock { font-size: 2rem; }
+
+      #weather { grid-column: 1; }
+      #tides   { grid-column: 1; }
+
+      #ferry {
+        grid-column: 1;
+        grid-template-columns: 1fr;
+      }
+
+      .tide-visual { height: 64px; }
+    }
+
   </style>
 </head>
 <body>
 
 <header>
-  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.4.0</span></h1>
-  <div class="sun-times" id="sun-times"></div>
-  <div id="moon-phase"></div>
+  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.4.1</span></h1>
+  <div class="header-meta">
+    <div class="sun-times" id="sun-times"></div>
+    <div id="moon-phase"></div>
+  </div>
   <div>
     <div id="clock">--:--:--</div>
     <div id="date-display">Loading...</div>
