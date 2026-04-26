@@ -1,5 +1,6 @@
 import express from 'express';
 import fetch from 'node-fetch';
+import morgan from 'morgan';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -19,6 +20,9 @@ try {
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// ── Request logging (stdout → Railway Log Explorer) ───────────────────
+app.use(morgan('combined'));
 const WSF_API_KEY = process.env.WSF_API_KEY || '';
 
 // Config
@@ -292,6 +296,13 @@ app.get('/api/ferry/mukilteo/space', ferrySpaceEndpoint('ferry_mukilteo_space', 
 // Legacy alias (keep working during transition)
 app.get('/api/ferry', ferryScheduleEndpoint('ferry_clinton', 5, 14));
 app.get('/api/ferry/space', ferrySpaceEndpoint('ferry_clinton_space', 5, 14));
+
+// ── Client config (feature flags, analytics ID) ──────────────────────
+app.get('/api/config', (req, res) => {
+  res.json({
+    gaMeasurementId: process.env.GA_MEASUREMENT_ID || null,
+  });
+});
 
 // ── Cache status (debug) ───────────────────────────────────────────────
 app.get('/api/cache-status', (req, res) => {

@@ -371,7 +371,7 @@
 <body>
 
 <header>
-  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.3.3</span></h1>
+  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.4.0</span></h1>
   <div class="sun-times" id="sun-times"></div>
   <div id="moon-phase"></div>
   <div>
@@ -1181,6 +1181,25 @@ function scheduleLoader(fn, normalMs) {
 scheduleLoader(loadWeather, 60 * 60 * 1000);   // 1 hour, retry 5 min
 scheduleLoader(loadTides,  120 * 60 * 1000);   // 2 hours, retry 5 min
 scheduleLoader(loadFerry,   30 * 1000);        // 30 sec,  retry 5 min
+
+// ── Google Analytics (injected if GA_MEASUREMENT_ID is set on the server) ─────
+(async () => {
+  try {
+    const cfg = await fetch('/api/config').then(r => r.json());
+    if (cfg.gaMeasurementId) {
+      const s = document.createElement('script');
+      s.async = true;
+      s.src = `https://www.googletagmanager.com/gtag/js?id=${cfg.gaMeasurementId}`;
+      document.head.appendChild(s);
+      window.dataLayer = window.dataLayer || [];
+      function gtag() { dataLayer.push(arguments); }
+      gtag('js', new Date());
+      gtag('config', cfg.gaMeasurementId);
+    }
+  } catch (e) {
+    console.warn('[ga] config fetch failed:', e.message);
+  }
+})();
 
 </script>
 </body>
