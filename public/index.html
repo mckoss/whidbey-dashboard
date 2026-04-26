@@ -371,7 +371,7 @@
 <body>
 
 <header>
-  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.3.2</span></h1>
+  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.3.3</span></h1>
   <div class="sun-times" id="sun-times"></div>
   <div id="moon-phase"></div>
   <div>
@@ -443,12 +443,7 @@ function renderMoon() {
   // At quarter moons it equals 0 (straight line down the middle).
   const terminatorX = Math.abs(Math.cos(phase * 2 * Math.PI)) * R;
 
-  // Determine which half is lit based on waxing/waning
-  // Waxing (0..0.5): right side lit first
-  // Waning (0.5..1): left side lit, right goes dark
-  let litPath;
-
-  // Thin white outline for the full disc (no fill — background shows through)
+  // Thin outline for the full disc (no fill — background shows through)
   // Then draw ONLY the lit portion as a filled path
 
   const top = `${cx},${cy - R}`;
