@@ -4,11 +4,13 @@ Ambient dashboard for the Whidbey Island beach house. Designed for always-on TV 
 
 ## Features
 
-- 🕐 Real-time digital clock
-- 🌤 3-day weather forecast with sunrise/sunset (Open-Meteo)
-- 🌊 Tide predictions — hi/lo table + sparkline with thermometer (NOAA Hansville station)
+- 🕐 Real-time digital clock (12-hour, am/pm)
+- 🌤 3-day weather forecast with current conditions (Open-Meteo)
+- 🌅 Sunrise & sunset times (from Open-Meteo daily data, shown in weather card header)
+- 🌕 Moon phase display — SVG rendered client-side with pure geometry, no images
+- 🌊 Tide predictions — hi/lo table + sparkline + thermometer (NOAA Hansville station)
+- 🌗 Day/night shading on tide sparkline (gradient transitions at sunrise/sunset)
 - ⛴ Bidirectional ferry: Clinton→Mukilteo and Mukilteo→Clinton, with live space occupancy
-- 🌗 Day/night shading on sparkline (gradient transitions at sunrise/sunset)
 - ⚠ Per-source data staleness indicators
 
 ## Setup
@@ -71,6 +73,17 @@ Each card shows an inline age tag after the title. Thresholds are per-source:
 | `GET /api/ferry` | Legacy alias for `/api/ferry/clinton` |
 | `GET /api/cache-status` | Debug: cache metadata for all endpoints |
 
+## Moon Phase Display
+
+The moon phase SVG is calculated entirely client-side — no API, no images. A pure-geometry approach draws only the lit crescent/gibbous portion using two overlapping ellipses:
+
+- The terminator ellipse is scaled from full (new moon) to flat (full moon) and flipped for waxing vs. waning
+- Dark side: no fill — the card background shows through, giving a natural look
+- Lit side: white fill with a thin grey outline
+- Only the lit portion is drawn; the shadow side is implied by absence
+
+This keeps the frontend fully self-contained and avoids any external moon-image asset.
+
 ## Ferry Display
 
 - Two panels: one per direction, each in its own card
@@ -100,3 +113,29 @@ Each card shows an inline age tag after the title. Thresholds are per-source:
 - `window._sunriseMs` / `window._sunsetMs` are globals used by both the sparkline and the weather card.
 - Ferry WSF API uses `/Date(ms)/` format for timestamps.
 - The `preserveAspectRatio="none"` on sparkline/thermometer SVGs is intentional — they stretch to fill their flex containers.
+
+## Known Challenges
+
+### SVG Color Rendering on Older TVs / Browsers
+
+The tide sparkline and thermometer use SVG gradients with semi-transparent stops (e.g., `rgba(…)` colors and non-zero `stop-opacity` attributes). Older Chromium-based TV browsers — the kind you find in budget smart TVs — handle these inconsistently:
+
+- Some ignore `stop-opacity` entirely, rendering gradients as fully opaque
+- Some fail to blend `rgba(…)` colors against a non-white background, producing washed-out or wrong-colored fills
+- Some don't composite SVG transparency against the underlying HTML background at all
+
+**Workaround applied:** All gradient stops were pre-blended to opaque equivalents. Instead of `rgba(14, 116, 144, 0.4)` on a `#0c1a2e` background, the stop is computed to the resulting solid color. This sacrifices some flexibility (harder to change the background color) but works universally. Any `stop-opacity` attributes are avoided entirely — color is baked into the `stop-color` value.
+
+The day/night shading rectangles (behind the sparkline) went through a similar iteration — they're now solid `rgba()` values in the HTML layer rather than SVG fills, which sidesteps SVG compositing bugs.
+
+### Overnight Ferry Rollover
+
+The WSDOT `scheduletoday` endpoint returns sailings for the current calendar day (Pacific time). The ferry schedule includes a late-night sailing that crosses midnight — e.g., departing ~12:35 AM. This creates a tricky edge case: just after midnight, the dashboard needs to display the correct day's schedule without dropping or double-counting that last crossing.
+
+**Investigation (April 25–26, 2026):** A cron-based experiment logged the `scheduletoday` API response at 12:15 AM and 12:45 AM. Results:
+
+- At 12:15 AM on April 26, `scheduletoday` correctly returned **April 26's** schedule (34 sailings, starting 5:30 AM). The rollover happens at midnight, not at the last sailing's departure time.
+- The 12:35 AM sailing remained visible in the **April 25** schedule when queried by date (`/schedule/2026-04-25`) — the API still serves yesterday's schedule by explicit date, even after midnight.
+- Both calls at 12:15 AM and 12:45 AM were consistent — no flapping.
+
+**Fix in place:** The client carries forward any sailing with a departure time past midnight into the next day's display window, so the 12:35 AM boat doesn't vanish from the screen at the moment `scheduletoday` rolls over. See commit `573d292`.
