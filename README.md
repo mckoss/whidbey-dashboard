@@ -9,7 +9,6 @@ Ambient dashboard for the Whidbey Island beach house. Designed for always-on TV 
 - 🌅 Sunrise & sunset times (from Open-Meteo daily data, shown in weather card header)
 - 🌕 Moon phase display — SVG rendered client-side with pure geometry, no images
 - 🌊 Tide predictions — hi/lo table + sparkline + thermometer (NOAA Hansville station)
-- 🌗 Day/night shading on tide sparkline (gradient transitions at sunrise/sunset)
 - ⛴ Bidirectional ferry: Clinton→Mukilteo and Mukilteo→Clinton, with live space occupancy
 - ⚠ Per-source data staleness indicators
 
@@ -101,7 +100,6 @@ This keeps the frontend fully self-contained and avoids any external moon-image 
 - Thermometer: vertical bar with gradient fill matching sparkline, inset from rounded tube outline
 - Arrow (▲/▼) at waterline indicates rising/falling
 - Axis labels: blue for high, purple for low (matching table colors)
-- Day/night: full-height background rectangles (blue-tinted white for day, black for night) with 1-hour gradient transitions at sunrise/sunset
 - Time markers: 6am, noon, 6pm, midnight — bold for noon/midnight, dashed for 6am/6pm
 - Now-line: white dashed vertical line at current time
 - Visual refreshes every 1 minute without re-fetching data
