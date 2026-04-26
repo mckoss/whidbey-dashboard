@@ -472,7 +472,7 @@
 <body>
 
 <header>
-  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.4.6</span></h1>
+  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.4.7</span></h1>
   <div class="header-meta">
     <div class="sun-times" id="sun-times"></div>
     <div id="moon-phase"></div>
@@ -1090,9 +1090,11 @@ function sailingCard(s, parsedSailings, spaceMap) {
     if (pctFull >= 100) barColor = '#ef4444';
     else if (pctFull >= 75) barColor = '#f59e0b';
     else barColor = '#34d399';
+    const spaceLabel = space.driveUpSpaces === 0 ? 'Full' : `${space.driveUpSpaces} open`;
+    const spaceLabelColor = space.driveUpSpaces === 0 ? 'color:var(--danger)' : '';
     const label = filled > 0
-      ? `<div class="sail-fill-bar"><div class="sail-fill-fill" style="width:${pctFull.toFixed(0)}%;background:${barColor}"></div></div><div class="sail-fill-label">${space.driveUpSpaces} open</div>`
-      : `<div class="sail-fill-label" style="color:var(--accent2)">${space.driveUpSpaces} open</div>`;
+      ? `<div class="sail-fill-bar"><div class="sail-fill-fill" style="width:${pctFull.toFixed(0)}%;background:${barColor}"></div></div><div class="sail-fill-label" style="${spaceLabelColor}">${spaceLabel}</div>`
+      : `<div class="sail-fill-label" style="color:var(--accent2)">${spaceLabel}</div>`;
     fillHtml = `<div class="sail-fill-wrap">${label}</div>`;
   }
   const vesselName = s.VesselName || space?.vesselName || '';
