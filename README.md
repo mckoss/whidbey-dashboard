@@ -45,8 +45,8 @@ Weather and tides work without any API keys.
 | Weather | [Open-Meteo](https://open-meteo.com) | No | 1 hour | 1 hour |
 | Tides (hi/lo) | [NOAA CO-OPS](https://tidesandcurrents.noaa.gov) station 9445526 | No | 2 hours | 2 hours |
 | Tides (hourly) | NOAA (cosine-interpolated from hi/lo) | No | 2 hours | 2 hours |
-| Ferry schedule | [WSDOT Traveler API](https://www.wsdot.wa.gov/ferries/api/) | Yes (free) | 5 min | 5 min |
-| Ferry space | WSDOT Traveler API | Yes (free) | 5 min | 5 min |
+| Ferry schedule | [WSDOT Traveler API](https://www.wsdot.wa.gov/ferries/api/) | Yes (free) | 30 sec | 30 sec |
+| Ferry space | WSDOT Traveler API | Yes (free) | 30 sec | 30 sec |
 
 Data windows include headroom beyond the refresh interval (e.g., tide hourly fetches 52h for a 48h display with 2h refresh cycle).
 
