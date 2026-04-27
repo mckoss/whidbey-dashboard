@@ -375,84 +375,101 @@
     }
     .no-ferry-key a { color: var(--accent); }
 
-    /* ── Large-screen / TV layout ─────────────────────────────────────────
-       Goal: always fill 100vh with no scroll, no clipping, on any screen
-       wider than a phone (769px+). Content scales with viewport height so
-       tiles look full on a 1080p TV and on a short Tesla alike.           */
+    /* ── Large-screen shared base (769px+) ────────────────────────────────
+       Structural rules that apply to all non-mobile screens.              */
     @media (min-width: 769px) {
-      /* Proportional rows: always sum to exactly 100vh */
-      body {
-        grid-template-rows: auto 1fr 2fr;
-      }
-
-      /* ── Weather + Tides: stretch to fill their row ───────────────── */
+      /* Cards stretch to fill their grid row */
       #weather, #tides { align-self: stretch; }
+      #ferry { align-self: stretch; }
+      .ferry-panel { height: 100%; }
 
-      /* Tide rows divide card height equally — no fixed px, no clipping */
+      /* Tide rows divide card height equally */
       .tide-list {
         grid-template-rows: repeat(4, 1fr);
         align-content: stretch;
       }
 
-      /* Scale tide text with viewport height so it fills on any screen */
-      .tide-item .tide-time   { font-size: clamp(0.8rem,  1.6vh, 1.3rem); }
-      .tide-item .tide-label  { font-size: clamp(0.65rem, 1.2vh, 1rem);   }
-      .tide-item .tide-height { font-size: clamp(0.9rem,  1.8vh, 1.5rem); }
-
-      /* ── Ferry: stretch to fill its row ──────────────────────────── */
-      #ferry { align-self: stretch; }
-      .ferry-panel { height: 100%; }
-
       /* Sailings grid fills all panel space below the route header */
-      .sailings-grid {
-        flex: 1;
-        min-height: 0;
-        gap: clamp(0.35rem, 0.8vh, 0.75rem);
-      }
+      .sailings-grid { flex: 1; min-height: 0; }
 
-      /* Each tile is a flex column, content centered so it looks full */
+      /* Each tile: flex column, content centered vertically */
       .sailing {
         display: flex;
         flex-direction: column;
         justify-content: center;
         align-items: center;
-        padding: clamp(0.5rem, 1.5vh, 1.25rem) 0.75rem;
       }
 
-      /* ── Ferry text: vh-based so tiles fill their height on any screen */
+      /* Fill bar always full-width in tile */
+      .sail-fill-wrap { width: 100%; }
+      .sail-fill-bar  { border-radius: 5px; }
+      .sail-fill-fill { border-radius: 5px; }
+    }
+
+    /* ── Tesla mode: ferry is the hero (769px – 1399px wide) ────────────────
+       Squarish / mid-size screens where big ferry times matter most.      */
+    @media (min-width: 769px) and (max-width: 1399px) {
+      body { grid-template-rows: auto 1fr 2fr; } /* ferry gets 2× height */
+
+      /* Tide text — moderate scale */
+      .tide-item .tide-time   { font-size: clamp(0.8rem,  1.6vh, 1.2rem); }
+      .tide-item .tide-label  { font-size: clamp(0.65rem, 1.1vh, 0.9rem); }
+      .tide-item .tide-height { font-size: clamp(0.9rem,  1.7vh, 1.3rem); }
+
+      /* Ferry tiles: large — readable from the car */
+      .sailings-grid { gap: clamp(0.35rem, 0.8vh, 0.75rem); }
+      .sailing {
+        padding: clamp(0.5rem, 1.5vh, 1.25rem) 0.75rem;
+      }
       .sailing .sail-time {
         font-size: clamp(1.4rem, 4.5vh, 4.5rem);
         font-weight: 200;
         line-height: 1.1;
       }
-      .sailing .sail-vessel {
-        font-size: clamp(0.65rem, 1.2vh, 1rem);
-        margin-top: clamp(0.1rem, 0.4vh, 0.35rem);
-      }
-      .sailing .sail-status {
-        font-size: clamp(0.7rem, 1.3vh, 1.1rem);
-        margin-top: clamp(0.1rem, 0.4vh, 0.35rem);
-      }
-
-      /* Fill bar — height scales too */
-      .sail-fill-wrap {
-        margin-top: clamp(0.3rem, 0.8vh, 0.6rem);
-        width: 100%;
-      }
-      .sail-fill-bar  { height: clamp(4px, 1vh, 12px); border-radius: 5px; }
-      .sail-fill-fill { border-radius: 5px; }
-
-      /* "N open" — the main at-a-glance number */
+      .sailing .sail-vessel  { font-size: clamp(0.65rem, 1.2vh, 1rem);   margin-top: clamp(0.1rem, 0.4vh, 0.35rem); }
+      .sailing .sail-status  { font-size: clamp(0.7rem,  1.3vh, 1.1rem); margin-top: clamp(0.1rem, 0.4vh, 0.35rem); }
+      .sail-fill-wrap        { margin-top: clamp(0.3rem,  0.8vh, 0.6rem); }
+      .sail-fill-bar         { height: clamp(4px, 1vh, 12px); }
       .sail-fill-label {
         font-size: clamp(1.1rem, 3.5vh, 3.5rem);
         font-weight: 600;
         color: var(--text);
         margin-top: clamp(0.2rem, 0.6vh, 0.5rem);
       }
-
-      /* Ferry route header scales slightly too */
-      .ferry-route    { font-size: clamp(0.8rem, 1.4vh, 1.1rem); }
+      .ferry-route     { font-size: clamp(0.8rem, 1.4vh, 1.1rem); }
       .countdown-badge { font-size: clamp(0.75rem, 1.3vh, 1rem); padding: 0.3rem 0.8rem; }
+    }
+
+    /* ── TV / large desktop mode: weather+tides is the hero (1400px+) ───────
+       Wide screens (1080p TV, 4K) — ferry is smaller, ~half the height   */
+    @media (min-width: 1400px) {
+      body { grid-template-rows: auto 2fr 1fr; } /* weather+tides gets 2× height */
+
+      /* Tide text — slightly larger since the section has more room */
+      .tide-item .tide-time   { font-size: clamp(0.9rem,  1.8vh, 1.4rem); }
+      .tide-item .tide-label  { font-size: clamp(0.7rem,  1.3vh, 1.1rem); }
+      .tide-item .tide-height { font-size: clamp(1rem,    2vh,   1.6rem); }
+
+      /* Ferry tiles: compact — fits its smaller section */
+      .sailings-grid { gap: 0.5rem; }
+      .sailing { padding: 0.6rem 0.75rem; }
+      .sailing .sail-time {
+        font-size: clamp(1rem, 2.5vh, 2rem);
+        font-weight: 200;
+        line-height: 1.1;
+      }
+      .sailing .sail-vessel  { font-size: clamp(0.6rem, 1vh, 0.85rem);  margin-top: 0.15rem; }
+      .sailing .sail-status  { font-size: clamp(0.65rem, 1.1vh, 0.9rem); margin-top: 0.15rem; }
+      .sail-fill-wrap        { margin-top: 0.3rem; }
+      .sail-fill-bar         { height: 6px; }
+      .sail-fill-label {
+        font-size: clamp(0.9rem, 2vh, 1.6rem);
+        font-weight: 600;
+        color: var(--text);
+        margin-top: 0.2rem;
+      }
+      .ferry-route     { font-size: 0.9rem; }
+      .countdown-badge { font-size: 0.8rem; padding: 0.25rem 0.6rem; }
     }
 
     /* ── Mobile responsive ─────────────────────────────────────────────── */
@@ -500,7 +517,7 @@
 <body>
 
 <header>
-  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.4.10</span></h1>
+  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.4.11</span></h1>
   <div class="header-meta">
     <div class="sun-times" id="sun-times"></div>
     <div id="moon-phase"></div>
