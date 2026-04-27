@@ -378,10 +378,22 @@
     /* ── Large-screen shared base (769px+) ────────────────────────────────
        Structural rules that apply to all non-mobile screens.              */
     @media (min-width: 769px) {
-      /* Cards stretch to fill their grid row */
+      /* Weather + tides stretch to fill their grid row */
       #weather, #tides { align-self: stretch; }
-      #ferry { align-self: stretch; }
-      .ferry-panel { height: 100%; }
+
+      /* Ferry: switch to flex so panels fill reliably without height:100% tricks.
+         height:100% on a child breaks when the parent height comes from grid
+         stretch rather than an explicit value — flex avoids that entirely. */
+      #ferry {
+        align-self: stretch;
+        display: flex;         /* override base display:grid */
+        flex-direction: row;
+      }
+      .ferry-panel {
+        flex: 1;               /* fills #ferry height + splits width equally */
+        height: auto;          /* clear fit-content from base styles */
+        min-height: 0;         /* allow shrinking */
+      }
 
       /* Tide rows divide card height equally */
       .tide-list {
@@ -517,7 +529,7 @@
 <body>
 
 <header>
-  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.4.11</span></h1>
+  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.4.12</span></h1>
   <div class="header-meta">
     <div class="sun-times" id="sun-times"></div>
     <div id="moon-phase"></div>
