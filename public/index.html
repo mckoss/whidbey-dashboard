@@ -379,9 +379,11 @@
     /* Targets screens wider than 768px but more square than 16:9 TV,     */
     /* e.g. Tesla (~4:3), desktop browser windows, iPads in landscape.    */
     @media (min-width: 769px) {
-      /* Cap weather+tides row height so ferry can claim remaining space */
+        /* Let weather+tides row size to its natural content height (prevents
+         clipping when 4 tide rows + sparkline exceed the old 300px cap).
+         Ferry gets all remaining space via 1fr. */
       body {
-        grid-template-rows: auto minmax(180px, 300px) 1fr;
+        grid-template-rows: auto auto 1fr;
       }
 
       /* Ferry panel fills its row */
@@ -472,7 +474,7 @@
 <body>
 
 <header>
-  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.4.7</span></h1>
+  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.4.8</span></h1>
   <div class="header-meta">
     <div class="sun-times" id="sun-times"></div>
     <div id="moon-phase"></div>
