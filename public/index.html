@@ -375,95 +375,56 @@
     }
     .no-ferry-key a { color: var(--accent); }
 
-    /* ── Large-screen shared base (769px+) ────────────────────────────────
-       Structural rules that apply to all non-mobile screens.              */
+    /* ── Landscape / dashboard mode (769px+) ──────────────────────────────
+       Single block — no duplicates.
+       header:        auto    (clock ~64px, never changes)
+       weather+tides: 500px   (content min ~310px; 190px breathing room)
+       ferry:         1fr     (fills all remaining space, never overflows)  */
     @media (min-width: 769px) {
-      /* Weather + tides stretch to fill their grid row */
+      body { grid-template-rows: auto 500px 1fr; }
+
+      /* ── Weather + Tides ────────────────────────────────────────────── */
       #weather, #tides { align-self: stretch; }
 
-      /* Ferry: switch to flex so panels fill reliably without height:100% tricks.
-         height:100% on a child breaks when the parent height comes from grid
-         stretch rather than an explicit value — flex avoids that entirely. */
-      #ferry {
-        align-self: stretch;
-        display: flex;         /* override base display:grid */
-        flex-direction: row;
-      }
-      .ferry-panel {
-        flex: 1;               /* fills #ferry height + splits width equally */
-        height: auto;          /* clear fit-content from base styles */
-        min-height: 0;         /* allow shrinking */
-      }
-
-      /* Tide rows divide card height equally */
       .tide-list {
         grid-template-rows: repeat(4, 1fr);
         align-content: stretch;
       }
 
-      /* Sailings grid fills all panel space below the route header */
-      .sailings-grid { flex: 1; min-height: 0; }
-
-      /* Each tile: flex column, content centered vertically */
-      .sailing {
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-      }
-
-      /* Fill bar always full-width in tile */
-      .sail-fill-wrap { width: 100%; }
-      .sail-fill-bar  { border-radius: 5px; }
-      .sail-fill-fill { border-radius: 5px; }
-    }
-
-    /* ── Landscape / dashboard mode (769px+) ────────────────────────────
-       Two-mode system — no TV vs Tesla distinction needed:                
-         weather+tides: fixed 50vh (predictable, never clips)             
-         ferry:         1fr  (fills all remaining space dynamically)      */
-    @media (min-width: 769px) {
-      /* Header: auto (clock height is fixed ~64px, never changes)
-         Weather+tides: 420px static — content minimum is ~310px;
-           tides card: 24(pad)+25(title)+62(sparkline)+4×45px(items)+14(gaps)=306px
-           weather card: 24+25+78(current)+155(forecast days)=282px
-           420px gives ~80px breathing room per section
-         Ferry: 1fr — fills all remaining space dynamically */
-      body { grid-template-rows: auto 420px 1fr; }
-
-      /* Cards fill their row */
-      #weather, #tides { align-self: stretch; }
-
-      /* Tide rows divide card height equally */
-      .tide-list {
-        grid-template-rows: repeat(4, 1fr);
-        align-content: stretch;
-      }
-
-      /* Tide text — vh-scaled so it fills on any screen height */
       .tide-item .tide-time   { font-size: clamp(0.85rem, 1.8vh, 1.4rem); }
       .tide-item .tide-label  { font-size: clamp(0.65rem, 1.3vh, 1.1rem); }
       .tide-item .tide-height { font-size: clamp(0.95rem, 2vh,   1.6rem); }
 
-      /* Ferry: flex fill (avoids height:100% percentage resolution issues) */
+      /* ── Ferry ────────────────────────────────────────────────────── */
+      /* display:flex avoids height:100% percentage-resolution bugs */
       #ferry {
         align-self: stretch;
         display: flex;
         flex-direction: row;
+        overflow: hidden;
       }
-      .ferry-panel { flex: 1; height: auto; min-height: 0; }
+      .ferry-panel {
+        flex: 1;
+        height: auto;
+        min-height: 0;
+        overflow: hidden;
+      }
 
-      /* Sailings grid fills panel, tiles centered */
-      .sailings-grid { flex: 1; min-height: 0; gap: clamp(0.35rem, 0.8vh, 0.75rem); }
+      .sailings-grid {
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
+        gap: clamp(0.35rem, 0.8vh, 0.75rem);
+      }
       .sailing {
         display: flex;
         flex-direction: column;
         justify-content: center;
         align-items: center;
+        overflow: hidden;
         padding: clamp(0.5rem, 1.5vh, 1.25rem) 0.75rem;
       }
 
-      /* Ferry text — vh-scaled for at-a-glance reading */
       .sailing .sail-time {
         font-size: clamp(1.2rem, 4vh, 4rem);
         font-weight: 200;
@@ -529,7 +490,7 @@
 <body>
 
 <header>
-  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.4.16</span></h1>
+  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.4.17</span></h1>
   <div class="header-meta">
     <div class="sun-times" id="sun-times"></div>
     <div id="moon-phase"></div>
