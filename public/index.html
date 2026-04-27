@@ -418,38 +418,17 @@
       .sail-fill-fill { border-radius: 5px; }
     }
 
-    /* ── Intermediate screens (769px – 1399px): tablets, small desktop ───────
-       Equal split — ferry and weather+tides share space evenly.           */
-    @media (min-width: 769px) and (max-width: 1399px) {
-      body { grid-template-rows: auto 1fr 1fr; }
+    /* ── Default large-screen: ferry is the hero (769px+) ──────────────────
+       Covers Tesla (full-screen or side panel), tablets, small desktop.
+       Ferry gets 2× the height of weather+tides.                        */
+    @media (min-width: 769px) {
+      body { grid-template-rows: auto 1fr 2fr; }
 
-      .tide-item .tide-time   { font-size: clamp(0.8rem,  1.6vh, 1.2rem); }
-      .tide-item .tide-label  { font-size: clamp(0.65rem, 1.1vh, 0.9rem); }
-      .tide-item .tide-height { font-size: clamp(0.9rem,  1.7vh, 1.3rem); }
-
-      .sailings-grid { gap: 0.4rem; }
-      .sailing { padding: 0.5rem 0.75rem; }
-      .sailing .sail-time    { font-size: clamp(1.2rem, 3vh, 2.5rem); font-weight: 200; line-height: 1.1; }
-      .sailing .sail-vessel  { font-size: clamp(0.6rem, 1.1vh, 0.9rem);  margin-top: 0.15rem; }
-      .sailing .sail-status  { font-size: clamp(0.65rem, 1.2vh, 1rem);   margin-top: 0.15rem; }
-      .sail-fill-wrap        { margin-top: 0.3rem; }
-      .sail-fill-bar         { height: clamp(4px, 0.8vh, 8px); }
-      .sail-fill-label       { font-size: clamp(1rem, 2.5vh, 2rem); font-weight: 600; color: var(--text); margin-top: 0.2rem; }
-      .ferry-route     { font-size: 0.85rem; }
-      .countdown-badge { font-size: 0.8rem; padding: 0.25rem 0.6rem; }
-    }
-
-    /* ── Tesla mode: ferry is the hero (1400px+ AND squarish, e.g. 1920×1200)
-       Aspect ratio ≤ 16:10 means the screen is taller/squarer than a TV.
-       Tesla Model 3 = 1920×1200 = exactly 16:10.                         */
-    @media (min-width: 1400px) and (max-aspect-ratio: 16/10) {
-      body { grid-template-rows: auto 1fr 2fr; } /* ferry gets 2× height */
-
-      .tide-item .tide-time   { font-size: clamp(0.85rem, 1.6vh, 1.3rem); }
+      .tide-item .tide-time   { font-size: clamp(0.8rem,  1.6vh, 1.3rem); }
       .tide-item .tide-label  { font-size: clamp(0.65rem, 1.2vh, 1rem);   }
-      .tide-item .tide-height { font-size: clamp(0.95rem, 1.8vh, 1.4rem); }
+      .tide-item .tide-height { font-size: clamp(0.9rem,  1.8vh, 1.4rem); }
 
-      /* Ferry tiles: large — readable from across the car */
+      /* Ferry tiles: large, vh-scaled — readable from across the car */
       .sailings-grid { gap: clamp(0.35rem, 0.8vh, 0.75rem); }
       .sailing       { padding: clamp(0.5rem, 1.5vh, 1.25rem) 0.75rem; }
       .sailing .sail-time {
@@ -471,8 +450,10 @@
       .countdown-badge { font-size: clamp(0.75rem, 1.3vh, 1rem); padding: 0.3rem 0.8rem; }
     }
 
-    /* ── TV mode: weather+tides is the hero (1400px+ AND widescreen 16:9+)
-       1920×1080 TV = exactly 16:9. Ferry is compact, ~half the height.   */
+    /* ── TV exception: weather+tides is the hero (1400px+ AND 16:9 widescreen)
+       The ONLY case where ferry shrinks to ~1/3: a full 16:9 TV display.
+       1920×1080 = exactly 16:9. Tesla side panel won’t match (it’s squarish
+       or narrower). Tesla full-screen = 16:10, also won’t match.         */
     @media (min-width: 1400px) and (min-aspect-ratio: 16/9) {
       body { grid-template-rows: auto 2fr 1fr; } /* weather+tides gets 2× height */
 
@@ -480,7 +461,7 @@
       .tide-item .tide-label  { font-size: clamp(0.7rem,  1.3vh, 1.1rem); }
       .tide-item .tide-height { font-size: clamp(1rem,    2vh,   1.6rem); }
 
-      /* Ferry tiles: compact — fits its smaller 1fr section */
+      /* Ferry tiles: compact — fits the smaller 1fr section */
       .sailings-grid { gap: 0.5rem; }
       .sailing       { padding: 0.6rem 0.75rem; }
       .sailing .sail-time {
@@ -547,7 +528,7 @@
 <body>
 
 <header>
-  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.4.13</span></h1>
+  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.4.14</span></h1>
   <div class="header-meta">
     <div class="sun-times" id="sun-times"></div>
     <div id="moon-phase"></div>
