@@ -375,32 +375,45 @@
     }
     .no-ferry-key a { color: var(--accent); }
 
-    /* ── Large-screen / Tesla layout (wider than mobile, squarish aspect) ─── */
-    /* Targets screens wider than 768px but more square than 16:9 TV,     */
-    /* e.g. Tesla (~4:3), desktop browser windows, iPads in landscape.    */
+    /* ── Large-screen / TV layout ─────────────────────────────────────────
+       Strict proportional rows: header(auto) + middle(1fr) + ferry(2fr).
+       Always sums to exactly 100vh — no scrollbar, no clipping.          */
     @media (min-width: 769px) {
-        /* Let weather+tides row size to its natural content height (prevents
-         clipping when 4 tide rows + sparkline exceed the old 300px cap).
-         Ferry gets all remaining space via 1fr. */
+      /* Proportional split: ferry gets 2× the space of weather+tides */
       body {
-        grid-template-rows: auto auto 1fr;
+        grid-template-rows: auto 1fr 2fr;
       }
 
-      /* Ferry panel fills its row */
+      /* ── Weather + Tides: fill their row ──────────────────────────── */
+      #weather, #tides { align-self: stretch; }
+
+      /* Tide rows fill available card height with equal spacing */
+      .tide-list {
+        grid-template-rows: repeat(4, 1fr);
+        align-content: stretch;
+      }
+
+      /* ── Ferry: fill its row ───────────────────────────────────────── */
       #ferry { align-self: stretch; }
       .ferry-panel { height: 100%; }
 
-      /* Tide list rows: don’t stretch — sit snug at natural height */
-      .tide-list {
-        grid-template-rows: repeat(4, auto);
-        align-content: start;
+      /* Sailings grid fills panel below the header, tiles stretch to fill */
+      .sailings-grid {
+        flex: 1;
+        min-height: 0;
+        gap: 0.6rem;
+      }
+
+      /* Each tile is a flex column with content centered vertically */
+      .sailing {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        padding: 1rem 0.75rem;
       }
 
       /* ── Ferry tile scale-up for at-a-glance viewing ─────────────── */
-      .sailings-grid { gap: 0.6rem; align-content: center; }
-
-      .sailing { padding: 1rem 0.75rem; }
-
       .sailing .sail-time {
         font-size: 1.8rem;
         font-weight: 200;
@@ -409,14 +422,11 @@
       .sailing .sail-status { font-size: 0.85rem; margin-top: 0.25rem; }
 
       /* Fill bar — taller and more visible */
-      .sail-fill-wrap { margin-top: 0.5rem; }
-      .sail-fill-bar {
-        height: 10px;
-        border-radius: 5px;
-      }
+      .sail-fill-wrap { margin-top: 0.5rem; width: 100%; }
+      .sail-fill-bar  { height: 10px; border-radius: 5px; }
       .sail-fill-fill { border-radius: 5px; }
 
-      /* Space count / “N open” — the main thing to read from across a car */
+      /* Space count / "N open" — the main thing to read from across the room */
       .sail-fill-label {
         font-size: 1.4rem;
         font-weight: 600;
@@ -474,7 +484,7 @@
 <body>
 
 <header>
-  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.4.8</span></h1>
+  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.4.9</span></h1>
   <div class="header-meta">
     <div class="sun-times" id="sun-times"></div>
     <div id="moon-phase"></div>
@@ -548,7 +558,7 @@ function renderMoon() {
   // At quarter moons it equals 0 (straight line down the middle).
   const terminatorX = Math.abs(Math.cos(phase * 2 * Math.PI)) * R;
 
-  // Thin outline for the full disc (no fill — background shows through)
+  // Thin outline for the full disc (no fill - background shows through)
   // Then draw ONLY the lit portion as a filled path
 
   const top = `${cx},${cy - R}`;
@@ -601,7 +611,7 @@ setInterval(renderMoon, 3600 * 1000);
 
 // ── Weather codes ──────────────────────────────────────────────────────
 function weatherIcon(code) {
-  // Returns an <img> tag — PNGs render consistently on all browsers (TV, Tesla, mobile)
+  // Returns an <img> tag - PNGs render consistently on all browsers (TV, Tesla, mobile)
   const icons = {
     0:  'clear',
     1:  'partly-cloudy', 2: 'partly-cloudy',
@@ -655,7 +665,7 @@ const REFRESH_INTERVALS = {
 };
 
 function ageTag(key, staleData) {
-  // Inline age indicator — only warns when data is older than its refresh interval.
+  // Inline age indicator - only warns when data is older than its refresh interval.
   const thresholdMin = REFRESH_INTERVALS[key] || 5;
   let ageMin;
   if (staleData && staleData._stale) {
@@ -740,7 +750,7 @@ async function loadWeather() {
       const riseStr = new Date(window._sunriseMs).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
       const setStr  = new Date(window._sunsetMs).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
       const sunEl = document.getElementById('sun-times');
-      // PNG icons — reliable color on all browsers including TV/Tesla
+      // PNG icons - reliable color on all browsers including TV/Tesla
       const sunIcon  = `<img src="/icons/sun.png" width="20" height="20" style="vertical-align:middle;flex-shrink:0" alt="sunrise">`;
       const moonIcon = `<img src="/icons/moon-crescent.png" width="18" height="20" style="vertical-align:middle;flex-shrink:0" alt="sunset">`;
       if (sunEl) sunEl.innerHTML = `<span>${sunIcon} ${riseStr}</span><span>${moonIcon} ${setStr}</span>`;
@@ -814,7 +824,7 @@ function buildThermometer(currentFt, minFt, maxFt, rising) {
         <stop offset="100%" stop-color="#0c1a2e"/>
       </linearGradient>
     </defs>
-    <!-- tube: thin border lines (no fill, no stroke attr — max TV compat) -->
+    <!-- tube: thin border lines (no fill, no stroke attr - max TV compat) -->
     <line x1="${TUBE_X}" y1="${PLOT_TOP}" x2="${TUBE_X}" y2="${PLOT_TOP + PLOT_H}" stroke="#4a5568" stroke-width="1"/>
     <line x1="${TUBE_X + TW}" y1="${PLOT_TOP}" x2="${TUBE_X + TW}" y2="${PLOT_TOP + PLOT_H}" stroke="#4a5568" stroke-width="1"/>
     <line x1="${TUBE_X}" y1="${PLOT_TOP}" x2="${TUBE_X + TW}" y2="${PLOT_TOP}" stroke="#4a5568" stroke-width="1"/>
@@ -862,7 +872,7 @@ function buildSparkline(hourlyPredictions) {
   const endMs2   = times[n-1].getTime();
   const totalMs  = endMs2 - startMs2;
 
-  // Key time markers: 6am, noon, 6pm, midnight — bold lines, minimal labels
+  // Key time markers: 6am, noon, 6pm, midnight - bold lines, minimal labels
   let ticks = '';
   // Find next occurrence of 6, 12, 18, 0 hours from start
   const keyHours = [0, 6, 12, 18];
@@ -880,7 +890,7 @@ function buildSparkline(hourlyPredictions) {
     const sw = isMidOrNoon ? 1.5 : 0.75;
     const opacity = isMidOrNoon ? 0.45 : 0.25;
     const label = h === 0 ? 'mid' : h === 6 ? '6a' : h === 12 ? 'noon' : '6p';
-    // Pre-blended stroke/fill colors (no opacity attrs — TV compat)
+    // Pre-blended stroke/fill colors (no opacity attrs - TV compat)
     const lineColor = isMidOrNoon ? '#5a6a7a' : '#333d48';
     const textColor = isMidOrNoon ? '#6b7a8a' : '#454f5a';
     ticks += `<line x1="${tx}" y1="${PAD_T}" x2="${tx}" y2="${PAD_T+plotH}" stroke="${lineColor}" stroke-width="${sw}" stroke-dasharray="${isMidOrNoon ? '' : '2,2'}"/>`;
@@ -975,7 +985,7 @@ async function loadTides() {
     const upcoming = predictions
       .map(p => ({ ...p, date: new Date(p.t) }))
       .filter(p => p.date >= new Date(now.getTime() - 3600000) && p.date <= cutoff48h)
-      .slice(0, 4);  // always exactly 4 rows — matches grid-template-rows
+      .slice(0, 4);  // always exactly 4 rows - matches grid-template-rows
 
     const items = upcoming.map(p => {
       const pacDate = d => new Date(d).toLocaleDateString('en-CA', { timeZone: TZ }); // YYYY-MM-DD
@@ -1058,7 +1068,7 @@ function isDepartureConfirmed(s, parsedSailings, spaceMap) {
     if (nextSpace && nextSpace.maxSpaces > 0 && nextSpace.driveUpSpaces < nextSpace.maxSpaces) return true;
   }
 
-  // Signal 3: space entry is absent but spaceMap has data for other sailings — WSF dropped it (departed)
+  // Signal 3: space entry is absent but spaceMap has data for other sailings - WSF dropped it (departed)
   if (!space && spaceMapHasData) return true;
 
   return false;
@@ -1150,13 +1160,13 @@ function updateFerryCards(panelId, countdownId, parsedSailings, spaceMap, animat
   const displayList = buildDisplayList(parsedSailings);
 
   if (!animate) {
-    // Initial render — no animation
+    // Initial render - no animation
     grid.innerHTML = displayList.map(s => sailingCard(s, parsedSailings, spaceMap)).join('');
     return;
   }
 
   // Animated slide: old cards slide out left, new rightmost card slides in from right
-  // Only the cards that shifted need animation — slide ALL out, rebuild, slide new one in
+  // Only the cards that shifted need animation - slide ALL out, rebuild, slide new one in
   const oldCards = Array.from(grid.children);
   oldCards.forEach(c => {
     c.classList.add('slide-out');
