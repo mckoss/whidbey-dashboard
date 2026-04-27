@@ -401,7 +401,7 @@
         align-self: stretch;
         display: flex;
         flex-direction: row;
-        overflow: hidden;
+        /* no overflow:hidden here — it would clip the panels' border-radius */
       }
       .ferry-panel {
         flex: 1;
@@ -490,7 +490,7 @@
 <body>
 
 <header>
-  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.4.17</span></h1>
+  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.4.18</span></h1>
   <div class="header-meta">
     <div class="sun-times" id="sun-times"></div>
     <div id="moon-phase"></div>
