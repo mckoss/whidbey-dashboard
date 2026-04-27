@@ -418,69 +418,64 @@
       .sail-fill-fill { border-radius: 5px; }
     }
 
-    /* ── Default large-screen: ferry is the hero (769px+) ──────────────────
-       Covers Tesla (full-screen or side panel), tablets, small desktop.
-       Ferry gets 2× the height of weather+tides.                        */
+    /* ── Landscape / dashboard mode (769px+) ────────────────────────────
+       Two-mode system — no TV vs Tesla distinction needed:                
+         weather+tides: fixed 50vh (predictable, never clips)             
+         ferry:         1fr  (fills all remaining space dynamically)      */
     @media (min-width: 769px) {
-      body { grid-template-rows: auto 1fr 2fr; }
+      body { grid-template-rows: auto 50vh 1fr; }
 
-      .tide-item .tide-time   { font-size: clamp(0.8rem,  1.6vh, 1.3rem); }
-      .tide-item .tide-label  { font-size: clamp(0.65rem, 1.2vh, 1rem);   }
-      .tide-item .tide-height { font-size: clamp(0.9rem,  1.8vh, 1.4rem); }
+      /* Cards fill their row */
+      #weather, #tides { align-self: stretch; }
 
-      /* Ferry tiles: large, vh-scaled — readable from across the car */
-      .sailings-grid { gap: clamp(0.35rem, 0.8vh, 0.75rem); }
-      .sailing       { padding: clamp(0.5rem, 1.5vh, 1.25rem) 0.75rem; }
+      /* Tide rows divide card height equally */
+      .tide-list {
+        grid-template-rows: repeat(4, 1fr);
+        align-content: stretch;
+      }
+
+      /* Tide text — vh-scaled so it fills on any screen height */
+      .tide-item .tide-time   { font-size: clamp(0.85rem, 1.8vh, 1.4rem); }
+      .tide-item .tide-label  { font-size: clamp(0.65rem, 1.3vh, 1.1rem); }
+      .tide-item .tide-height { font-size: clamp(0.95rem, 2vh,   1.6rem); }
+
+      /* Ferry: flex fill (avoids height:100% percentage resolution issues) */
+      #ferry {
+        align-self: stretch;
+        display: flex;
+        flex-direction: row;
+      }
+      .ferry-panel { flex: 1; height: auto; min-height: 0; }
+
+      /* Sailings grid fills panel, tiles centered */
+      .sailings-grid { flex: 1; min-height: 0; gap: clamp(0.35rem, 0.8vh, 0.75rem); }
+      .sailing {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        padding: clamp(0.5rem, 1.5vh, 1.25rem) 0.75rem;
+      }
+
+      /* Ferry text — vh-scaled for at-a-glance reading */
       .sailing .sail-time {
-        font-size: clamp(1.4rem, 4.5vh, 4.5rem);
+        font-size: clamp(1.2rem, 4vh, 4rem);
         font-weight: 200;
         line-height: 1.1;
       }
-      .sailing .sail-vessel  { font-size: clamp(0.65rem, 1.2vh, 1rem);   margin-top: clamp(0.1rem, 0.4vh, 0.35rem); }
-      .sailing .sail-status  { font-size: clamp(0.7rem,  1.3vh, 1.1rem); margin-top: clamp(0.1rem, 0.4vh, 0.35rem); }
-      .sail-fill-wrap        { margin-top: clamp(0.3rem, 0.8vh, 0.6rem); }
-      .sail-fill-bar         { height: clamp(4px, 1vh, 12px); }
+      .sailing .sail-vessel  { font-size: clamp(0.65rem, 1.2vh, 1rem);   margin-top: clamp(0.1rem, 0.4vh, 0.3rem); }
+      .sailing .sail-status  { font-size: clamp(0.7rem,  1.3vh, 1.1rem); margin-top: clamp(0.1rem, 0.4vh, 0.3rem); }
+      .sail-fill-wrap        { margin-top: clamp(0.25rem, 0.7vh, 0.5rem); width: 100%; }
+      .sail-fill-bar         { height: clamp(4px, 0.9vh, 10px); border-radius: 5px; }
+      .sail-fill-fill        { border-radius: 5px; }
       .sail-fill-label {
-        font-size: clamp(1.1rem, 3.5vh, 3.5rem);
+        font-size: clamp(1rem, 3vh, 3rem);
         font-weight: 600;
         color: var(--text);
-        margin-top: clamp(0.2rem, 0.6vh, 0.5rem);
+        margin-top: clamp(0.15rem, 0.5vh, 0.4rem);
       }
       .ferry-route     { font-size: clamp(0.8rem, 1.4vh, 1.1rem); }
       .countdown-badge { font-size: clamp(0.75rem, 1.3vh, 1rem); padding: 0.3rem 0.8rem; }
-    }
-
-    /* ── TV exception: weather+tides is the hero (1400px+ AND 16:9 widescreen)
-       The ONLY case where ferry shrinks to ~1/3: a full 16:9 TV display.
-       1920×1080 = exactly 16:9. Tesla side panel won’t match (it’s squarish
-       or narrower). Tesla full-screen = 16:10, also won’t match.         */
-    @media (min-width: 1400px) and (min-aspect-ratio: 16/9) {
-      body { grid-template-rows: auto 2fr 1fr; } /* weather+tides gets 2× height */
-
-      .tide-item .tide-time   { font-size: clamp(0.9rem, 1.8vh, 1.4rem); }
-      .tide-item .tide-label  { font-size: clamp(0.7rem,  1.3vh, 1.1rem); }
-      .tide-item .tide-height { font-size: clamp(1rem,    2vh,   1.6rem); }
-
-      /* Ferry tiles: compact — fits the smaller 1fr section */
-      .sailings-grid { gap: 0.5rem; }
-      .sailing       { padding: 0.6rem 0.75rem; }
-      .sailing .sail-time {
-        font-size: clamp(1rem, 2.5vh, 2rem);
-        font-weight: 200;
-        line-height: 1.1;
-      }
-      .sailing .sail-vessel  { font-size: clamp(0.6rem, 1vh, 0.85rem);   margin-top: 0.15rem; }
-      .sailing .sail-status  { font-size: clamp(0.65rem, 1.1vh, 0.9rem); margin-top: 0.15rem; }
-      .sail-fill-wrap        { margin-top: 0.3rem; }
-      .sail-fill-bar         { height: 6px; }
-      .sail-fill-label {
-        font-size: clamp(0.9rem, 2vh, 1.6rem);
-        font-weight: 600;
-        color: var(--text);
-        margin-top: 0.2rem;
-      }
-      .ferry-route     { font-size: 0.9rem; }
-      .countdown-badge { font-size: 0.8rem; padding: 0.25rem 0.6rem; }
     }
 
     /* ── Mobile responsive ─────────────────────────────────────────────── */
@@ -528,7 +523,7 @@
 <body>
 
 <header>
-  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.4.14</span></h1>
+  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.4.15</span></h1>
   <div class="header-meta">
     <div class="sun-times" id="sun-times"></div>
     <div id="moon-phase"></div>
