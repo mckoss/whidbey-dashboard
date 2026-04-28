@@ -25,13 +25,12 @@
       background: var(--bg);
       color: var(--text);
       font-family: 'Segoe UI', system-ui, sans-serif;
-      height: 100vh;
-      overflow: hidden;
-      padding: 0.75rem;
+      min-height: 100vh;
+      padding: 0.4rem;
       display: grid;
       grid-template-rows: auto 1fr auto;
       grid-template-columns: 1fr 1fr;
-      gap: 0.75rem;
+      gap: 0.4rem;
     }
 
     header {
@@ -42,6 +41,13 @@
     }
 
     h1 { font-size: 1.4rem; color: var(--accent); font-weight: 300; letter-spacing: 0.1em; text-transform: uppercase; }
+    #version {
+      font-size: 0.6rem;
+      color: var(--dim);
+      font-weight: 300;
+      letter-spacing: 0.05em;
+      vertical-align: middle;
+    }
 
     .header-meta {
       display: flex;
@@ -227,7 +233,14 @@
       display: block;
     }
 
-    .tide-list { display: grid; grid-template-rows: repeat(4, 1fr); gap: 0.3rem; flex: 1; min-height: 0; overflow: hidden; }
+    .tide-list {
+        display: grid;
+        grid-template-rows: repeat(4, 1fr);
+        gap: 0.2rem;
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
+    }
 
     .tide-item {
       display: grid;
@@ -268,7 +281,7 @@
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: 0.75rem;
-      padding: 0.75rem;
+      padding: 0.2rem 0.5rem;
       display: flex;
       flex-direction: column;
       height: fit-content;
@@ -317,7 +330,7 @@
 
     .sailings-grid {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 0.35rem;
       align-content: start;
       overflow: hidden;
@@ -382,8 +395,9 @@
        ferry:         1fr     (fills all remaining space, never overflows)  */
     @media (min-width: 769px) {
       /* header:        auto  — clock height, never changes
-         weather+tides: auto  — row sizes to whichever card is taller
-         ferry:         1fr   — fills all remaining space */
+         weather+tides: auto  — natural content height, never shrinks
+         ferry:         1fr   — fills remaining viewport space; if total content
+                                exceeds the viewport, body scrolls (min-height: 100vh) */
       body { grid-template-rows: auto auto 1fr; }
 
       /* ── Weather + Tides ────────────────────────────────────────────── */
@@ -393,10 +407,7 @@
         grid-template-rows: repeat(4, 1fr);
         align-content: stretch;
       }
-
-      .tide-item .tide-time   { font-size: clamp(0.85rem, 1.8vh, 1.4rem); }
-      .tide-item .tide-label  { font-size: clamp(0.65rem, 1.3vh, 1.1rem); }
-      .tide-item .tide-height { font-size: clamp(0.95rem, 2vh,   1.6rem); }
+      /* Tide fonts intentionally NOT vh-scaled — base sizes apply at all heights */
 
       /* ── Ferry ────────────────────────────────────────────────────── */
       /* display:flex avoids height:100% percentage-resolution bugs */
@@ -411,41 +422,89 @@
         height: auto;
         min-height: 0;
         overflow: hidden;
+        /* container-type: size enables cqh-based font sizing on .sailing children.
+           Browsers without support (older/embedded WebViews) silently ignore this
+           and fall back to the vh-based clamps declared first below. */
+        container-type: size;
       }
 
       .sailings-grid {
         flex: 1;
         min-height: 0;
         overflow: hidden;
+        /* Single row that fills all available height in the panel — cards stretch
+           to match instead of sitting at content-height with empty space below. */
+        grid-template-rows: 1fr;
+        align-content: stretch;
         gap: clamp(0.35rem, 0.8vh, 0.75rem);
+        gap: clamp(0.35rem, 2.5cqh, 0.75rem);
       }
       .sailing {
         display: flex;
         flex-direction: column;
-        justify-content: center;
+        /* space-evenly distributes the rows (time / vessel / status / fill) across
+           the card height. NOTE: not using `safe` — the `safe` keyword was tried but
+           altered visual centering even when content fit. If content overflows in the
+           future, items will overlap (later DOM siblings paint on top) rather than
+           clipping cleanly off the bottom. */
+        justify-content: space-evenly;
         align-items: center;
         overflow: hidden;
+        /* Sailing card is itself a query container for its inner stack
+           (sail-time, vessel, status, fill bar/label). cqh inside .sailing's
+           descendants resolves to *card* height, not panel height. */
+        container-type: size;
+        /* The padding rule below uses cqh — that resolves to the nearest
+           ancestor container, which is .ferry-panel (an element isn't its own
+           container ancestor), so panel-relative scaling is preserved here. */
         padding: clamp(0.5rem, 1.5vh, 1.25rem) 0.75rem;
+        padding: clamp(0.5rem, 6cqh, 1.25rem) 0.75rem;
       }
 
+      /* cqh resolves to the *.sailing* card. Multipliers and maxes raised so
+         fonts grow more aggressively and don't max out on large cards.
+         Mins kept low so the TV's short cards still fit all four rows vertically.
+         vh fallback first; cqh second wins on browsers that support it. */
+      /* sail-time and sail-fill-label cap by min(cqh, cqi) so they shrink to fit
+         either height OR width, whichever is more restrictive. With only cqh,
+         "4:05 PM" can wrap on narrow cards (Tesla 4-col ≈ 100px wide). */
       .sailing .sail-time {
-        font-size: clamp(1.2rem, 4vh, 4rem);
+        font-size: clamp(0.8rem, 4.3vh, 3.4rem);
+        font-size: clamp(0.8rem, min(20cqh, 22cqi), 4rem);
         font-weight: 200;
         line-height: 1.1;
+        white-space: nowrap;
       }
-      .sailing .sail-vessel  { font-size: clamp(0.65rem, 1.2vh, 1rem);   margin-top: clamp(0.1rem, 0.4vh, 0.3rem); }
-      .sailing .sail-status  { font-size: clamp(0.7rem,  1.3vh, 1.1rem); margin-top: clamp(0.1rem, 0.4vh, 0.3rem); }
-      .sail-fill-wrap        { margin-top: clamp(0.25rem, 0.7vh, 0.5rem); width: 100%; }
-      .sail-fill-bar         { height: clamp(4px, 0.9vh, 10px); border-radius: 5px; }
-      .sail-fill-fill        { border-radius: 5px; }
+      .sailing .sail-vessel {
+        font-size: clamp(0.6rem, 3vh, 1.45rem);
+        font-size: clamp(0.6rem, min(12cqh, 18cqi), 1.7rem);
+      }
+      .sailing .sail-status {
+        font-size: clamp(0.6rem, 1.9vh, 1.6rem);
+        font-size: clamp(0.6rem, min(9.5cqh, 16cqi), 1.9rem);
+        white-space: nowrap;
+      }
+      .sail-fill-wrap {
+        width: 100%;
+      }
+      .sail-fill-bar {
+        border-radius: 5px;
+        height: clamp(3px, 0.9vh, 10px);
+        height: clamp(3px, 4cqh, 12px);
+      }
+      .sail-fill-fill { border-radius: 5px; }
       .sail-fill-label {
-        font-size: clamp(1rem, 3vh, 3rem);
         font-weight: 600;
         color: var(--text);
+        font-size: clamp(0.6rem, 3.4vh, 2.55rem);
+        font-size: clamp(0.6rem, min(15cqh, 18cqi), 3rem);
         margin-top: clamp(0.15rem, 0.5vh, 0.4rem);
+        margin-top: clamp(0.15rem, 1.5cqh, 0.4rem);
+        white-space: nowrap;
       }
-      .ferry-route     { font-size: clamp(0.8rem, 1.4vh, 1.1rem); }
-      .countdown-badge { font-size: clamp(0.75rem, 1.3vh, 1rem); padding: 0.3rem 0.8rem; }
+      /* Ferry-panel chrome (route label + countdown) intentionally NOT vh-scaled —
+         only the individual departure cards (.sailing) scale with window height */
+      .countdown-badge { padding: 0.3rem 0.8rem; }
     }
 
     /* ── Mobile responsive ─────────────────────────────────────────────── */
@@ -493,7 +552,7 @@
 <body>
 
 <header>
-  <h1>🌊 South Whidbey Island <span style="font-size:0.45rem;color:var(--dim);font-weight:300;letter-spacing:0.05em;vertical-align:middle">v1.4.19</span></h1>
+  <h1>🌊 South Whidbey Island <span id="version"></span></h1>
   <div class="header-meta">
     <div class="sun-times" id="sun-times"></div>
     <div id="moon-phase"></div>
@@ -1319,10 +1378,16 @@ scheduleLoader(loadWeather, 60 * 60 * 1000);   // 1 hour, retry 5 min
 scheduleLoader(loadTides,  120 * 60 * 1000);   // 2 hours, retry 5 min
 scheduleLoader(loadFerry,   30 * 1000);        // 30 sec,  retry 5 min
 
-// ── Google Analytics (injected if GA_MEASUREMENT_ID is set on the server) ─────
+// ── Client config: version + Google Analytics ────────────────────────────────
+// Version comes from package.json via the server's /api/config endpoint, so
+// bumping with `npm version patch` is the only step needed.
 (async () => {
   try {
     const cfg = await fetch('/api/config').then(r => r.json());
+    if (cfg.version) {
+      const el = document.getElementById('version');
+      if (el) el.textContent = 'v ' + cfg.version;
+    }
     if (cfg.gaMeasurementId) {
       const s = document.createElement('script');
       s.async = true;

@@ -18,6 +18,10 @@ try {
   }
 } catch {}
 
+// package.json is the single source of truth for the version string;
+// the client reads it via /api/config and renders it in the header.
+const pkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8'));
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -301,6 +305,7 @@ app.get('/api/ferry/space', ferrySpaceEndpoint('ferry_clinton_space', 5, 14));
 app.get('/api/config', (req, res) => {
   res.json({
     gaMeasurementId: process.env.GA_MEASUREMENT_ID || null,
+    version: pkg.version,
   });
 });
 
