@@ -97,6 +97,12 @@ Added to the weather card header (☀️/🌙 icons, stacked vertically). Data c
 - Day background: `rgba(173,216,255,0.25)` (blue-tinted white at 25%)
 - Night background: `#000000`
 
+## Git Workflow
+
+- **Prefer rebase over merge** to keep a clean linear history. When integrating a feature branch: `git rebase master` on the branch, then fast-forward merge (`git merge --ff-only`).
+- Feature branches live in worktrees under `~/projects/whidbey-dashboard-<feature>/`.
+- `.env` is git-ignored — copy it manually into each new worktree before testing.
+
 ## Common Pitfalls
 
 1. **Unicode in `edit` tool:** The `edit` tool struggles with emoji matching in `oldText`. For complex HTML edits involving emoji, use Python string replacement scripts or rewrite the full section.
