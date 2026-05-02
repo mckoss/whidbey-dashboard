@@ -378,6 +378,10 @@
     .sail-fill-fill { height: 100%; border-radius: 2px; transition: width 0.4s ease; }
     .sail-fill-label { font-size: 0.58rem; color: var(--dim); margin-top: 0.1rem; }
 
+    /* Late departure: yellow estimated time + smaller original scheduled time below */
+    .sail-time-est { color: var(--warn); display: block; }
+    .sail-time-sched { font-size: 0.62em; color: var(--dim); display: block; line-height: 1.3; }
+
     .loading { color: var(--dim); font-size: 0.9rem; padding: 1rem 0; }
     .error-msg { color: var(--danger); font-size: 0.85rem; }
 
@@ -486,6 +490,15 @@
       }
       .sail-fill-wrap {
         width: 100%;
+      }
+      /* Late ferry: est time inherits .sail-time sizing; sched is 60% of that */
+      .sailing .sail-time-est { color: var(--warn); display: block; }
+      .sailing .sail-time-sched {
+        /* 0.6em of the computed sail-time font-size — scales with all the cqh/cqi rules above */
+        font-size: 0.6em;
+        color: var(--dim);
+        display: block;
+        line-height: 1.3;
       }
       .sail-fill-bar {
         border-radius: 5px;
@@ -1089,6 +1102,45 @@ async function loadTides() {
 // ── Ferry helpers ──────────────────────────────────────────────────────
 const countdownIntervals = {};
 
+// ── Late-ferry detection ───────────────────────────────────────────────
+// Approximate one-way crossing times (ms): Clinton→Mukilteo 30 min, reverse 25 min.
+const CROSSING_MS = { 5: 30 * 60 * 1000, 14: 25 * 60 * 1000 };
+const LATE_THRESHOLD_MS = 5 * 60 * 1000;
+
+// Build a map of scheduledDepartureMs → vessel object from /api/ferry/vessels response.
+function buildVesselMap(vesselData) {
+  const map = {};
+  for (const v of (vesselData?.vessels || [])) {
+    if (v.scheduledDepartureMs != null) map[v.scheduledDepartureMs] = v;
+  }
+  return map;
+}
+
+// Returns late-info object if this sailing is running late, null otherwise.
+// lateInfo: { atDock, estimatedDepartureMs, delayMs }
+function getLateInfo(s, vesselMap, fromTerminalId) {
+  const vessel = vesselMap[s.sailTime.getTime()];
+  if (!vessel || !vessel.inService) return null;
+  const now = Date.now();
+  const schedMs = s.sailTime.getTime();
+
+  // Still at dock and overdue by more than threshold
+  if (vessel.atDock && (now - schedMs) > LATE_THRESHOLD_MS) {
+    const crossingMs = CROSSING_MS[fromTerminalId] || 30 * 60 * 1000;
+    // Prefer ETA-derived estimate; fall back to "right now" (we know it hasn't left)
+    let estDepMs = vessel.etaMs ? vessel.etaMs - crossingMs : null;
+    if (!estDepMs || estDepMs <= now) estDepMs = now;
+    return { atDock: true, estimatedDepartureMs: estDepMs, delayMs: now - schedMs };
+  }
+
+  // Departed late (vessel already left dock)
+  if (!vessel.atDock && vessel.leftDockMs && (vessel.leftDockMs - schedMs) > LATE_THRESHOLD_MS) {
+    return { atDock: false, estimatedDepartureMs: vessel.leftDockMs, delayMs: vessel.leftDockMs - schedMs };
+  }
+
+  return null;
+}
+
 function formatCountdown(ms) {
   if (ms < 0) return null;
   const totalMin = Math.floor(ms / 60000);
@@ -1118,7 +1170,7 @@ function parseSailings(sched) {
     .sort((a, b) => a.sailTime - b.sailTime);
 }
 
-function isDepartureConfirmed(s, parsedSailings, spaceMap) {
+function isDepartureConfirmed(s, parsedSailings, spaceMap, vesselMap = {}) {
   // Only applies after scheduled time has passed
   const now = new Date();
   if (s.sailTime >= now) return false;
@@ -1139,10 +1191,14 @@ function isDepartureConfirmed(s, parsedSailings, spaceMap) {
   // Signal 3: space entry is absent but spaceMap has data for other sailings - WSF dropped it (departed)
   if (!space && spaceMapHasData) return true;
 
+  // Signal 4: vessel location data shows it left the dock
+  const vessel = vesselMap[s.sailTime.getTime()];
+  if (vessel && !vessel.atDock && vessel.leftDockMs) return true;
+
   return false;
 }
 
-function sailingCard(s, parsedSailings, spaceMap) {
+function sailingCard(s, parsedSailings, spaceMap, vesselMap = {}, fromTerminalId = 5) {
   const now = new Date();
   const trueNextIdx = parsedSailings.findIndex(x => x.sailTime >= now);
   const trueLastIdx = parsedSailings.length - 1;
@@ -1151,7 +1207,7 @@ function sailingCard(s, parsedSailings, spaceMap) {
   const isTrueLast = s.sailTime.getTime() === parsedSailings[trueLastIdx].sailTime.getTime();
   const display = s.sailTime.toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
 
-  const confirmed = isPast && isDepartureConfirmed(s, parsedSailings, spaceMap);
+  const confirmed = isPast && isDepartureConfirmed(s, parsedSailings, spaceMap, vesselMap);
 
   let statusText = '';
   let cssClass = 'sailing';
@@ -1159,6 +1215,19 @@ function sailingCard(s, parsedSailings, spaceMap) {
   else if (isPast && !confirmed) { cssClass += ' past departed-unknown';   statusText = 'Departed?'; }
   else if (isNext)               { cssClass += ' next';                    statusText = '▶ Next'; }
   else if (isTrueLast)           { cssClass += ' last-of-day';             statusText = '🔔 Last'; }
+
+  // Late departure display: yellow estimated time with original scheduled below
+  const lateInfo = !confirmed ? getLateInfo(s, vesselMap, fromTerminalId) : null;
+  let timeHtml;
+  if (lateInfo) {
+    const estTime = new Date(lateInfo.estimatedDepartureMs).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
+    const prefix = lateInfo.atDock ? '~' : '';
+    timeHtml = `<div class="sail-time"><span class="sail-time-est">${prefix}${estTime}</span><span class="sail-time-sched">${display}</span></div>`;
+    // Override status to show delay when the vessel is still at dock
+    if (lateInfo.atDock) statusText = '⚠ Delayed';
+  } else {
+    timeHtml = `<div class="sail-time">${display}</div>`;
+  }
 
   const space = spaceMap[String(s.sailTime.getTime())] || null;
   let fillHtml = '';
@@ -1179,7 +1248,7 @@ function sailingCard(s, parsedSailings, spaceMap) {
   }
   const vesselName = s.VesselName || space?.vesselName || '';
   const vesselHtml = vesselName ? `<div class="sail-vessel">${vesselName}</div>` : '';
-  return `<div class="${cssClass}"><div class="sail-time">${display}</div>${vesselHtml}<div class="sail-status">${statusText}</div>${fillHtml}</div>`;
+  return `<div class="${cssClass}">${timeHtml}${vesselHtml}<div class="sail-status">${statusText}</div>${fillHtml}</div>`;
 }
 
 // Tracks the current "next sailing" time per panel so we can detect transitions
@@ -1195,7 +1264,7 @@ function buildDisplayList(parsedSailings) {
   return list;
 }
 
-function updateFerryCards(panelId, countdownId, parsedSailings, spaceMap, animate) {
+function updateFerryCards(panelId, countdownId, parsedSailings, spaceMap, animate, vesselMap = {}, fromTerminalId = 5) {
   const el = document.getElementById(panelId);
   if (!el) return;
   const grid = el.querySelector('.sailings-grid');
@@ -1229,12 +1298,11 @@ function updateFerryCards(panelId, countdownId, parsedSailings, spaceMap, animat
 
   if (!animate) {
     // Initial render - no animation
-    grid.innerHTML = displayList.map(s => sailingCard(s, parsedSailings, spaceMap)).join('');
+    grid.innerHTML = displayList.map(s => sailingCard(s, parsedSailings, spaceMap, vesselMap, fromTerminalId)).join('');
     return;
   }
 
   // Animated slide: old cards slide out left, new rightmost card slides in from right
-  // Only the cards that shifted need animation - slide ALL out, rebuild, slide new one in
   const oldCards = Array.from(grid.children);
   oldCards.forEach(c => {
     c.classList.add('slide-out');
@@ -1242,17 +1310,16 @@ function updateFerryCards(panelId, countdownId, parsedSailings, spaceMap, animat
 
   setTimeout(() => {
     grid.innerHTML = displayList.map((s, i) => {
-      const html = sailingCard(s, parsedSailings, spaceMap);
-      // Inject slide-in class on the new rightmost card only
+      const html = sailingCard(s, parsedSailings, spaceMap, vesselMap, fromTerminalId);
       if (i === displayList.length - 1) {
         return html.replace('class="sailing', 'class="sailing slide-in');
       }
       return html;
     }).join('');
-  }, 420); // slightly before animation ends so it's seamless
+  }, 420);
 }
 
-function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spaceMap, schedData) {
+function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spaceMap, schedData, vesselMap = {}, fromTerminalId = 5) {
   const isStale = schedData && schedData._stale;
   const el = document.getElementById(panelId);
   if (!el) return;
@@ -1266,7 +1333,7 @@ function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spac
 
   // Full rebuild of panel HTML (header + grid)
   const displayList = buildDisplayList(parsedSailings);
-  const cards = displayList.map(s => sailingCard(s, parsedSailings, spaceMap)).join('');
+  const cards = displayList.map(s => sailingCard(s, parsedSailings, spaceMap, vesselMap, fromTerminalId)).join('');
 
   el.innerHTML = `
     <div class="ferry-panel-header">
@@ -1287,30 +1354,33 @@ function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spac
     const newNextIdx = parsedSailings.findIndex(s => s.sailTime >= now2);
     const newNextTime = newNextIdx >= 0 ? parsedSailings[newNextIdx].sailTime.getTime() : null;
 
-    // If the "next" sailing has changed, animate the slide transition
     const shouldAnimate = newNextTime !== panelNextTime[panelId];
     if (shouldAnimate) panelNextTime[panelId] = newNextTime;
 
-    updateFerryCards(panelId, countdownId, parsedSailings, spaceMap, shouldAnimate);
+    updateFerryCards(panelId, countdownId, parsedSailings, spaceMap, shouldAnimate, vesselMap, fromTerminalId);
   }, 30000);
 
   // Initial countdown update (no animation)
-  updateFerryCards(panelId, countdownId, parsedSailings, spaceMap, false);
+  updateFerryCards(panelId, countdownId, parsedSailings, spaceMap, false, vesselMap, fromTerminalId);
 }
 
 // ── Ferry loader ───────────────────────────────────────────────────────
 async function loadFerry() {
-  const [clintonSched, clintonSpace, mukilteoSched, mukilteoSpace] = await Promise.allSettled([
+  const [clintonSched, clintonSpace, mukilteoSched, mukilteoSpace, vesselRes] = await Promise.allSettled([
     fetch('/api/ferry/clinton').then(r => r.json()),
     fetch('/api/ferry/clinton/space').then(r => r.json()),
     fetch('/api/ferry/mukilteo').then(r => r.json()),
     fetch('/api/ferry/mukilteo/space').then(r => r.json()),
+    fetch('/api/ferry/vessels').then(r => r.json()),
   ]);
 
   const clintonData  = clintonSched.status  === 'fulfilled' ? clintonSched.value  : null;
   const clintonSp    = (clintonSpace.status === 'fulfilled' && !clintonSpace.value?.error)  ? clintonSpace.value  : {};
   const mukilteoData = mukilteoSched.status === 'fulfilled' ? mukilteoSched.value : null;
   const mukilteoSp   = (mukilteoSpace.status === 'fulfilled' && !mukilteoSpace.value?.error) ? mukilteoSpace.value : {};
+  const vesselData   = vesselRes.status === 'fulfilled' ? vesselRes.value : null;
+  // Build vessel map (scheduledDepartureMs → vessel); safe to pass empty map on API failure
+  const vesselMap    = buildVesselMap(vesselData);
 
   if (clintonData?.error === 'WSF_API_KEY not configured') {
     document.getElementById('ferry').innerHTML = `<div class="no-ferry-key">Ferry schedule requires a free WSDOT API key. <a href="https://www.wsdot.wa.gov/traffic/api/" target="_blank">Register here</a>, then add to <code>.env</code> as <code>WSF_API_KEY</code>.</div>`;
@@ -1319,15 +1389,15 @@ async function loadFerry() {
 
   if (mukilteoData && !mukilteoData.error) {
     if (!mukilteoData._stale) markFresh('ferry-mukilteo');
-    renderFerryPanel('ferry-mukilteo', 'countdown-mukilteo', 'Mukilteo → Clinton', parseSailings(mukilteoData), mukilteoSp, mukilteoData);
+    renderFerryPanel('ferry-mukilteo', 'countdown-mukilteo', 'Mukilteo → Clinton', parseSailings(mukilteoData), mukilteoSp, mukilteoData, vesselMap, 14);
   } else if (!mukilteoData || mukilteoData.error) {
-    delete dataUpdatedAt['ferry-mukilteo'];  // triggers warn on age tag
+    delete dataUpdatedAt['ferry-mukilteo'];
   }
   if (clintonData && !clintonData.error) {
     if (!clintonData._stale) markFresh('ferry-clinton');
-    renderFerryPanel('ferry-clinton',  'countdown-clinton',  'Clinton → Mukilteo',  parseSailings(clintonData),  clintonSp,  clintonData);
+    renderFerryPanel('ferry-clinton',  'countdown-clinton',  'Clinton → Mukilteo',  parseSailings(clintonData),  clintonSp,  clintonData, vesselMap, 5);
   } else if (!clintonData || clintonData.error) {
-    delete dataUpdatedAt['ferry-clinton'];  // triggers warn on age tag
+    delete dataUpdatedAt['ferry-clinton'];
   }
 }
 

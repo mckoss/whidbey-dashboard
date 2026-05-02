@@ -301,6 +301,43 @@ app.get('/api/ferry/mukilteo/space', ferrySpaceEndpoint('ferry_mukilteo_space', 
 app.get('/api/ferry', ferryScheduleEndpoint('ferry_clinton', 5, 14));
 app.get('/api/ferry/space', ferrySpaceEndpoint('ferry_clinton_space', 5, 14));
 
+// ── Vessel locations (Clinton–Mukilteo route) ─────────────────────────
+// Used by the client to detect late departures and update the displayed time.
+function parseWsfMs(d) {
+  if (!d) return null;
+  if (typeof d === 'string') {
+    const m = d.match(/\/Date\((\d+)/);
+    if (m) return parseInt(m[1], 10);
+    const t = new Date(d).getTime();
+    return isNaN(t) ? null : t;
+  }
+  return null;
+}
+
+app.get('/api/ferry/vessels', cachedEndpoint('ferry_vessels', 30 * 1000, async () => {
+  if (!WSF_API_KEY) return { error: 'WSF_API_KEY not configured', vessels: [] };
+  const url = `https://www.wsdot.wa.gov/ferries/api/vessels/rest/vessellocations?apiaccesscode=${WSF_API_KEY}`;
+  const r = await fetchWithRetry(url, { headers: { Accept: 'application/json' } });
+  const data = await r.json();
+  const routeTerminals = new Set([5, 14]); // Clinton=5, Mukilteo=14
+  const vessels = (Array.isArray(data) ? data : [])
+    .filter(v => routeTerminals.has(v.DepartingTerminalID) || routeTerminals.has(v.ArrivingTerminalID))
+    .map(v => ({
+      vesselId: v.VesselID,
+      vesselName: v.VesselName,
+      atDock: v.AtDock,
+      inService: v.InService,
+      departingTerminalId: v.DepartingTerminalID,
+      arrivingTerminalId: v.ArrivingTerminalID,
+      scheduledDepartureMs: parseWsfMs(v.ScheduledDeparture),
+      leftDockMs: parseWsfMs(v.LeftDock),
+      etaMs: parseWsfMs(v.Eta),
+      etaBasis: v.EtaBasis,
+      speed: v.Speed,
+    }));
+  return { vessels };
+}));
+
 // ── Client config (feature flags, analytics ID) ──────────────────────
 app.get('/api/config', (req, res) => {
   res.json({
