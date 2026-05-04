@@ -2,6 +2,8 @@
 
 Ambient dashboard for the Whidbey Island beach house. Designed for always-on TV display — fits a single screen with no scrolling (`height: 100vh; overflow: hidden`).
 
+See the hosted version at [whidbey-dashboard.mckoss.com](https://whidbey-dashboard.mckoss.com)
+
 ## Features
 
 - 🕐 Real-time digital clock (12-hour, am/pm)
