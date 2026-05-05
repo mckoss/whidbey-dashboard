@@ -393,8 +393,12 @@
        header:        auto    (clock ~64px, never changes)
        weather+tides: 500px   (content min ~310px; 190px breathing room)
        ferry:         1fr     (fills all remaining space, never overflows)  */
-    @media (min-width: 769px) {
-      /* header:        auto  — clock height, never changes
+    @media (min-width: 769px) and (min-height: 501px) {
+      /* Dashboard layout — TV (960×540), Tesla (1050×700), desktop.
+         Excluded: phones in landscape (e.g. Pixel 10 Pro 932×412, iPhone 852×393)
+         where height is too short for the 2-column layout to fit; those fall
+         through to the mobile breakpoint below.
+         header:        auto  — clock height, never changes
          weather+tides: auto  — natural content height, never shrinks
          ferry:         1fr   — fills remaining viewport space; if total content
                                 exceeds the viewport, body scrolls (min-height: 100vh) */
@@ -508,7 +512,10 @@
     }
 
     /* ── Mobile responsive ─────────────────────────────────────────────── */
-    @media (max-width: 768px) {
+    /* Triggers on either narrow viewports (portrait phones) OR short viewports
+       (phones in landscape, where width may be 800–950 but height is ≤500).
+       The 500px height ceiling stays below TV (540) so the TV keeps the dashboard. */
+    @media (max-width: 768px), (max-height: 500px) {
       body {
         height: auto;
         overflow: auto;
