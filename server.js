@@ -101,7 +101,9 @@ app.use(express.static(join(__dirname, 'public')));
 // ── Tides (hi/lo, 3 days) ─────────────────────────────────────────────
 app.get('/api/tides', cachedEndpoint('tides', 2 * 60 * 60 * 1000, async () => {
   const today = new Date();
-  const begin = formatDate(today);
+  // Include yesterday so early-morning displays have a previous tide event for
+  // current-height/thermometer interpolation before today's first high/low.
+  const begin = formatDate(new Date(today.getTime() - 86400000));
   const end = formatDate(new Date(today.getTime() + 3 * 86400000));
   const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter` +
     `?begin_date=${begin}&end_date=${end}` +
@@ -122,7 +124,9 @@ app.get('/api/tides', cachedEndpoint('tides', 2 * 60 * 60 * 1000, async () => {
 // We generate smooth hourly points via cosine interpolation between hi/lo events.
 app.get('/api/tides/hourly', cachedEndpoint('tides_hourly', 2 * 60 * 60 * 1000, async () => {
   const today = new Date();
-  const begin = formatDate(today);
+  // Include yesterday so the hourly interpolation has a real event before the
+  // first tide of the current day instead of flattening to that first event.
+  const begin = formatDate(new Date(today.getTime() - 86400000));
   const end = formatDate(new Date(today.getTime() + 3 * 86400000));
   const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter` +
     `?begin_date=${begin}&end_date=${end}` +
