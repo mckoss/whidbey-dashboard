@@ -1286,7 +1286,7 @@ function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spac
     <div class="ferry-panel-header">
       <span class="ferry-route">⛴ ${routeLabel}</span>
       ${ageTag(panelId, schedData)}
-      ${spaceDataMissing ? '<span class="space-warning">(car API missing)</span>' : ''}
+      ${spaceDataMissing ? '<span class="space-warning">(car API N/A)</span>' : ''}
       <span class="ferry-header-spacer"></span>
       <span id="${countdownId}" class="countdown-badge">⛴ ...</span>
       ${nextIsLast ? '<span class="last-sailing-note">⚠ Last</span>' : ''}

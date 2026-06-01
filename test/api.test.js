@@ -218,7 +218,7 @@ test('static HTML — index.html contains required elements', async () => {
   // Two-panel layout
   assert.ok(html.includes('id="ferry-clinton"'), 'has #ferry-clinton panel');
   assert.ok(html.includes('id="ferry-mukilteo"'), 'has #ferry-mukilteo panel');
-  assert.ok(html.includes('(car API missing)'), 'has ferry car-space warning text');
+  assert.ok(html.includes('(car API N/A)'), 'has ferry car-space warning text');
   assert.ok(html.includes('Whidbey'), 'mentions Whidbey');
 });
 
