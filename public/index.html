@@ -377,6 +377,7 @@
     .sail-fill-bar { height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
     .sail-fill-fill { height: 100%; border-radius: 2px; transition: width 0.4s ease; }
     .sail-fill-label { font-size: 0.58rem; color: var(--dim); margin-top: 0.1rem; }
+    .space-warning { color: var(--warn); font-size: 0.65rem; font-weight: 600; white-space: nowrap; }
 
     .loading { color: var(--dim); font-size: 0.9rem; padding: 1rem 0; }
     .error-msg { color: var(--danger); font-size: 0.85rem; }
@@ -1259,7 +1260,13 @@ function updateFerryCards(panelId, countdownId, parsedSailings, spaceMap, animat
   }, 420); // slightly before animation ends so it's seamless
 }
 
-function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spaceMap, schedData) {
+function hasUsableSpaceData(spaceMap) {
+  return Object.values(spaceMap || {}).some(entry =>
+    entry && typeof entry === 'object' && typeof entry.maxSpaces === 'number'
+  );
+}
+
+function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spaceMap, schedData, spaceDataMissing = false) {
   const isStale = schedData && schedData._stale;
   const el = document.getElementById(panelId);
   if (!el) return;
@@ -1279,6 +1286,7 @@ function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spac
     <div class="ferry-panel-header">
       <span class="ferry-route">⛴ ${routeLabel}</span>
       ${ageTag(panelId, schedData)}
+      ${spaceDataMissing ? '<span class="space-warning">(car API missing)</span>' : ''}
       <span class="ferry-header-spacer"></span>
       <span id="${countdownId}" class="countdown-badge">⛴ ...</span>
       ${nextIsLast ? '<span class="last-sailing-note">⚠ Last</span>' : ''}
@@ -1318,6 +1326,8 @@ async function loadFerry() {
   const clintonSp    = (clintonSpace.status === 'fulfilled' && !clintonSpace.value?.error)  ? clintonSpace.value  : {};
   const mukilteoData = mukilteoSched.status === 'fulfilled' ? mukilteoSched.value : null;
   const mukilteoSp   = (mukilteoSpace.status === 'fulfilled' && !mukilteoSpace.value?.error) ? mukilteoSpace.value : {};
+  const clintonSpaceMissing = !hasUsableSpaceData(clintonSp);
+  const mukilteoSpaceMissing = !hasUsableSpaceData(mukilteoSp);
 
   if (clintonData?.error === 'WSF_API_KEY not configured') {
     document.getElementById('ferry').innerHTML = `<div class="no-ferry-key">Ferry schedule requires a free WSDOT API key. <a href="https://www.wsdot.wa.gov/traffic/api/" target="_blank">Register here</a>, then add to <code>.env</code> as <code>WSF_API_KEY</code>.</div>`;
@@ -1326,13 +1336,13 @@ async function loadFerry() {
 
   if (mukilteoData && !mukilteoData.error) {
     if (!mukilteoData._stale) markFresh('ferry-mukilteo');
-    renderFerryPanel('ferry-mukilteo', 'countdown-mukilteo', 'Mukilteo → Clinton', parseSailings(mukilteoData), mukilteoSp, mukilteoData);
+    renderFerryPanel('ferry-mukilteo', 'countdown-mukilteo', 'Mukilteo → Clinton', parseSailings(mukilteoData), mukilteoSp, mukilteoData, mukilteoSpaceMissing);
   } else if (!mukilteoData || mukilteoData.error) {
     delete dataUpdatedAt['ferry-mukilteo'];  // triggers warn on age tag
   }
   if (clintonData && !clintonData.error) {
     if (!clintonData._stale) markFresh('ferry-clinton');
-    renderFerryPanel('ferry-clinton',  'countdown-clinton',  'Clinton → Mukilteo',  parseSailings(clintonData),  clintonSp,  clintonData);
+    renderFerryPanel('ferry-clinton',  'countdown-clinton',  'Clinton → Mukilteo',  parseSailings(clintonData),  clintonSp,  clintonData, clintonSpaceMissing);
   } else if (!clintonData || clintonData.error) {
     delete dataUpdatedAt['ferry-clinton'];  // triggers warn on age tag
   }
