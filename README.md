@@ -34,7 +34,7 @@ Weather and tides work without any API keys.
 
 **Single-file frontend:** `public/index.html` — all HTML, CSS, and JS in one file. No build step, no bundler.
 
-**Server:** `server.js` — Express, in-memory cache per endpoint, stale-while-revalidate pattern. If a fresh fetch fails, serves stale data with `_stale: true` flag.
+**Server:** `server.js` — Express, memory-first cache per endpoint persisted to `data/cache.json`, stale-while-revalidate pattern. If a fresh fetch fails, serves stale data with `_stale: true` flag.
 
 **Tests:** `npm test` runs `node --test test/api.test.js`. Tests spawn their own server on port 3001.
 
@@ -51,6 +51,11 @@ Weather and tides work without any API keys.
 | Ferry space | WSDOT Traveler API | Yes (free) | 30 sec | 30 sec |
 
 Data windows include headroom beyond the refresh interval (e.g., tide hourly fetches 52h for a 48h display with 2h refresh cycle).
+
+Cache files are written to `DATA_DIR`, then `RAILWAY_VOLUME_MOUNT_PATH`,
+then local `./data` as a fallback. For Railway persistence across deploys,
+mount a Railway Volume at `/app/data`; local development will keep using the
+repo's `data/` directory.
 
 ## Staleness Indicators
 
@@ -113,4 +118,3 @@ This keeps the frontend fully self-contained and avoids any external moon-image 
 - `window._sunriseMs` / `window._sunsetMs` are globals used by both the sparkline and the weather card.
 - Ferry WSF API uses `/Date(ms)/` format for timestamps.
 - The `preserveAspectRatio="none"` on sparkline/thermometer SVGs is intentional — they stretch to fill their flex containers.
-

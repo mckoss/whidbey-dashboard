@@ -9,6 +9,8 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -16,11 +18,13 @@ import { dirname, join } from 'path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BASE = 'http://localhost:3001'; // use 3001 to avoid conflicting with running server
 let serverProcess;
+let dataDir;
 
 // ── Server lifecycle ───────────────────────────────────────────────────
 before(async () => {
+  dataDir = await mkdtemp(join(tmpdir(), 'whidbey-dashboard-test-'));
   serverProcess = spawn('node', [join(__dirname, '../server.js')], {
-    env: { ...process.env, PORT: '3001' },
+    env: { ...process.env, PORT: '3001', DATA_DIR: dataDir },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -44,6 +48,7 @@ after(async () => {
     serverProcess.kill('SIGTERM');
     await sleep(500);
   }
+  if (dataDir) await rm(dataDir, { recursive: true, force: true });
 });
 
 // ── Helpers ────────────────────────────────────────────────────────────

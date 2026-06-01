@@ -1,9 +1,9 @@
 import express from 'express';
 import fetch from 'node-fetch';
 import morgan from 'morgan';
-import { readFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { dirname, join, resolve } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -24,6 +24,8 @@ const pkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8'));
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const DATA_DIR = resolve(process.env.DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || 'data');
+const CACHE_FILE = join(DATA_DIR, 'cache.json');
 
 // ── Request logging (stdout → Railway Log Explorer) ───────────────────
 app.use(morgan('combined'));
@@ -39,8 +41,8 @@ const CONFIG = {
   TIMEZONE: 'America/Los_Angeles',
 };
 
-// ── In-memory cache ────────────────────────────────────────────────────
-const cache = {};
+// ── Cache: memory first, persisted for restart/deploy continuity ────────
+const cache = loadPersistentCache();
 
 function getCached(key) {
   const entry = cache[key];
@@ -51,10 +53,34 @@ function getCached(key) {
 
 function setCache(key, data, ttlMs) {
   cache[key] = { data, cachedAt: Date.now(), expiresAt: Date.now() + ttlMs, stale: false };
+  writePersistentCache();
 }
 
 function getStale(key) {
   return cache[key] || null;
+}
+
+function loadPersistentCache() {
+  try {
+    if (!existsSync(CACHE_FILE)) return {};
+    const parsed = JSON.parse(readFileSync(CACHE_FILE, 'utf8'));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      console.log(`[cache] loaded ${Object.keys(parsed).length} persisted entries from ${CACHE_FILE}`);
+      return parsed;
+    }
+  } catch (e) {
+    console.warn(`[cache] ignoring persisted cache: ${e.message}`);
+  }
+  return {};
+}
+
+function writePersistentCache() {
+  try {
+    mkdirSync(DATA_DIR, { recursive: true });
+    writeFileSync(CACHE_FILE, JSON.stringify(cache, null, 2));
+  } catch (e) {
+    console.warn(`[cache] could not persist cache: ${e.message}`);
+  }
 }
 
 // ── Fetch with retry ────────────────────────────────────────────────────
@@ -237,7 +263,7 @@ function ferryScheduleEndpoint(cacheKey, fromTerminal, toTerminal) {
       );
 
       // Keep previous sailings that are still in the future but absent from the new response
-      const previous = previousSailingsStore.get(cacheKey) || [];
+      const previous = previousSailingsStore.get(cacheKey) || cachedSailingsFor(cacheKey);
       const carryOver = previous.filter(s => {
         const ms = parseDepartureMs(s);
         return ms !== null && ms > now && !newMs.has(ms);
@@ -267,6 +293,10 @@ function ferryScheduleEndpoint(cacheKey, fromTerminal, toTerminal) {
 
     return data;
   });
+}
+
+function cachedSailingsFor(cacheKey) {
+  return cache[cacheKey]?.data?.TerminalCombos?.[0]?.Times || [];
 }
 
 // ── Ferry space helper (reusable for either terminal) ─────────────────
