@@ -200,6 +200,21 @@ test('ferry legacy alias — /api/ferry still works', async () => {
   assert.ok(d.TerminalCombos, 'legacy alias returns TerminalCombos');
 });
 
+test('ferry/alerts endpoint — returns normalized route alerts', async () => {
+  const d = await getJson('/api/ferry/alerts');
+  if (d.error === 'WSF_API_KEY not configured') {
+    console.log('  (skipping ferry alerts assertions — WSF_API_KEY not set)');
+    return;
+  }
+  assert.ok(Array.isArray(d.alerts), 'alerts is an array');
+  for (const alert of d.alerts) {
+    assert.ok(alert.id, 'alert has id');
+    assert.ok(typeof alert.title === 'string', 'alert has normalized title');
+    assert.ok(!alert.title.includes('<'), 'alert title is plain text');
+    assert.ok(!alert.text.includes('<'), 'alert text is plain text');
+  }
+});
+
 test('cache-status endpoint — returns cache metadata', async () => {
   const d = await getJson('/api/cache-status');
   // After above tests ran, we should have weather and tides cached
@@ -224,6 +239,7 @@ test('static HTML — index.html contains required elements', async () => {
   assert.ok(html.includes('id="ferry-clinton"'), 'has #ferry-clinton panel');
   assert.ok(html.includes('id="ferry-mukilteo"'), 'has #ferry-mukilteo panel');
   assert.ok(html.includes('(space API N/A)'), 'has ferry space warning text');
+  assert.ok(html.includes('ferry-alert'), 'has ferry route alert styling');
   assert.ok(html.includes('Whidbey'), 'mentions Whidbey');
 });
 

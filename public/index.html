@@ -378,6 +378,29 @@
     .sail-fill-fill { height: 100%; border-radius: 2px; transition: width 0.4s ease; }
     .sail-fill-label { font-size: 0.58rem; color: var(--dim); margin-top: 0.1rem; }
     .space-warning { color: var(--warn); font-size: 0.65rem; font-weight: 600; white-space: nowrap; }
+    .ferry-alerts {
+      display: grid;
+      gap: 0.25rem;
+      margin: 0 0 0.4rem;
+    }
+    .ferry-alert {
+      border: 1px solid rgba(251,191,36,0.38);
+      background: rgba(251,191,36,0.12);
+      color: var(--warn);
+      border-radius: 0.35rem;
+      padding: 0.22rem 0.4rem;
+      font-size: 0.68rem;
+      font-weight: 600;
+      line-height: 1.25;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .ferry-alert.danger {
+      border-color: rgba(248,113,113,0.45);
+      background: rgba(248,113,113,0.12);
+      color: var(--danger);
+    }
 
     .loading { color: var(--dim); font-size: 0.9rem; padding: 1rem 0; }
     .error-msg { color: var(--danger); font-size: 0.85rem; }
@@ -1266,7 +1289,29 @@ function hasUsableSpaceData(spaceMap) {
   );
 }
 
-function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spaceMap, schedData, spaceDataMissing = false) {
+function escapeHtml(value = '') {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function renderFerryAlerts(alerts = []) {
+  const usable = alerts
+    .filter(a => a && (a.title || a.text))
+    .slice(0, 2);
+  if (!usable.length) return '';
+  const items = usable.map(a => {
+    const text = a.title || a.text;
+    const danger = /\b(out of service|cancel|canceled|cancelled|mechanical|shortage|one[- ]boat)\b/i.test(text);
+    return `<div class="ferry-alert${danger ? ' danger' : ''}">${escapeHtml(text)}</div>`;
+  }).join('');
+  return `<div class="ferry-alerts">${items}</div>`;
+}
+
+function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spaceMap, schedData, spaceDataMissing = false, alerts = []) {
   const isStale = schedData && schedData._stale;
   const el = document.getElementById(panelId);
   if (!el) return;
@@ -1291,6 +1336,7 @@ function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spac
       <span id="${countdownId}" class="countdown-badge">⛴ ...</span>
       ${nextIsLast ? '<span class="last-sailing-note">⚠ Last</span>' : ''}
     </div>
+    ${renderFerryAlerts(alerts)}
     <div class="sailings-grid">${cards}</div>`;
 
   panelNextTime[panelId] = nextTime;
@@ -1315,17 +1361,19 @@ function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spac
 
 // ── Ferry loader ───────────────────────────────────────────────────────
 async function loadFerry() {
-  const [clintonSched, clintonSpace, mukilteoSched, mukilteoSpace] = await Promise.allSettled([
+  const [clintonSched, clintonSpace, mukilteoSched, mukilteoSpace, ferryAlerts] = await Promise.allSettled([
     fetch('/api/ferry/clinton').then(r => r.json()),
     fetch('/api/ferry/clinton/space').then(r => r.json()),
     fetch('/api/ferry/mukilteo').then(r => r.json()),
     fetch('/api/ferry/mukilteo/space').then(r => r.json()),
+    fetch('/api/ferry/alerts').then(r => r.json()),
   ]);
 
   const clintonData  = clintonSched.status  === 'fulfilled' ? clintonSched.value  : null;
   const clintonSp    = (clintonSpace.status === 'fulfilled' && !clintonSpace.value?.error)  ? clintonSpace.value  : {};
   const mukilteoData = mukilteoSched.status === 'fulfilled' ? mukilteoSched.value : null;
   const mukilteoSp   = (mukilteoSpace.status === 'fulfilled' && !mukilteoSpace.value?.error) ? mukilteoSpace.value : {};
+  const routeAlerts  = (ferryAlerts.status === 'fulfilled' && Array.isArray(ferryAlerts.value?.alerts)) ? ferryAlerts.value.alerts : [];
   const clintonSpaceMissing = !hasUsableSpaceData(clintonSp);
   const mukilteoSpaceMissing = !hasUsableSpaceData(mukilteoSp);
 
@@ -1336,13 +1384,13 @@ async function loadFerry() {
 
   if (mukilteoData && !mukilteoData.error) {
     if (!mukilteoData._stale) markFresh('ferry-mukilteo');
-    renderFerryPanel('ferry-mukilteo', 'countdown-mukilteo', 'Mukilteo → Clinton', parseSailings(mukilteoData), mukilteoSp, mukilteoData, mukilteoSpaceMissing);
+    renderFerryPanel('ferry-mukilteo', 'countdown-mukilteo', 'Mukilteo → Clinton', parseSailings(mukilteoData), mukilteoSp, mukilteoData, mukilteoSpaceMissing, routeAlerts);
   } else if (!mukilteoData || mukilteoData.error) {
     delete dataUpdatedAt['ferry-mukilteo'];  // triggers warn on age tag
   }
   if (clintonData && !clintonData.error) {
     if (!clintonData._stale) markFresh('ferry-clinton');
-    renderFerryPanel('ferry-clinton',  'countdown-clinton',  'Clinton → Mukilteo',  parseSailings(clintonData),  clintonSp,  clintonData, clintonSpaceMissing);
+    renderFerryPanel('ferry-clinton',  'countdown-clinton',  'Clinton → Mukilteo',  parseSailings(clintonData),  clintonSp,  clintonData, clintonSpaceMissing, routeAlerts);
   } else if (!clintonData || clintonData.error) {
     delete dataUpdatedAt['ferry-clinton'];  // triggers warn on age tag
   }
