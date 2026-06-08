@@ -402,8 +402,8 @@
       color: var(--danger);
     }
 
-    /* Late departure: yellow estimated time + smaller original scheduled time below */
-    .sail-time-est { color: var(--warn); display: block; }
+    /* Late departure: red estimated time + smaller original scheduled time below */
+    .sail-time-est { color: var(--danger); display: block; }
     .sail-time-sched { font-size: 0.62em; color: var(--dim); display: block; line-height: 1.3; }
 
     .loading { color: var(--dim); font-size: 0.9rem; padding: 1rem 0; }
@@ -520,7 +520,7 @@
         width: 100%;
       }
       /* Late ferry: est time inherits .sail-time sizing; sched is 60% of that */
-      .sailing .sail-time-est { color: var(--warn); display: block; }
+      .sailing .sail-time-est { color: var(--danger); display: block; }
       .sailing .sail-time-sched {
         /* 0.6em of the computed sail-time font-size — scales with all the cqh/cqi rules above */
         font-size: 0.6em;
@@ -1134,42 +1134,82 @@ async function loadTides() {
 const countdownIntervals = {};
 
 // ── Late-ferry detection ───────────────────────────────────────────────
-// Approximate one-way crossing times (ms): Clinton→Mukilteo 30 min, reverse 25 min.
-const CROSSING_MS = { 5: 30 * 60 * 1000, 14: 25 * 60 * 1000 };
+// If a boat has just arrived or is still inbound, assume it needs at least
+// 15 minutes at the departing dock to unload, reload, and leave again.
+const MIN_TURNAROUND_MS = 15 * 60 * 1000;
 const LATE_THRESHOLD_MS = 5 * 60 * 1000;
 
-// Build a map of scheduledDepartureMs → vessel object from /api/ferry/vessels response.
+// Build indexed vessel data from /api/ferry/vessels.
 function buildVesselMap(vesselData) {
-  const map = {};
-  for (const v of (vesselData?.vessels || [])) {
-    if (v.scheduledDepartureMs != null) map[v.scheduledDepartureMs] = v;
+  const vessels = (vesselData?.vessels || []).filter(v => v?.inService);
+  const byScheduled = {};
+  for (const v of vessels) {
+    if (v.scheduledDepartureMs != null) byScheduled[v.scheduledDepartureMs] = v;
   }
-  return map;
+  return { vessels, byScheduled };
 }
 
-// Returns late-info object if this sailing is running late, null otherwise.
-// lateInfo: { atDock, estimatedDepartureMs, delayMs }
-function getLateInfo(s, vesselMap, fromTerminalId) {
-  const vessel = vesselMap[s.sailTime.getTime()];
-  if (!vessel || !vessel.inService) return null;
-  const now = Date.now();
+function findVesselForSailing(s, vesselMap, fromTerminalId) {
   const schedMs = s.sailTime.getTime();
+  const exact = vesselMap?.byScheduled?.[schedMs];
+  if (exact) return exact;
 
-  // Still at dock and overdue by more than threshold
-  if (vessel.atDock && (now - schedMs) > LATE_THRESHOLD_MS) {
-    const crossingMs = CROSSING_MS[fromTerminalId] || 30 * 60 * 1000;
-    // Prefer ETA-derived estimate; fall back to "right now" (we know it hasn't left)
-    let estDepMs = vessel.etaMs ? vessel.etaMs - crossingMs : null;
-    if (!estDepMs || estDepMs <= now) estDepMs = now;
-    return { atDock: true, estimatedDepartureMs: estDepMs, delayMs: now - schedMs };
+  const vessels = vesselMap?.vessels || [];
+  const candidates = vessels.filter(v =>
+    v.departingTerminalId === fromTerminalId || v.arrivingTerminalId === fromTerminalId
+  );
+  if (!candidates.length) return null;
+
+  // Prefer a boat already tied to this route's scheduled departure, then an
+  // inbound boat whose ETA makes the requested sailing impossible/on-the-edge,
+  // then a boat already at the departing terminal.
+  return candidates
+    .map(v => ({ v, estMs: estimateDepartureFromVessel(v, fromTerminalId, schedMs) }))
+    .filter(x => x.estMs != null)
+    .sort((a, b) => {
+      const aLate = Math.max(0, a.estMs - schedMs);
+      const bLate = Math.max(0, b.estMs - schedMs);
+      if (aLate !== bLate) return bLate - aLate;
+      return Math.abs(a.estMs - schedMs) - Math.abs(b.estMs - schedMs);
+    })[0]?.v || null;
+}
+
+function estimateDepartureFromVessel(vessel, fromTerminalId, schedMs) {
+  if (!vessel) return null;
+
+  // Departed already: use actual left-dock time when WSF reports it.
+  if (vessel.leftDockMs && vessel.departingTerminalId === fromTerminalId) {
+    return vessel.leftDockMs;
   }
 
-  // Departed late (vessel already left dock)
-  if (!vessel.atDock && vessel.leftDockMs && (vessel.leftDockMs - schedMs) > LATE_THRESHOLD_MS) {
-    return { atDock: false, estimatedDepartureMs: vessel.leftDockMs, delayMs: vessel.leftDockMs - schedMs };
+  // Inbound to the departure terminal: ETA to dock + 15 minute turn-around.
+  if (vessel.arrivingTerminalId === fromTerminalId && vessel.etaMs) {
+    return vessel.etaMs + MIN_TURNAROUND_MS;
   }
 
-  return null;
+  // At the departure dock but not gone yet. WSF does not expose actual arrival
+  // time here, so once scheduled time has passed we conservatively use "now".
+  if (vessel.atDock && vessel.departingTerminalId === fromTerminalId) {
+    return Math.max(schedMs, Date.now());
+  }
+
+  return vessel.scheduledDepartureMs || null;
+}
+
+function getSailingTiming(s, vesselMap, fromTerminalId) {
+  const scheduledMs = s.sailTime.getTime();
+  const vessel = findVesselForSailing(s, vesselMap, fromTerminalId);
+  const estimateMs = estimateDepartureFromVessel(vessel, fromTerminalId, scheduledMs);
+  const effectiveMs = estimateMs == null ? scheduledMs : Math.max(scheduledMs, estimateMs);
+  const delayMs = effectiveMs - scheduledMs;
+  return {
+    scheduledMs,
+    effectiveMs,
+    vessel,
+    lateInfo: delayMs > LATE_THRESHOLD_MS
+      ? { estimatedDepartureMs: effectiveMs, delayMs, atDock: !!vessel?.atDock }
+      : null,
+  };
 }
 
 function formatCountdown(ms) {
@@ -1201,10 +1241,11 @@ function parseSailings(sched) {
     .sort((a, b) => a.sailTime - b.sailTime);
 }
 
-function isDepartureConfirmed(s, parsedSailings, spaceMap, vesselMap = {}) {
-  // Only applies after scheduled time has passed
-  const now = new Date();
-  if (s.sailTime >= now) return false;
+function isDepartureConfirmed(s, parsedSailings, spaceMap, vesselMap = {}, fromTerminalId = 5) {
+  // Only applies after the best-known departure time has passed
+  const now = Date.now();
+  const timing = getSailingTiming(s, vesselMap, fromTerminalId);
+  if (timing.effectiveMs >= now) return false;
 
   const space = spaceMap[String(s.sailTime.getTime())] || null;
   const spaceMapHasData = Object.keys(spaceMap).length > 0;
@@ -1213,7 +1254,7 @@ function isDepartureConfirmed(s, parsedSailings, spaceMap, vesselMap = {}) {
   if (space && space.maxSpaces > 0 && space.driveUpSpaces === 0) return true;
 
   // Signal 2: next sailing has reservations (someone is booking the next ferry)
-  const nextSailing = parsedSailings.find(x => x.sailTime >= now);
+  const nextSailing = parsedSailings.find(x => getSailingTiming(x, vesselMap, fromTerminalId).effectiveMs >= now);
   if (nextSailing) {
     const nextSpace = spaceMap[String(nextSailing.sailTime.getTime())] || null;
     if (nextSpace && nextSpace.maxSpaces > 0 && nextSpace.driveUpSpaces < nextSpace.maxSpaces) return true;
@@ -1223,22 +1264,24 @@ function isDepartureConfirmed(s, parsedSailings, spaceMap, vesselMap = {}) {
   if (!space && spaceMapHasData) return true;
 
   // Signal 4: vessel location data shows it left the dock
-  const vessel = vesselMap[s.sailTime.getTime()];
-  if (vessel && !vessel.atDock && vessel.leftDockMs) return true;
+  const vessel = timing.vessel;
+  if (vessel && vessel.departingTerminalId === fromTerminalId && !vessel.atDock && vessel.leftDockMs) return true;
 
   return false;
 }
 
 function sailingCard(s, parsedSailings, spaceMap, vesselMap = {}, fromTerminalId = 5) {
-  const now = new Date();
-  const trueNextIdx = parsedSailings.findIndex(x => x.sailTime >= now);
+  const now = Date.now();
+  const timings = parsedSailings.map(x => getSailingTiming(x, vesselMap, fromTerminalId));
+  const trueNextIdx = timings.findIndex(t => t.effectiveMs >= now);
   const trueLastIdx = parsedSailings.length - 1;
-  const isPast = s.sailTime < now;
+  const timing = getSailingTiming(s, vesselMap, fromTerminalId);
+  const isPast = timing.effectiveMs < now;
   const isNext = trueNextIdx >= 0 && s.sailTime.getTime() === parsedSailings[trueNextIdx].sailTime.getTime();
   const isTrueLast = s.sailTime.getTime() === parsedSailings[trueLastIdx].sailTime.getTime();
   const display = s.sailTime.toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
 
-  const confirmed = isPast && isDepartureConfirmed(s, parsedSailings, spaceMap, vesselMap);
+  const confirmed = isPast && isDepartureConfirmed(s, parsedSailings, spaceMap, vesselMap, fromTerminalId);
 
   let statusText = '';
   let cssClass = 'sailing';
@@ -1247,13 +1290,12 @@ function sailingCard(s, parsedSailings, spaceMap, vesselMap = {}, fromTerminalId
   else if (isNext)               { cssClass += ' next';                    statusText = '▶ Next'; }
   else if (isTrueLast)           { cssClass += ' last-of-day';             statusText = '🔔 Last'; }
 
-  // Late departure display: yellow estimated time with original scheduled below
-  const lateInfo = !confirmed ? getLateInfo(s, vesselMap, fromTerminalId) : null;
+  // Late departure display: red estimated time with original scheduled below
+  const lateInfo = !confirmed ? timing.lateInfo : null;
   let timeHtml;
   if (lateInfo) {
     const estTime = new Date(lateInfo.estimatedDepartureMs).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
-    const prefix = lateInfo.atDock ? '~' : '';
-    timeHtml = `<div class="sail-time"><span class="sail-time-est">${prefix}${estTime}</span><span class="sail-time-sched">${display}</span></div>`;
+    timeHtml = `<div class="sail-time"><span class="sail-time-est">${estTime}</span><span class="sail-time-sched">(was ${display})</span></div>`;
     // Override status to show delay when the vessel is still at dock
     if (lateInfo.atDock) statusText = '⚠ Delayed';
   } else {
@@ -1285,10 +1327,11 @@ function sailingCard(s, parsedSailings, spaceMap, vesselMap = {}, fromTerminalId
 // Tracks the current "next sailing" time per panel so we can detect transitions
 const panelNextTime = {};
 
-function buildDisplayList(parsedSailings) {
-  const now = new Date();
-  const lastDeparted = [...parsedSailings].reverse().find(s => s.sailTime < now);
-  const next3 = parsedSailings.filter(s => s.sailTime >= now).slice(0, 3);
+function buildDisplayList(parsedSailings, vesselMap = {}, fromTerminalId = 5) {
+  const now = Date.now();
+  const isFuture = s => getSailingTiming(s, vesselMap, fromTerminalId).effectiveMs >= now;
+  const lastDeparted = [...parsedSailings].reverse().find(s => !isFuture(s));
+  const next3 = parsedSailings.filter(isFuture).slice(0, 3);
   const list = [];
   if (lastDeparted) list.push(lastDeparted);
   list.push(...next3);
@@ -1301,8 +1344,8 @@ function updateFerryCards(panelId, countdownId, parsedSailings, spaceMap, animat
   const grid = el.querySelector('.sailings-grid');
   if (!grid) return;
 
-  const now = new Date();
-  const trueNextIdx = parsedSailings.findIndex(s => s.sailTime >= now);
+  const now = Date.now();
+  const trueNextIdx = parsedSailings.findIndex(s => getSailingTiming(s, vesselMap, fromTerminalId).effectiveMs >= now);
   const trueLastIdx = parsedSailings.length - 1;
   const nextIsLast = trueNextIdx === trueLastIdx && trueNextIdx >= 0;
 
@@ -1313,7 +1356,7 @@ function updateFerryCards(panelId, countdownId, parsedSailings, spaceMap, animat
     if (!next) {
       cdEl.textContent = 'Done for day'; cdEl.className = 'countdown-badge';
     } else {
-      const remaining = next.sailTime.getTime() - Date.now();
+      const remaining = getSailingTiming(next, vesselMap, fromTerminalId).effectiveMs - Date.now();
       const text = formatCountdown(remaining);
       const urgent = remaining < 15 * 60 * 1000;
       cdEl.textContent = `⛴ ${text}`;
@@ -1325,7 +1368,7 @@ function updateFerryCards(panelId, countdownId, parsedSailings, spaceMap, animat
   const lastNote = el.querySelector('.last-sailing-note');
   if (lastNote) lastNote.style.display = nextIsLast ? '' : 'none';
 
-  const displayList = buildDisplayList(parsedSailings);
+  const displayList = buildDisplayList(parsedSailings, vesselMap, fromTerminalId);
 
   if (!animate) {
     // Initial render - no animation
@@ -1384,14 +1427,14 @@ function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spac
   if (!el) return;
   if (!parsedSailings.length) { el.innerHTML = `<div class="error-msg">No sailings found.</div>`; return; }
 
-  const now = new Date();
-  const trueNextIdx = parsedSailings.findIndex(s => s.sailTime >= now);
+  const now = Date.now();
+  const trueNextIdx = parsedSailings.findIndex(s => getSailingTiming(s, vesselMap, fromTerminalId).effectiveMs >= now);
   const trueLastIdx = parsedSailings.length - 1;
   const nextIsLast = trueNextIdx === trueLastIdx && trueNextIdx >= 0;
-  const nextTime = trueNextIdx >= 0 ? parsedSailings[trueNextIdx].sailTime.getTime() : null;
+  const nextTime = trueNextIdx >= 0 ? getSailingTiming(parsedSailings[trueNextIdx], vesselMap, fromTerminalId).effectiveMs : null;
 
   // Full rebuild of panel HTML (header + grid)
-  const displayList = buildDisplayList(parsedSailings);
+  const displayList = buildDisplayList(parsedSailings, vesselMap, fromTerminalId);
   const cards = displayList.map(s => sailingCard(s, parsedSailings, spaceMap, vesselMap, fromTerminalId)).join('');
 
   el.innerHTML = `
@@ -1411,9 +1454,9 @@ function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spac
   // Countdown + slide-check ticker
   if (countdownIntervals[countdownId]) clearInterval(countdownIntervals[countdownId]);
   countdownIntervals[countdownId] = setInterval(() => {
-    const now2 = new Date();
-    const newNextIdx = parsedSailings.findIndex(s => s.sailTime >= now2);
-    const newNextTime = newNextIdx >= 0 ? parsedSailings[newNextIdx].sailTime.getTime() : null;
+    const now2 = Date.now();
+    const newNextIdx = parsedSailings.findIndex(s => getSailingTiming(s, vesselMap, fromTerminalId).effectiveMs >= now2);
+    const newNextTime = newNextIdx >= 0 ? getSailingTiming(parsedSailings[newNextIdx], vesselMap, fromTerminalId).effectiveMs : null;
 
     const shouldAnimate = newNextTime !== panelNextTime[panelId];
     if (shouldAnimate) panelNextTime[panelId] = newNextTime;

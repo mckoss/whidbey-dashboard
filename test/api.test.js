@@ -12,6 +12,7 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
+import vm from 'node:vm';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
@@ -215,6 +216,22 @@ test('ferry/alerts endpoint — returns normalized route alerts', async () => {
   }
 });
 
+test('ferry/vessels endpoint — normalized vessel location data', async () => {
+  const d = await getJson('/api/ferry/vessels');
+  if (d.error === 'WSF_API_KEY not configured') {
+    console.log('  (skipping vessel assertions — WSF_API_KEY not set)');
+    return;
+  }
+  assert.ok(Array.isArray(d.vessels), 'vessels is an array');
+  for (const v of d.vessels) {
+    assert.ok(typeof v.vesselName === 'string' && v.vesselName.length > 0, 'vessel has name');
+    assert.ok(typeof v.atDock === 'boolean', 'vessel has atDock boolean');
+    assert.ok(typeof v.inService === 'boolean', 'vessel has inService boolean');
+    assert.ok(v.departingTerminalId === 5 || v.departingTerminalId === 14 || v.arrivingTerminalId === 5 || v.arrivingTerminalId === 14,
+      'vessel is associated with Clinton/Mukilteo route');
+  }
+});
+
 test('cache-status endpoint — returns cache metadata', async () => {
   const d = await getJson('/api/cache-status');
   // After above tests ran, we should have weather and tides cached
@@ -252,6 +269,65 @@ test('static HTML — inline JavaScript parses without errors', async () => {
   const scriptMatch = html.match(/<script[^>]*>([\s\S]*?)<\/script>/);
   assert.ok(scriptMatch, 'found a <script> block');
   assert.doesNotThrow(() => new Function(scriptMatch[1]), 'inline JS should parse without syntax errors');
+});
+
+test('late ferry logic — inbound arrival enforces 15 minute turn-around and red delayed card', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
+  const script = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+
+  const fixedNow = Date.UTC(2026, 4, 13, 23, 35); // 4:35 PM PDT-ish for relative math
+  class FakeDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [fixedNow])); }
+    static now() { return fixedNow; }
+  }
+  Object.assign(FakeDate, Date);
+
+  const nullEl = { style: {}, className: '', textContent: '', innerHTML: '', querySelector: () => null };
+  const context = {
+    console,
+    Date: FakeDate,
+    setInterval: () => 0,
+    setTimeout: () => 0,
+    clearInterval: () => {},
+    fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
+    document: {
+      getElementById: () => nullEl,
+      querySelector: () => nullEl,
+      createElement: () => ({}),
+      head: { appendChild: () => {} },
+    },
+    window: {},
+  };
+  vm.createContext(context);
+  vm.runInContext(script + `\nthis.__lateTest = { buildVesselMap, getSailingTiming, buildDisplayList, sailingCard };`, context);
+
+  const schedMs = fixedNow - 5 * 60 * 1000;      // scheduled 5 min ago
+  const etaMs = fixedNow + 25 * 60 * 1000;        // inbound arrival in 25 min
+  const sailing = { sailTime: new Date(schedMs), DepartingTime: `/Date(${schedMs})/` };
+  const later = { sailTime: new Date(fixedNow + 60 * 60 * 1000), DepartingTime: `/Date(${fixedNow + 60 * 60 * 1000})/` };
+  const vesselMap = context.__lateTest.buildVesselMap({ vessels: [{
+    vesselName: 'Test Boat',
+    inService: true,
+    atDock: false,
+    departingTerminalId: 14,
+    arrivingTerminalId: 5,
+    etaMs,
+  }] });
+
+  const timing = context.__lateTest.getSailingTiming(sailing, vesselMap, 5);
+  assert.equal(timing.effectiveMs, etaMs + 15 * 60 * 1000, 'departure estimate is ETA + 15 min');
+  assert.ok(timing.lateInfo.delayMs > 5 * 60 * 1000, 'marked late beyond threshold');
+
+  const list = context.__lateTest.buildDisplayList([sailing, later], vesselMap, 5);
+  assert.equal(list[0], sailing, 'late-but-not-departed sailing remains the next displayed sailing');
+
+  const card = context.__lateTest.sailingCard(sailing, [sailing, later], {}, vesselMap, 5);
+  assert.match(card, /sail-time-est/, 'renders estimated time');
+  assert.match(card, /sail-time-sched">\(was /, 'renders original time as parenthetical below');
 });
 
 test('weather endpoint — second request is served from cache', async () => {
