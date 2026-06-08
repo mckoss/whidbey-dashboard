@@ -289,6 +289,12 @@ test('messages endpoint — Google-authorized admins can add and delete crawl me
   const list = await getJson('/api/messages');
   assert.deepEqual(list.messages.map(m => m.text), ['Bring firewood'], 'lists user crawl messages separately from WSF alerts');
 
+  const updated = await sendJson(`/api/messages/${created.data.message.id}`, 'PUT', {
+    text: '<i>Bring firewood and kindling</i>',
+  }, 'valid-admin-token');
+  assert.equal(updated.res.status, 200, 'updates message for authorized admin');
+  assert.equal(updated.data.message.text, 'Bring firewood and kindling', 'stores updated plain text only');
+
   const deleted = await sendJson(`/api/messages/${created.data.message.id}`, 'DELETE', {}, 'valid-admin-token');
   assert.equal(deleted.res.status, 200, 'deletes message for authorized admin');
   assert.deepEqual(deleted.data.messages, [], 'returns remaining messages');
@@ -297,47 +303,47 @@ test('messages endpoint — Google-authorized admins can add and delete crawl me
 test('alert-contexts endpoint — Google-authorized admins can manage ferry alert parentheticals', async () => {
   const defaults = await getJson('/api/alert-contexts');
   assert.ok(Array.isArray(defaults.contexts), 'lists alert contexts');
-  assert.ok(defaults.contexts.some(context => context.title === 'Low Tide loading restrictions'), 'includes default low tide context');
+  assert.ok(defaults.contexts.some(context => context.query === 'Low Tide loading restrictions'), 'includes default low tide context');
   assert.ok(defaults.contexts.some(context => context.additionalInfo === 'soil testing; operations continue'), 'includes default construction context');
 
   const unauthenticated = await sendJson('/api/alert-contexts', 'POST', {
-    title: 'Test ferry alert',
+    query: 'Test ferry alert',
     additionalInfo: 'test parenthetical',
   });
   assert.equal(unauthenticated.res.status, 401, 'rejects context writes without Google credential');
 
   const unauthorized = await sendJson('/api/alert-contexts', 'POST', {
-    title: 'Test ferry alert',
+    query: 'Test ferry alert',
     additionalInfo: 'test parenthetical',
   }, 'unauthorized-admin-token');
   assert.equal(unauthorized.res.status, 403, 'rejects context writes from non-admin users');
 
   const created = await sendJson('/api/alert-contexts', 'POST', {
-    title: '<b>Test ferry alert</b>',
+    query: '<b>Test ferry alert</b>',
     additionalInfo: '<i>test parenthetical</i>',
     color: 'oklch(80% 0.14 85)',
   }, 'valid-admin-token');
   assert.equal(created.res.status, 201, 'creates alert context for authorized admin');
-  assert.equal(created.data.context.title, 'Test ferry alert', 'stores plain title only');
+  assert.equal(created.data.context.query, 'Test ferry alert', 'stores plain query only');
   assert.equal(created.data.context.additionalInfo, 'test parenthetical', 'stores plain parenthetical only');
   assert.equal(created.data.context.color, 'oklch(80% 0.14 85)', 'stores safe CSS color text');
 
   const updated = await sendJson(`/api/alert-contexts/${created.data.context.id}`, 'PUT', {
-    title: 'Updated ferry alert',
+    query: 'Updated ferry alert',
     additionalInfo: 'updated parenthetical',
     color: 'var(--danger); background:red',
   }, 'valid-admin-token');
   assert.equal(updated.res.status, 200, 'updates alert context for authorized admin');
-  assert.equal(updated.data.context.title, 'Updated ferry alert', 'updates title');
+  assert.equal(updated.data.context.query, 'Updated ferry alert', 'updates query');
   assert.equal(updated.data.context.additionalInfo, 'updated parenthetical', 'updates parenthetical');
   assert.equal(updated.data.context.color, '', 'drops unsafe CSS color text');
 
   const duplicate = await sendJson(`/api/alert-contexts/${created.data.context.id}`, 'PUT', {
-    title: 'Low Tide loading restrictions',
-    additionalInfo: 'duplicate title',
+    query: 'low tide loading restrictions',
+    additionalInfo: 'duplicate query',
     color: 'orange',
   }, 'valid-admin-token');
-  assert.equal(duplicate.res.status, 409, 'rejects duplicate alert titles');
+  assert.equal(duplicate.res.status, 409, 'rejects duplicate alert queries case-insensitively');
 
   const deleted = await sendJson(`/api/alert-contexts/${created.data.context.id}`, 'DELETE', {}, 'valid-admin-token');
   assert.equal(deleted.res.status, 200, 'deletes alert context for authorized admin');
@@ -384,10 +390,13 @@ test('admin page — serves Google-authenticated admin surface', async () => {
   assert.doesNotMatch(html, /id="from"/, 'does not expose old email/password-style field');
   assert.match(html, /<textarea[^>]+id="text"/, 'has message text field');
   assert.match(html, /Ferry Alert Parentheticals/, 'has ferry alert parenthetical editor');
-  assert.match(html, /id="alert-title"/, 'has alert title field');
+  assert.match(html, /id="alert-query"/, 'has alert query field');
   assert.match(html, /id="alert-info"/, 'has alert parenthetical field');
   assert.match(html, /id="alert-color"/, 'has alert color field');
+  assert.match(html, /message-edit edit-form hidden/, 'message rows have hidden edit forms');
+  assert.match(html, /context-edit edit-form hidden/, 'alert context rows have hidden edit forms');
   assert.match(html, /Delete/, 'has delete controls');
+  assert.match(html, /Edit/, 'has edit controls');
   assert.match(html, /\/api\/messages/, 'uses user message API');
   assert.match(html, /\/api\/alert-contexts/, 'uses alert context API');
   assert.match(html, /h1,\s*h2\s*\{[\s\S]*?color:\s*var\(--accent\);/, 'admin headings use dashboard heading blue');

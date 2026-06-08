@@ -58,9 +58,9 @@ Weather and tides work without any API keys.
 ## Admin
 
 Visit `/admin` to sign in with Google and manage the dashboard. Admin tools can
-add/delete user-managed messages in the bottom crawl and edit WSF alert
-parenthetical context shown after matching ferry alert titles, including an
-optional CSS color string for matched alert text.
+add/edit/delete user-managed messages in the bottom crawl and edit WSF alert
+parenthetical context shown after the first matching query substring, including
+an optional CSS color string for matched alert text.
 
 User messages are separate from WSF ferry alerts in storage and management, but
 they render in the same single-line marquee: WSF alerts first, then user-added
@@ -69,10 +69,13 @@ blue (`--accent`) so they are visually distinct from WSF warning yellow and
 disruption red.
 
 Ferry alert parentheticals are stored in `alert-context.json` under `dataDir`.
-The server seeds defaults for known WSF titles when that file does not exist,
-and admin edits replace those defaults with the saved file. The optional color
-field accepts safe CSS color text such as `orange`, `#f59e0b`, `rgb(245 158
-11)`, `oklch(80% 0.14 85)`, or `var(--danger)`.
+The server seeds defaults for known WSF alert text when that file does not
+exist, and admin edits replace those defaults with the saved file. Each entry
+has a query substring, parenthetical text, and optional color. The first query
+that appears anywhere in the normalized WSF alert title or text wins; matches
+are case-insensitive and are not combined. The optional color field accepts safe
+CSS color text such as `orange`, `#f59e0b`, `rgb(245 158 11)`, `oklch(80% 0.14
+85)`, or `var(--danger)`.
 
 Admin auth uses Google Identity Services. Create a Google OAuth web client and
 put the public client ID plus the approved `adminUsers` list in `config.json`.
@@ -175,8 +178,9 @@ Each card shows an inline age tag after the title. Thresholds are per-source:
 | `GET /api/ferry` | Legacy alias for `/api/ferry/clinton` |
 | `GET /api/messages` | User-managed crawl messages |
 | `POST /api/messages` | Add a user-managed crawl message (Google admin auth required) |
+| `PUT /api/messages/:id` | Update a user-managed crawl message (Google admin auth required) |
 | `DELETE /api/messages/:id` | Delete a user-managed crawl message (Google admin auth required) |
-| `GET /api/alert-contexts` | WSF alert title → parenthetical text mappings |
+| `GET /api/alert-contexts` | WSF alert query → parenthetical text mappings |
 | `POST /api/alert-contexts` | Add a WSF alert parenthetical (Google admin auth required) |
 | `PUT /api/alert-contexts/:id` | Update a WSF alert parenthetical (Google admin auth required) |
 | `DELETE /api/alert-contexts/:id` | Delete a WSF alert parenthetical (Google admin auth required) |

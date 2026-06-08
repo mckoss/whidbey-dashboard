@@ -234,29 +234,29 @@ function writeUserMessages(messages) {
 const DEFAULT_FERRY_ALERT_CONTEXTS = [
   {
     id: 'low-tide-loading-restrictions',
-    title: 'Low Tide loading restrictions',
+    query: 'Low Tide loading restrictions',
     additionalInfo: 'oversized/low-clearance vehicles may be delayed Jun 13-18',
   },
   {
     id: 'pets-on-washington-state-ferries-effective-may-20',
-    title: 'Pets on Washington State Ferries effective May 20',
+    query: 'Pets on Washington State Ferries effective May 20',
     additionalInfo: 'new pet areas/rules take effect July 1',
   },
   {
     id: 'construction-activity-at-clinton-terminal-june-8-july-3',
-    title: 'Construction activity at Clinton terminal June 8 - July 3',
+    query: 'Construction activity at Clinton terminal June 8 - July 3',
     additionalInfo: 'soil testing; operations continue',
   },
 ];
 
 function normalizeAlertContext(entry = {}) {
-  const title = stripHtml(entry.title || '').slice(0, 160);
+  const query = stripHtml(entry.query ?? entry.title ?? '').slice(0, 160);
   const additionalInfo = stripHtml(entry.additionalInfo || '').slice(0, 220);
   const color = normalizeCssColor(entry.color || '');
-  if (!title || !additionalInfo) return null;
+  if (!query || !additionalInfo) return null;
   return {
     id: String(entry.id || randomUUID()),
-    title,
+    query,
     additionalInfo,
     color,
     createdAt: entry.createdAt || new Date().toISOString(),
@@ -294,9 +294,14 @@ function writeAlertContexts(contexts) {
   clearCache('ferry_alerts');
 }
 
-function ferryAlertContext(title = '') {
-  const normalizedTitle = String(title).trim();
-  return loadAlertContexts().find(entry => entry.title === normalizedTitle) || {};
+function ferryAlertContext(...messageParts) {
+  const message = messageParts
+    .map(part => String(part || '').trim())
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  if (!message) return {};
+  return loadAlertContexts().find(entry => message.includes(entry.query.toLowerCase())) || {};
 }
 
 // ── Fetch with retry ────────────────────────────────────────────────────
@@ -365,6 +370,24 @@ app.post('/api/messages', requireAdmin, (req, res) => {
   res.status(201).json({ message });
 });
 
+app.put('/api/messages/:id', requireAdmin, (req, res) => {
+  const text = stripHtml(req.body?.text || '').slice(0, 280);
+  if (!text) return res.status(400).json({ error: 'Message text is required.' });
+
+  const messages = loadUserMessages();
+  const index = messages.findIndex(m => m.id === req.params.id);
+  if (index === -1) return res.status(404).json({ error: 'Message not found.' });
+
+  const next = {
+    ...messages[index],
+    text,
+    updatedAt: new Date().toISOString(),
+  };
+  messages[index] = next;
+  writeUserMessages(messages);
+  res.json({ message: next, messages });
+});
+
 app.delete('/api/messages/:id', requireAdmin, (req, res) => {
   const messages = loadUserMessages();
   const next = messages.filter(m => m.id !== req.params.id);
@@ -383,17 +406,17 @@ app.post('/api/alert-contexts', requireAdmin, (req, res) => {
   const now = new Date().toISOString();
   const context = normalizeAlertContext({
     id: randomUUID(),
-    title: req.body?.title,
+    query: req.body?.query ?? req.body?.title,
     additionalInfo: req.body?.additionalInfo,
     color: req.body?.color,
     createdAt: now,
     updatedAt: now,
   });
-  if (!context) return res.status(400).json({ error: 'Alert title and parenthetical text are required.' });
+  if (!context) return res.status(400).json({ error: 'Alert query and parenthetical text are required.' });
 
   const contexts = loadAlertContexts();
-  if (contexts.some(entry => entry.title === context.title)) {
-    return res.status(409).json({ error: 'Alert context already exists for that title.' });
+  if (contexts.some(entry => entry.query.toLowerCase() === context.query.toLowerCase())) {
+    return res.status(409).json({ error: 'Alert context already exists for that query.' });
   }
   contexts.push(context);
   writeAlertContexts(contexts);
@@ -408,14 +431,14 @@ app.put('/api/alert-contexts/:id', requireAdmin, (req, res) => {
   const now = new Date().toISOString();
   const next = normalizeAlertContext({
     ...contexts[index],
-    title: req.body?.title,
+    query: req.body?.query ?? req.body?.title,
     additionalInfo: req.body?.additionalInfo,
     color: req.body?.color,
     updatedAt: now,
   });
-  if (!next) return res.status(400).json({ error: 'Alert title and parenthetical text are required.' });
-  if (contexts.some((entry, i) => i !== index && entry.title === next.title)) {
-    return res.status(409).json({ error: 'Alert context already exists for that title.' });
+  if (!next) return res.status(400).json({ error: 'Alert query and parenthetical text are required.' });
+  if (contexts.some((entry, i) => i !== index && entry.query.toLowerCase() === next.query.toLowerCase())) {
+    return res.status(409).json({ error: 'Alert context already exists for that query.' });
   }
 
   contexts[index] = next;
@@ -567,11 +590,12 @@ app.get('/api/ferry/alerts', cachedEndpoint('ferry_alerts', 30 * 1000, async () 
     .sort((a, b) => (a.SortSeq ?? 9999) - (b.SortSeq ?? 9999))
     .map(a => {
       const title = stripFerryAlertRoutePrefix(stripHtml(a.AlertFullTitle || a.RouteAlertText || a.AlertDescription || ''));
-      const context = ferryAlertContext(title);
+      const text = stripFerryAlertRoutePrefix(stripHtml(a.RouteAlertText || a.DisruptionDescription || a.BulletinText || a.AlertFullText || ''));
+      const context = ferryAlertContext(title, text);
       return {
         id: a.BulletinID,
         title,
-        text: stripFerryAlertRoutePrefix(stripHtml(a.RouteAlertText || a.DisruptionDescription || a.BulletinText || a.AlertFullText || '')),
+        text,
         additionalInfo: context.additionalInfo || '',
         color: context.color || '',
         publishedAt: a.PublishDate || null,

@@ -117,35 +117,41 @@
     .status.error {
       color: var(--danger);
     }
-    .message-list {
+    .message-list, .context-list {
       display: grid;
       gap: 0.65rem;
     }
-    .message-row {
+    .message-row, .context-row {
+      display: grid;
+      gap: 0.65rem;
+      border: 1px solid var(--border);
+      border-radius: 0.45rem;
+      padding: 0.7rem;
+      background: rgba(255,255,255,0.025);
+    }
+    .item-view {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 1rem;
-      border: 1px solid var(--border);
-      border-radius: 0.45rem;
-      padding: 0.7rem;
-      background: rgba(255,255,255,0.025);
     }
-    .message-text {
+    .message-text, .context-text {
       overflow-wrap: anywhere;
       line-height: 1.35;
+      min-width: 0;
     }
-    .context-list {
-      display: grid;
-      gap: 0.8rem;
+    .context-query {
+      color: var(--accent);
+      font-weight: 700;
     }
-    .context-row {
-      display: grid;
-      gap: 0.65rem;
-      border: 1px solid var(--border);
-      border-radius: 0.45rem;
-      padding: 0.7rem;
-      background: rgba(255,255,255,0.025);
+    .context-meta {
+      color: var(--dim);
+      font-size: 0.85rem;
+      margin-top: 0.25rem;
+    }
+    .edit-form {
+      border-top: 1px solid var(--border);
+      padding-top: 0.65rem;
     }
     .empty {
       color: var(--dim);
@@ -191,8 +197,8 @@
       <h2>Ferry Alert Parentheticals</h2>
       <form id="alert-context-form">
         <div class="field">
-          <label for="alert-title">Exact WSF alert title</label>
-          <input id="alert-title" name="title" maxlength="160" required>
+          <label for="alert-query">Query substring</label>
+          <input id="alert-query" name="query" maxlength="160" required>
         </div>
         <div class="field">
           <label for="alert-info">Parenthetical text</label>
@@ -230,7 +236,7 @@
     const listEl = document.getElementById('message-list');
     const statusEl = document.getElementById('status');
     const alertContextForm = document.getElementById('alert-context-form');
-    const alertTitleEl = document.getElementById('alert-title');
+    const alertQueryEl = document.getElementById('alert-query');
     const alertInfoEl = document.getElementById('alert-info');
     const alertColorEl = document.getElementById('alert-color');
     const alertContextListEl = document.getElementById('alert-context-list');
@@ -280,6 +286,16 @@
       authStatusEl.classList.toggle('error', error);
     }
 
+    function showRowEditor(row, formClass) {
+      row.querySelector(`.${formClass}`)?.classList.remove('hidden');
+      row.querySelector('.item-view')?.classList.add('hidden');
+    }
+
+    function hideRowEditor(row, formClass) {
+      row.querySelector(`.${formClass}`)?.classList.add('hidden');
+      row.querySelector('.item-view')?.classList.remove('hidden');
+    }
+
     function setSignedIn(credential) {
       googleCredential = credential || '';
       const payload = decodeJwtPayload(googleCredential);
@@ -319,8 +335,23 @@
       }
       listEl.innerHTML = messages.map(message => `
         <div class="message-row" data-id="${escapeHtml(message.id)}">
-          <div class="message-text">${escapeHtml(message.text)}</div>
-          <button class="delete" type="button" data-id="${escapeHtml(message.id)}" ${googleCredential ? '' : 'disabled'}>Delete</button>
+          <div class="item-view">
+            <div class="message-text">${escapeHtml(message.text)}</div>
+            <div class="actions">
+              <button class="edit" type="button" ${googleCredential ? '' : 'disabled'}>Edit</button>
+              <button class="delete" type="button" ${googleCredential ? '' : 'disabled'}>Delete</button>
+            </div>
+          </div>
+          <form class="message-edit edit-form hidden">
+            <div class="field">
+              <label for="message-edit-${escapeHtml(message.id)}">Message</label>
+              <textarea id="message-edit-${escapeHtml(message.id)}" name="text" maxlength="280" ${googleCredential ? '' : 'disabled'} required>${escapeHtml(message.text)}</textarea>
+            </div>
+            <div class="actions">
+              <button type="submit" ${googleCredential ? '' : 'disabled'}>Save</button>
+              <button class="cancel" type="button">Cancel</button>
+            </div>
+          </form>
         </div>
       `).join('');
     }
@@ -340,24 +371,36 @@
         return;
       }
       alertContextListEl.innerHTML = contexts.map(context => `
-        <form class="context-row" data-id="${escapeHtml(context.id)}">
-          <div class="field">
-            <label for="context-title-${escapeHtml(context.id)}">Exact WSF alert title</label>
-            <input id="context-title-${escapeHtml(context.id)}" name="title" maxlength="160" value="${escapeHtml(context.title)}" ${googleCredential ? '' : 'disabled'} required>
+        <div class="context-row" data-id="${escapeHtml(context.id)}">
+          <div class="item-view">
+            <div class="context-text">
+              <div><span class="context-query">${escapeHtml(context.query)}</span> → ${escapeHtml(context.additionalInfo)}</div>
+              ${context.color ? `<div class="context-meta">Color: ${escapeHtml(context.color)}</div>` : ''}
+            </div>
+            <div class="actions">
+              <button class="edit" type="button" ${googleCredential ? '' : 'disabled'}>Edit</button>
+              <button class="delete" type="button" ${googleCredential ? '' : 'disabled'}>Delete</button>
+            </div>
           </div>
-          <div class="field">
-            <label for="context-info-${escapeHtml(context.id)}">Parenthetical text</label>
-            <textarea id="context-info-${escapeHtml(context.id)}" name="additionalInfo" maxlength="220" ${googleCredential ? '' : 'disabled'} required>${escapeHtml(context.additionalInfo)}</textarea>
-          </div>
-          <div class="field">
-            <label for="context-color-${escapeHtml(context.id)}">Color</label>
-            <input id="context-color-${escapeHtml(context.id)}" name="color" maxlength="80" value="${escapeHtml(context.color || '')}" placeholder="Any CSS color" ${googleCredential ? '' : 'disabled'}>
-          </div>
-          <div class="actions">
-            <button type="submit" ${googleCredential ? '' : 'disabled'}>Save</button>
-            <button class="delete" type="button" data-id="${escapeHtml(context.id)}" ${googleCredential ? '' : 'disabled'}>Delete</button>
-          </div>
-        </form>
+          <form class="context-edit edit-form hidden">
+            <div class="field">
+              <label for="context-query-${escapeHtml(context.id)}">Query substring</label>
+              <input id="context-query-${escapeHtml(context.id)}" name="query" maxlength="160" value="${escapeHtml(context.query)}" ${googleCredential ? '' : 'disabled'} required>
+            </div>
+            <div class="field">
+              <label for="context-info-${escapeHtml(context.id)}">Parenthetical text</label>
+              <textarea id="context-info-${escapeHtml(context.id)}" name="additionalInfo" maxlength="220" ${googleCredential ? '' : 'disabled'} required>${escapeHtml(context.additionalInfo)}</textarea>
+            </div>
+            <div class="field">
+              <label for="context-color-${escapeHtml(context.id)}">Color</label>
+              <input id="context-color-${escapeHtml(context.id)}" name="color" maxlength="80" value="${escapeHtml(context.color || '')}" placeholder="Any CSS color" ${googleCredential ? '' : 'disabled'}>
+            </div>
+            <div class="actions">
+              <button type="submit" ${googleCredential ? '' : 'disabled'}>Save</button>
+              <button class="cancel" type="button">Cancel</button>
+            </div>
+          </form>
+        </div>
       `).join('');
     }
 
@@ -420,14 +463,48 @@
     });
 
     listEl.addEventListener('click', async event => {
-      const button = event.target.closest('button.delete');
+      const button = event.target.closest('button');
       if (!button || button.disabled) return;
+      const row = button.closest('.message-row');
+      if (!row) return;
+      if (button.classList.contains('edit')) {
+        showRowEditor(row, 'message-edit');
+        return;
+      }
+      if (button.classList.contains('cancel')) {
+        hideRowEditor(row, 'message-edit');
+        return;
+      }
+      if (!button.classList.contains('delete')) return;
       setStatus('Deleting...');
       try {
-        await jsonFetch(`/api/messages/${encodeURIComponent(button.dataset.id)}`, {
+        await jsonFetch(`/api/messages/${encodeURIComponent(row.dataset.id)}`, {
           method: 'DELETE',
         });
         setStatus('Deleted.');
+        await loadMessages();
+      } catch (e) {
+        setStatus(e.message, true);
+      }
+    });
+
+    listEl.addEventListener('submit', async event => {
+      const form = event.target.closest('.message-edit');
+      if (!form) return;
+      event.preventDefault();
+      if (!googleCredential) {
+        setStatus('Sign in with Google first.', true);
+        return;
+      }
+      const row = form.closest('.message-row');
+      const formData = new FormData(form);
+      setStatus('Saving...');
+      try {
+        await jsonFetch(`/api/messages/${encodeURIComponent(row.dataset.id)}`, {
+          method: 'PUT',
+          body: JSON.stringify({ text: formData.get('text') }),
+        });
+        setStatus('Saved.');
         await loadMessages();
       } catch (e) {
         setStatus(e.message, true);
@@ -445,12 +522,12 @@
         await jsonFetch('/api/alert-contexts', {
           method: 'POST',
           body: JSON.stringify({
-            title: alertTitleEl.value,
+            query: alertQueryEl.value,
             additionalInfo: alertInfoEl.value,
             color: alertColorEl.value,
           }),
         });
-        alertTitleEl.value = '';
+        alertQueryEl.value = '';
         alertInfoEl.value = '';
         alertColorEl.value = '';
         setAlertContextStatus('Saved.');
@@ -461,20 +538,21 @@
     });
 
     alertContextListEl.addEventListener('submit', async event => {
-      const row = event.target.closest('.context-row');
-      if (!row) return;
+      const form = event.target.closest('.context-edit');
+      if (!form) return;
       event.preventDefault();
       if (!googleCredential) {
         setAlertContextStatus('Sign in with Google first.', true);
         return;
       }
-      const formData = new FormData(row);
+      const row = form.closest('.context-row');
+      const formData = new FormData(form);
       setAlertContextStatus('Saving...');
       try {
         await jsonFetch(`/api/alert-contexts/${encodeURIComponent(row.dataset.id)}`, {
           method: 'PUT',
           body: JSON.stringify({
-            title: formData.get('title'),
+            query: formData.get('query'),
             additionalInfo: formData.get('additionalInfo'),
             color: formData.get('color'),
           }),
@@ -487,11 +565,22 @@
     });
 
     alertContextListEl.addEventListener('click', async event => {
-      const button = event.target.closest('button.delete');
+      const button = event.target.closest('button');
       if (!button || button.disabled) return;
+      const row = button.closest('.context-row');
+      if (!row) return;
+      if (button.classList.contains('edit')) {
+        showRowEditor(row, 'context-edit');
+        return;
+      }
+      if (button.classList.contains('cancel')) {
+        hideRowEditor(row, 'context-edit');
+        return;
+      }
+      if (!button.classList.contains('delete')) return;
       setAlertContextStatus('Deleting...');
       try {
-        await jsonFetch(`/api/alert-contexts/${encodeURIComponent(button.dataset.id)}`, {
+        await jsonFetch(`/api/alert-contexts/${encodeURIComponent(row.dataset.id)}`, {
           method: 'DELETE',
         });
         setAlertContextStatus('Deleted.');
