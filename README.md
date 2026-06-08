@@ -50,7 +50,8 @@ Runtime configuration lives in ignored `config.json`. Copy
 ```
 
 The WSDOT ferry API key is free from https://www.wsdot.wa.gov/traffic/api/.
-`config.json` is the single runtime configuration file.
+For Railway, set the same JSON object as a `CONFIG_JSON` environment variable.
+`config.json` and `CONFIG_JSON` use the same canonical keys.
 
 Weather and tides work without any API keys.
 
@@ -107,7 +108,7 @@ even if another Google account successfully signs in.
 
 **Single-file frontend:** `public/index.html` — all HTML, CSS, and JS in one file. No build step, no bundler.
 
-**Server:** `server.js` — Express, ignored `config.json` for runtime settings, memory-first cache per endpoint persisted to `data/cache.json`, stale-while-revalidate pattern. If a fresh fetch fails, serves stale data with `_stale: true` flag.
+**Server:** `server.js` — Express, ignored `config.json` or Railway `CONFIG_JSON` for runtime settings, memory-first cache per endpoint persisted to `data/cache.json`, stale-while-revalidate pattern. If a fresh fetch fails, serves stale data with `_stale: true` flag.
 
 **Tests:** `npm test` runs `node --test test/api.test.js`. Tests spawn their own server on port 3001.
 

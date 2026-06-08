@@ -85,11 +85,16 @@ function writePersistentCache() {
 
 function loadRootConfig() {
   try {
+    if (process.env.CONFIG_JSON) {
+      const parsed = JSON.parse(process.env.CONFIG_JSON);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    }
     if (!existsSync(CONFIG_FILE)) return {};
     const parsed = JSON.parse(readFileSync(CONFIG_FILE, 'utf8'));
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
   } catch (e) {
-    console.warn(`[config] ignoring ${CONFIG_FILE}: ${e.message}`);
+    const source = process.env.CONFIG_JSON ? 'CONFIG_JSON' : CONFIG_FILE;
+    console.warn(`[config] ignoring ${source}: ${e.message}`);
     return {};
   }
 }

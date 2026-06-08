@@ -364,6 +364,43 @@ test('config example — documents runtime and Google admin auth configuration',
   assert.ok(config.adminUsers.length > 0, 'example includes at least one admin email placeholder');
 });
 
+test('server config — accepts canonical CONFIG_JSON for Railway-style deploys', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'whidbey-dashboard-config-json-test-'));
+  const port = 3012;
+  const proc = spawn('node', [join(__dirname, '../server.js')], {
+    env: {
+      ...process.env,
+      NODE_ENV: 'test',
+      CONFIG_JSON: JSON.stringify({
+        port,
+        dataDir: tempDir,
+        googleClientId: 'config-json-client-id',
+        adminUsers: ['mike@example.com'],
+      }),
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  try {
+    for (let i = 0; i < 30; i++) {
+      try {
+        const res = await fetch(`http://localhost:${port}/api/config`);
+        if (res.ok) {
+          const json = await res.json();
+          assert.equal(json.googleClientId, 'config-json-client-id');
+          return;
+        }
+      } catch {}
+      await sleep(300);
+    }
+    assert.fail('server did not start from CONFIG_JSON');
+  } finally {
+    proc.kill('SIGTERM');
+    await sleep(500);
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('static HTML — inline JavaScript parses without errors', async () => {
   const { readFileSync } = await import('fs');
   const { dirname: dn, join: jn } = await import('path');
