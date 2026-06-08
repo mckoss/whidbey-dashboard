@@ -294,6 +294,56 @@ test('messages endpoint — Google-authorized admins can add and delete crawl me
   assert.deepEqual(deleted.data.messages, [], 'returns remaining messages');
 });
 
+test('alert-contexts endpoint — Google-authorized admins can manage ferry alert parentheticals', async () => {
+  const defaults = await getJson('/api/alert-contexts');
+  assert.ok(Array.isArray(defaults.contexts), 'lists alert contexts');
+  assert.ok(defaults.contexts.some(context => context.title === 'Low Tide loading restrictions'), 'includes default low tide context');
+  assert.ok(defaults.contexts.some(context => context.additionalInfo === 'soil testing; operations continue'), 'includes default construction context');
+
+  const unauthenticated = await sendJson('/api/alert-contexts', 'POST', {
+    title: 'Test ferry alert',
+    additionalInfo: 'test parenthetical',
+  });
+  assert.equal(unauthenticated.res.status, 401, 'rejects context writes without Google credential');
+
+  const unauthorized = await sendJson('/api/alert-contexts', 'POST', {
+    title: 'Test ferry alert',
+    additionalInfo: 'test parenthetical',
+  }, 'unauthorized-admin-token');
+  assert.equal(unauthorized.res.status, 403, 'rejects context writes from non-admin users');
+
+  const created = await sendJson('/api/alert-contexts', 'POST', {
+    title: '<b>Test ferry alert</b>',
+    additionalInfo: '<i>test parenthetical</i>',
+    color: 'oklch(80% 0.14 85)',
+  }, 'valid-admin-token');
+  assert.equal(created.res.status, 201, 'creates alert context for authorized admin');
+  assert.equal(created.data.context.title, 'Test ferry alert', 'stores plain title only');
+  assert.equal(created.data.context.additionalInfo, 'test parenthetical', 'stores plain parenthetical only');
+  assert.equal(created.data.context.color, 'oklch(80% 0.14 85)', 'stores safe CSS color text');
+
+  const updated = await sendJson(`/api/alert-contexts/${created.data.context.id}`, 'PUT', {
+    title: 'Updated ferry alert',
+    additionalInfo: 'updated parenthetical',
+    color: 'var(--danger); background:red',
+  }, 'valid-admin-token');
+  assert.equal(updated.res.status, 200, 'updates alert context for authorized admin');
+  assert.equal(updated.data.context.title, 'Updated ferry alert', 'updates title');
+  assert.equal(updated.data.context.additionalInfo, 'updated parenthetical', 'updates parenthetical');
+  assert.equal(updated.data.context.color, '', 'drops unsafe CSS color text');
+
+  const duplicate = await sendJson(`/api/alert-contexts/${created.data.context.id}`, 'PUT', {
+    title: 'Low Tide loading restrictions',
+    additionalInfo: 'duplicate title',
+    color: 'orange',
+  }, 'valid-admin-token');
+  assert.equal(duplicate.res.status, 409, 'rejects duplicate alert titles');
+
+  const deleted = await sendJson(`/api/alert-contexts/${created.data.context.id}`, 'DELETE', {}, 'valid-admin-token');
+  assert.equal(deleted.res.status, 200, 'deletes alert context for authorized admin');
+  assert.ok(!deleted.data.contexts.some(context => context.id === created.data.context.id), 'deleted context is removed');
+});
+
 test('cache-status endpoint — returns cache metadata', async () => {
   const d = await getJson('/api/cache-status');
   // After above tests ran, we should have weather and tides cached
@@ -333,8 +383,13 @@ test('admin page — serves Google-authenticated admin surface', async () => {
   assert.match(html, /accounts\.google\.com\/gsi\/client/, 'loads Google Identity Services');
   assert.doesNotMatch(html, /id="from"/, 'does not expose old email/password-style field');
   assert.match(html, /<textarea[^>]+id="text"/, 'has message text field');
+  assert.match(html, /Ferry Alert Parentheticals/, 'has ferry alert parenthetical editor');
+  assert.match(html, /id="alert-title"/, 'has alert title field');
+  assert.match(html, /id="alert-info"/, 'has alert parenthetical field');
+  assert.match(html, /id="alert-color"/, 'has alert color field');
   assert.match(html, /Delete/, 'has delete controls');
   assert.match(html, /\/api\/messages/, 'uses user message API');
+  assert.match(html, /\/api\/alert-contexts/, 'uses alert context API');
   assert.match(html, /h1,\s*h2\s*\{[\s\S]*?color:\s*var\(--accent\);/, 'admin headings use dashboard heading blue');
 
   const old = await fetch(`${BASE}/message`);
@@ -450,6 +505,7 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
       title: 'Construction activity at Clinton terminal June 8 - July 3',
       text: 'Construction activity at Clinton terminal June 8 - July 3.',
       additionalInfo: 'soil testing; operations continue',
+      color: 'var(--danger)',
     },
     { title: 'Title-only advisory', text: '' },
     { title: 'Terminal status', text: '2 Hour Wait for Drivers' },
@@ -486,6 +542,7 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
   assert.match(ticker, /ferry-alert-item danger[\s\S]*One vessel canceled/, 'disruptive alert item is red');
   assert.match(ticker, /ferry-alert-item(?! danger)[^>]*><span class="ferry-alert-detail">Pets: New pet rules effective May 20\./, 'informational all-routes item stays yellow');
   assert.match(ticker, /Construction activity at Clinton terminal June 8 - July 3 \(soil testing; operations continue\)/, 'deterministic additional info renders as parenthetical');
+  assert.match(ticker, /ferry-alert-item" style="color: var\(--danger\)"/, 'editable alert context color renders as item color');
   assert.match(ticker, /ferry-alert-item user-message"><span class="ferry-alert-detail">Dinner at 6:30\./, 'user messages use normal ticker styling');
   assert.equal(
     (ticker.match(/Construction activity at Clinton terminal June 8 - July 3/g) || []).length,

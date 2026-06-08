@@ -57,14 +57,22 @@ Weather and tides work without any API keys.
 
 ## Admin
 
-Visit `/admin` to sign in with Google and manage the dashboard. The first admin
-tool adds or deletes user-managed messages in the bottom crawl.
+Visit `/admin` to sign in with Google and manage the dashboard. Admin tools can
+add/delete user-managed messages in the bottom crawl and edit WSF alert
+parenthetical context shown after matching ferry alert titles, including an
+optional CSS color string for matched alert text.
 
 User messages are separate from WSF ferry alerts in storage and management, but
 they render in the same single-line marquee: WSF alerts first, then user-added
 messages, then the duplicate wrap copy. User messages use the dashboard heading
 blue (`--accent`) so they are visually distinct from WSF warning yellow and
 disruption red.
+
+Ferry alert parentheticals are stored in `alert-context.json` under `dataDir`.
+The server seeds defaults for known WSF titles when that file does not exist,
+and admin edits replace those defaults with the saved file. The optional color
+field accepts safe CSS color text such as `orange`, `#f59e0b`, `rgb(245 158
+11)`, `oklch(80% 0.14 85)`, or `var(--danger)`.
 
 Admin auth uses Google Identity Services. Create a Google OAuth web client and
 put the public client ID plus the approved `adminUsers` list in `config.json`.
@@ -75,22 +83,35 @@ The admin page uses a Google OAuth **web client ID** only. It does not use a
 client secret or service account because the browser gets a Google ID token and
 the server verifies that token against the configured client ID.
 
-1. Open the [Google Cloud Console](https://console.cloud.google.com/) and select
-   the project that should own the dashboard auth settings.
-2. Go to **Google Auth Platform** → **Branding** and configure the OAuth consent
-   screen if the project does not already have one. For a private admin tool,
-   keep the app audience internal/test-only as appropriate for the account.
-3. Go to **Google Auth Platform** → **Clients**.
-4. Click **Create client**, choose **Web application**, and give it a name such
-   as `Whidbey Dashboard Admin`.
-5. Under **Authorized JavaScript origins**, add every origin that will serve the
-   admin page:
+1. Open [Google Cloud Console OAuth clients](https://console.cloud.google.com/auth/clients)
+   and select the project that should own the dashboard auth settings.
+2. If that URL does not land on the client list, open the navigation menu and go
+   to **APIs & Services** → **Credentials**, then click **Create credentials** →
+   **OAuth client ID**. The same screen may also appear as **Google Auth
+   Platform** → **Clients** in newer Cloud Console navigation.
+3. If Google asks for the OAuth consent screen first, go to **Google Auth
+   Platform** → **Branding** or **OAuth consent screen** and complete the
+   required fields:
+   - App name: `Whidbey Dashboard`
+   - User support email: your Google account
+   - Audience: **External** with test users for a personal Gmail account, or
+     **Internal** only if you are using a Google Workspace organization
+   - Test users: add the same Google email addresses that will be listed in
+     `adminUsers`
+4. Return to **Clients** or **Credentials** → **Create credentials** → **OAuth
+   client ID**.
+5. Set **Application type** to **Web application** and name it
+   `Whidbey Dashboard Admin`.
+6. Under **Authorized JavaScript origins**, add every origin that will serve the
+   admin page. Use only the scheme, host, and optional port; do not include a
+   path or trailing slash:
    - `http://localhost:3000`
    - `https://whidbey-dashboard.mckoss.com`
-6. Leave **Authorized redirect URIs** empty for this app. The dashboard uses the
+7. Leave **Authorized redirect URIs** empty for this app. The dashboard uses the
    Google Identity Services sign-in button and sends the resulting ID token to
    the server; it does not run a redirect callback flow.
-7. Copy the generated client ID into `config.json`:
+8. Click **Create**, then copy the generated **Client ID** ending in
+   `.apps.googleusercontent.com` into `config.json` or Railway `CONFIG_JSON`:
 
 ```json
 {
@@ -155,6 +176,10 @@ Each card shows an inline age tag after the title. Thresholds are per-source:
 | `GET /api/messages` | User-managed crawl messages |
 | `POST /api/messages` | Add a user-managed crawl message (Google admin auth required) |
 | `DELETE /api/messages/:id` | Delete a user-managed crawl message (Google admin auth required) |
+| `GET /api/alert-contexts` | WSF alert title → parenthetical text mappings |
+| `POST /api/alert-contexts` | Add a WSF alert parenthetical (Google admin auth required) |
+| `PUT /api/alert-contexts/:id` | Update a WSF alert parenthetical (Google admin auth required) |
+| `DELETE /api/alert-contexts/:id` | Delete a WSF alert parenthetical (Google admin auth required) |
 | `GET /api/cache-status` | Debug: cache metadata for all endpoints |
 
 ## Moon Phase Display

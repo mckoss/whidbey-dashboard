@@ -1552,9 +1552,11 @@ function renderFerryAlerts(alerts = []) {
     const baseDisplayText = a.userMessage ? detail : (showDetail ? `${displayTitle}: ${detail}` : displayTitle);
     const displayText = additionalInfo && !a.userMessage ? `${baseDisplayText} (${additionalInfo})` : baseDisplayText;
     const danger = ferryAlertIsDanger(a);
+    const color = String(a.color || '').trim();
+    const styleAttr = color && !a.userMessage ? ` style="color: ${escapeHtml(color)}"` : '';
     displayTextParts.push(displayText);
     const itemClass = `ferry-alert-item${danger ? ' danger' : ''}${a.userMessage ? ' user-message' : ''}`;
-    return `<span class="${itemClass}">${showDetail || a.userMessage || additionalInfo ? `<span class="ferry-alert-detail">${escapeHtml(displayText)}</span>` : `<span class="ferry-alert-title">${escapeHtml(displayTitle)}</span>`}</span>`;
+    return `<span class="${itemClass}"${styleAttr}>${showDetail || a.userMessage || additionalInfo ? `<span class="ferry-alert-detail">${escapeHtml(displayText)}</span>` : `<span class="ferry-alert-title">${escapeHtml(displayTitle)}</span>`}</span>`;
   }).join('');
   const visibleText = displayTextParts.join('   ');
   const tickerDurationSeconds = Math.max(minTickerDurationSeconds, Math.round(visibleText.length / tickerCharsPerSecond));

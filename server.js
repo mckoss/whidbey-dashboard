@@ -23,6 +23,7 @@ const CONFIG = {
   dataDir,
   cacheFile: join(dataDir, 'cache.json'),
   messageFile: join(dataDir, 'messages.json'),
+  alertContextFile: join(dataDir, 'alert-context.json'),
   wsfApiKey: String(configValue('wsfApiKey', '')).trim(),
   gaMeasurementId: configValue('gaMeasurementId', null),
   googleClientId: String(configValue('googleClientId', '')).trim(),
@@ -54,6 +55,13 @@ function getCached(key) {
 function setCache(key, data, ttlMs) {
   cache[key] = { data, cachedAt: Date.now(), expiresAt: Date.now() + ttlMs, stale: false };
   writePersistentCache();
+}
+
+function clearCache(key) {
+  if (cache[key]) {
+    delete cache[key];
+    writePersistentCache();
+  }
 }
 
 function getStale(key) {
@@ -223,6 +231,74 @@ function writeUserMessages(messages) {
   writeFileSync(CONFIG.messageFile, JSON.stringify(messages, null, 2));
 }
 
+const DEFAULT_FERRY_ALERT_CONTEXTS = [
+  {
+    id: 'low-tide-loading-restrictions',
+    title: 'Low Tide loading restrictions',
+    additionalInfo: 'oversized/low-clearance vehicles may be delayed Jun 13-18',
+  },
+  {
+    id: 'pets-on-washington-state-ferries-effective-may-20',
+    title: 'Pets on Washington State Ferries effective May 20',
+    additionalInfo: 'new pet areas/rules take effect July 1',
+  },
+  {
+    id: 'construction-activity-at-clinton-terminal-june-8-july-3',
+    title: 'Construction activity at Clinton terminal June 8 - July 3',
+    additionalInfo: 'soil testing; operations continue',
+  },
+];
+
+function normalizeAlertContext(entry = {}) {
+  const title = stripHtml(entry.title || '').slice(0, 160);
+  const additionalInfo = stripHtml(entry.additionalInfo || '').slice(0, 220);
+  const color = normalizeCssColor(entry.color || '');
+  if (!title || !additionalInfo) return null;
+  return {
+    id: String(entry.id || randomUUID()),
+    title,
+    additionalInfo,
+    color,
+    createdAt: entry.createdAt || new Date().toISOString(),
+    updatedAt: entry.updatedAt || entry.createdAt || new Date().toISOString(),
+  };
+}
+
+function normalizeCssColor(value = '') {
+  const color = stripHtml(value).slice(0, 80).trim();
+  if (!color) return '';
+  return /^[a-zA-Z0-9#(),.%\s/+_-]+$/.test(color) ? color : '';
+}
+
+function loadAlertContexts() {
+  try {
+    if (!existsSync(CONFIG.alertContextFile)) {
+      return DEFAULT_FERRY_ALERT_CONTEXTS
+        .map(entry => normalizeAlertContext(entry))
+        .filter(Boolean);
+    }
+    const parsed = JSON.parse(readFileSync(CONFIG.alertContextFile, 'utf8'));
+    if (!Array.isArray(parsed)) throw new Error('alert context file is not an array');
+    return parsed.map(entry => normalizeAlertContext(entry)).filter(Boolean);
+  } catch (e) {
+    console.warn(`[alert-context] ignoring persisted alert contexts: ${e.message}`);
+    return DEFAULT_FERRY_ALERT_CONTEXTS
+      .map(entry => normalizeAlertContext(entry))
+      .filter(Boolean);
+  }
+}
+
+function writeAlertContexts(contexts) {
+  mkdirSync(CONFIG.dataDir, { recursive: true });
+  writeFileSync(CONFIG.alertContextFile, JSON.stringify(contexts, null, 2));
+  clearCache('ferry_alerts');
+}
+
+function ferryAlertContext(title = '') {
+  const normalizedTitle = String(title).trim();
+  return loadAlertContexts().find(entry => entry.title === normalizedTitle) || {};
+}
+
 // ── Fetch with retry ────────────────────────────────────────────────────
 async function fetchWithRetry(url, options = {}, retries = 1) {
   try {
@@ -297,6 +373,64 @@ app.delete('/api/messages/:id', requireAdmin, (req, res) => {
   }
   writeUserMessages(next);
   res.json({ ok: true, messages: next });
+});
+
+app.get('/api/alert-contexts', (req, res) => {
+  res.json({ contexts: loadAlertContexts() });
+});
+
+app.post('/api/alert-contexts', requireAdmin, (req, res) => {
+  const now = new Date().toISOString();
+  const context = normalizeAlertContext({
+    id: randomUUID(),
+    title: req.body?.title,
+    additionalInfo: req.body?.additionalInfo,
+    color: req.body?.color,
+    createdAt: now,
+    updatedAt: now,
+  });
+  if (!context) return res.status(400).json({ error: 'Alert title and parenthetical text are required.' });
+
+  const contexts = loadAlertContexts();
+  if (contexts.some(entry => entry.title === context.title)) {
+    return res.status(409).json({ error: 'Alert context already exists for that title.' });
+  }
+  contexts.push(context);
+  writeAlertContexts(contexts);
+  res.status(201).json({ context, contexts });
+});
+
+app.put('/api/alert-contexts/:id', requireAdmin, (req, res) => {
+  const contexts = loadAlertContexts();
+  const index = contexts.findIndex(entry => entry.id === req.params.id);
+  if (index === -1) return res.status(404).json({ error: 'Alert context not found.' });
+
+  const now = new Date().toISOString();
+  const next = normalizeAlertContext({
+    ...contexts[index],
+    title: req.body?.title,
+    additionalInfo: req.body?.additionalInfo,
+    color: req.body?.color,
+    updatedAt: now,
+  });
+  if (!next) return res.status(400).json({ error: 'Alert title and parenthetical text are required.' });
+  if (contexts.some((entry, i) => i !== index && entry.title === next.title)) {
+    return res.status(409).json({ error: 'Alert context already exists for that title.' });
+  }
+
+  contexts[index] = next;
+  writeAlertContexts(contexts);
+  res.json({ context: next, contexts });
+});
+
+app.delete('/api/alert-contexts/:id', requireAdmin, (req, res) => {
+  const contexts = loadAlertContexts();
+  const next = contexts.filter(entry => entry.id !== req.params.id);
+  if (next.length === contexts.length) {
+    return res.status(404).json({ error: 'Alert context not found.' });
+  }
+  writeAlertContexts(next);
+  res.json({ ok: true, contexts: next });
 });
 
 // ── Tides (hi/lo, 3 days) ─────────────────────────────────────────────
@@ -423,16 +557,6 @@ function stripFerryAlertRoutePrefix(value = '') {
     .trim();
 }
 
-const FERRY_ALERT_ADDITIONAL_INFO_BY_TITLE = new Map([
-  ['Low Tide loading restrictions', 'oversized/low-clearance vehicles may be delayed Jun 13-18'],
-  ['Pets on Washington State Ferries effective May 20', 'new pet areas/rules take effect July 1'],
-  ['Construction activity at Clinton terminal June 8 - July 3', 'soil testing; operations continue'],
-]);
-
-function ferryAlertAdditionalInfo(title = '') {
-  return FERRY_ALERT_ADDITIONAL_INFO_BY_TITLE.get(String(title).trim()) || '';
-}
-
 app.get('/api/ferry/alerts', cachedEndpoint('ferry_alerts', 30 * 1000, async () => {
   if (!CONFIG.wsfApiKey) return { error: 'WSF API key not configured', alerts: [] };
   const url = `https://www.wsdot.wa.gov/ferries/api/schedule/rest/alerts?apiaccesscode=${CONFIG.wsfApiKey}`;
@@ -443,11 +567,13 @@ app.get('/api/ferry/alerts', cachedEndpoint('ferry_alerts', 30 * 1000, async () 
     .sort((a, b) => (a.SortSeq ?? 9999) - (b.SortSeq ?? 9999))
     .map(a => {
       const title = stripFerryAlertRoutePrefix(stripHtml(a.AlertFullTitle || a.RouteAlertText || a.AlertDescription || ''));
+      const context = ferryAlertContext(title);
       return {
         id: a.BulletinID,
         title,
         text: stripFerryAlertRoutePrefix(stripHtml(a.RouteAlertText || a.DisruptionDescription || a.BulletinText || a.AlertFullText || '')),
-        additionalInfo: ferryAlertAdditionalInfo(title),
+        additionalInfo: context.additionalInfo || '',
+        color: context.color || '',
         publishedAt: a.PublishDate || null,
         affectedRouteIds: Array.isArray(a.AffectedRouteIDs) ? a.AffectedRouteIDs : [],
         allRoutes: Boolean(a.AllRoutesFlag),

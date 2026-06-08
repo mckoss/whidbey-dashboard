@@ -62,21 +62,23 @@
       font-size: 0.8rem;
       margin-bottom: 0.35rem;
     }
-    textarea, button {
+    input, textarea, button {
       font: inherit;
       border-radius: 0.4rem;
     }
-    textarea {
+    input, textarea {
       width: 100%;
       border: 1px solid var(--border);
       background: #07101d;
       color: var(--text);
       padding: 0.65rem 0.7rem;
-      min-height: 5.5rem;
       outline: none;
+    }
+    textarea {
+      min-height: 5.5rem;
       resize: vertical;
     }
-    textarea:focus {
+    input:focus, textarea:focus {
       border-color: var(--accent);
     }
     button {
@@ -133,6 +135,18 @@
       overflow-wrap: anywhere;
       line-height: 1.35;
     }
+    .context-list {
+      display: grid;
+      gap: 0.8rem;
+    }
+    .context-row {
+      display: grid;
+      gap: 0.65rem;
+      border: 1px solid var(--border);
+      border-radius: 0.45rem;
+      padding: 0.7rem;
+      background: rgba(255,255,255,0.025);
+    }
     .empty {
       color: var(--dim);
       padding: 0.4rem 0;
@@ -173,9 +187,38 @@
       </form>
     </section>
 
+    <section id="alert-context-panel" class="hidden">
+      <h2>Ferry Alert Parentheticals</h2>
+      <form id="alert-context-form">
+        <div class="field">
+          <label for="alert-title">Exact WSF alert title</label>
+          <input id="alert-title" name="title" maxlength="160" required>
+        </div>
+        <div class="field">
+          <label for="alert-info">Parenthetical text</label>
+          <textarea id="alert-info" name="additionalInfo" maxlength="220" required></textarea>
+        </div>
+        <div class="field">
+          <label for="alert-color">Color</label>
+          <input id="alert-color" name="color" maxlength="80" placeholder="Any CSS color, e.g. var(--danger), #f59e0b, orange">
+        </div>
+        <div class="actions">
+          <button id="save-alert-context" type="submit">OK</button>
+          <span id="alert-context-status" class="status" role="status"></span>
+        </div>
+      </form>
+    </section>
+
     <section>
       <h2>Current Crawl Messages</h2>
       <div id="message-list" class="message-list">
+        <div class="empty">Loading...</div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Current Ferry Alert Parentheticals</h2>
+      <div id="alert-context-list" class="context-list">
         <div class="empty">Loading...</div>
       </div>
     </section>
@@ -186,10 +229,17 @@
     const textEl = document.getElementById('text');
     const listEl = document.getElementById('message-list');
     const statusEl = document.getElementById('status');
+    const alertContextForm = document.getElementById('alert-context-form');
+    const alertTitleEl = document.getElementById('alert-title');
+    const alertInfoEl = document.getElementById('alert-info');
+    const alertColorEl = document.getElementById('alert-color');
+    const alertContextListEl = document.getElementById('alert-context-list');
+    const alertContextStatusEl = document.getElementById('alert-context-status');
     const authStatusEl = document.getElementById('auth-status');
     const signedInEl = document.getElementById('signed-in');
     const signOutButton = document.getElementById('sign-out');
     const messagesPanel = document.getElementById('messages-panel');
+    const alertContextPanel = document.getElementById('alert-context-panel');
     const signInContainer = document.getElementById('google-signin');
 
     let googleCredential = '';
@@ -220,6 +270,11 @@
       statusEl.classList.toggle('error', error);
     }
 
+    function setAlertContextStatus(message, error = false) {
+      alertContextStatusEl.textContent = message;
+      alertContextStatusEl.classList.toggle('error', error);
+    }
+
     function setAuthStatus(message, error = false) {
       authStatusEl.textContent = message;
       authStatusEl.classList.toggle('error', error);
@@ -231,6 +286,7 @@
       signedInEmail = payload.email || '';
       signedInEl.textContent = signedInEmail ? `Signed in as ${signedInEmail}` : 'Signed in';
       messagesPanel.classList.remove('hidden');
+      alertContextPanel.classList.remove('hidden');
       signOutButton.classList.remove('hidden');
       signInContainer.classList.add('hidden');
       setAuthStatus('');
@@ -241,6 +297,7 @@
       signedInEmail = '';
       signedInEl.textContent = '';
       messagesPanel.classList.add('hidden');
+      alertContextPanel.classList.add('hidden');
       signOutButton.classList.add('hidden');
       signInContainer.classList.remove('hidden');
       setAuthStatus(message);
@@ -277,6 +334,42 @@
       }
     }
 
+    function renderAlertContexts(contexts = []) {
+      if (!contexts.length) {
+        alertContextListEl.innerHTML = '<div class="empty">No ferry alert parentheticals.</div>';
+        return;
+      }
+      alertContextListEl.innerHTML = contexts.map(context => `
+        <form class="context-row" data-id="${escapeHtml(context.id)}">
+          <div class="field">
+            <label for="context-title-${escapeHtml(context.id)}">Exact WSF alert title</label>
+            <input id="context-title-${escapeHtml(context.id)}" name="title" maxlength="160" value="${escapeHtml(context.title)}" ${googleCredential ? '' : 'disabled'} required>
+          </div>
+          <div class="field">
+            <label for="context-info-${escapeHtml(context.id)}">Parenthetical text</label>
+            <textarea id="context-info-${escapeHtml(context.id)}" name="additionalInfo" maxlength="220" ${googleCredential ? '' : 'disabled'} required>${escapeHtml(context.additionalInfo)}</textarea>
+          </div>
+          <div class="field">
+            <label for="context-color-${escapeHtml(context.id)}">Color</label>
+            <input id="context-color-${escapeHtml(context.id)}" name="color" maxlength="80" value="${escapeHtml(context.color || '')}" placeholder="Any CSS color" ${googleCredential ? '' : 'disabled'}>
+          </div>
+          <div class="actions">
+            <button type="submit" ${googleCredential ? '' : 'disabled'}>Save</button>
+            <button class="delete" type="button" data-id="${escapeHtml(context.id)}" ${googleCredential ? '' : 'disabled'}>Delete</button>
+          </div>
+        </form>
+      `).join('');
+    }
+
+    async function loadAlertContexts() {
+      try {
+        const data = await jsonFetch('/api/alert-contexts');
+        renderAlertContexts(data.contexts || []);
+      } catch (e) {
+        alertContextListEl.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
+      }
+    }
+
     async function initGoogleSignIn() {
       const cfg = await jsonFetch('/api/config');
       if (!cfg.googleClientId) {
@@ -293,6 +386,7 @@
           callback: response => {
             setSignedIn(response.credential);
             loadMessages();
+            loadAlertContexts();
           },
         });
         google.accounts.id.renderButton(signInContainer, {
@@ -340,13 +434,82 @@
       }
     });
 
+    alertContextForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      if (!googleCredential) {
+        setAlertContextStatus('Sign in with Google first.', true);
+        return;
+      }
+      setAlertContextStatus('Saving...');
+      try {
+        await jsonFetch('/api/alert-contexts', {
+          method: 'POST',
+          body: JSON.stringify({
+            title: alertTitleEl.value,
+            additionalInfo: alertInfoEl.value,
+            color: alertColorEl.value,
+          }),
+        });
+        alertTitleEl.value = '';
+        alertInfoEl.value = '';
+        alertColorEl.value = '';
+        setAlertContextStatus('Saved.');
+        await loadAlertContexts();
+      } catch (e) {
+        setAlertContextStatus(e.message, true);
+      }
+    });
+
+    alertContextListEl.addEventListener('submit', async event => {
+      const row = event.target.closest('.context-row');
+      if (!row) return;
+      event.preventDefault();
+      if (!googleCredential) {
+        setAlertContextStatus('Sign in with Google first.', true);
+        return;
+      }
+      const formData = new FormData(row);
+      setAlertContextStatus('Saving...');
+      try {
+        await jsonFetch(`/api/alert-contexts/${encodeURIComponent(row.dataset.id)}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            title: formData.get('title'),
+            additionalInfo: formData.get('additionalInfo'),
+            color: formData.get('color'),
+          }),
+        });
+        setAlertContextStatus('Saved.');
+        await loadAlertContexts();
+      } catch (e) {
+        setAlertContextStatus(e.message, true);
+      }
+    });
+
+    alertContextListEl.addEventListener('click', async event => {
+      const button = event.target.closest('button.delete');
+      if (!button || button.disabled) return;
+      setAlertContextStatus('Deleting...');
+      try {
+        await jsonFetch(`/api/alert-contexts/${encodeURIComponent(button.dataset.id)}`, {
+          method: 'DELETE',
+        });
+        setAlertContextStatus('Deleted.');
+        await loadAlertContexts();
+      } catch (e) {
+        setAlertContextStatus(e.message, true);
+      }
+    });
+
     signOutButton.addEventListener('click', () => {
       google.accounts.id.disableAutoSelect();
       setSignedOut('Signed out.');
       loadMessages();
+      loadAlertContexts();
     });
 
     loadMessages();
+    loadAlertContexts();
     initGoogleSignIn().catch(e => setAuthStatus(e.message, true));
   </script>
 </body>
