@@ -614,6 +614,8 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /rgba\(148, 163, 184, 0\.75\)/, 'renders schedule-only trips in neutral gray instead of vessel colors');
   assert.match(html, /observed/, 'renders observed trips as emphasized history lines');
   assert.match(html, /observed \/.*schedule-only/, 'summarizes observed trips separately from schedule-only context');
+  assert.match(html, /function terminalXForId/, 'maps docked current vessels by terminal id');
+  assert.doesNotMatch(html, /departingTerminalId === 5 \|\| vessel\.arrivingTerminalId === 5/, 'does not place docked vessels by either endpoint');
 
   const scriptMatch = html.match(/<script[^>]*>([\s\S]*?)<\/script>/);
   assert.ok(scriptMatch, 'found ferry history script block');

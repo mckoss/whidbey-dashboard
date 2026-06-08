@@ -535,7 +535,8 @@
         let x = null;
         let y = yFor(nowMs);
         if (vessel.atDock) {
-          x = vessel.departingTerminalId === 5 || vessel.arrivingTerminalId === 5 ? leftX : rightX;
+          x = terminalXForId(vessel.departingTerminalId, leftX, rightX) ||
+            terminalXForId(vessel.arrivingTerminalId, leftX, rightX);
         } else if (typeof vessel.latitude === 'number' && typeof vessel.longitude === 'number') {
           const pct = terminalProgress(vessel.latitude, vessel.longitude);
           x = leftX + (rightX - leftX) * pct;
@@ -550,6 +551,12 @@
         if (x === null) return '';
         return `<circle class="vessel-dot" cx="${x}" cy="${y}" r="6" fill="${color}"><title>${escapeHtml(name)}</title></circle>`;
       }).join('');
+    }
+
+    function terminalXForId(terminalId, leftX, rightX) {
+      if (terminalId === 5) return leftX;
+      if (terminalId === 14) return rightX;
+      return null;
     }
 
     function isScheduleOnlyTrip(trip) {
