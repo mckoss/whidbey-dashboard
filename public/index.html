@@ -1243,8 +1243,8 @@ function nearestSailingMsToEstimate(parsedSailings, estimateMs) {
 
 function vesselCanMatchSailing(vessel, fromTerminalId, schedMs, parsedSailings = null) {
   const near = ms => ms != null && Math.abs(ms - schedMs) <= VESSEL_SAILING_MATCH_WINDOW_MS;
-  if (near(vessel.scheduledDepartureMs) || near(vessel.leftDockMs)) return true;
-  if (vessel.scheduledDepartureMs != null) return false;
+  if (vessel.scheduledDepartureMs != null) return vessel.scheduledDepartureMs === schedMs;
+  if (near(vessel.leftDockMs)) return true;
   if (vessel.arrivingTerminalId === fromTerminalId && vessel.etaMs) {
     const estimatedDepartureMs = vessel.etaMs + MIN_TURNAROUND_MS;
     const nearestMs = nearestSailingMsToEstimate(parsedSailings, estimatedDepartureMs);
@@ -1546,13 +1546,15 @@ function renderFerryAlerts(alerts = []) {
   const items = usable.map(a => {
     const title = String(a.title || '').trim();
     const detail = String(a.text || '').trim();
+    const additionalInfo = String(a.additionalInfo || '').trim();
     const showDetail = !a.userMessage && detail && normalizeFerryAlertDisplayText(detail) !== normalizeFerryAlertDisplayText(title);
     const displayTitle = title || detail;
-    const displayText = a.userMessage ? detail : (showDetail ? `${displayTitle}: ${detail}` : displayTitle);
+    const baseDisplayText = a.userMessage ? detail : (showDetail ? `${displayTitle}: ${detail}` : displayTitle);
+    const displayText = additionalInfo && !a.userMessage ? `${baseDisplayText} (${additionalInfo})` : baseDisplayText;
     const danger = ferryAlertIsDanger(a);
     displayTextParts.push(displayText);
     const itemClass = `ferry-alert-item${danger ? ' danger' : ''}${a.userMessage ? ' user-message' : ''}`;
-    return `<span class="${itemClass}">${showDetail || a.userMessage ? `<span class="ferry-alert-detail">${escapeHtml(displayText)}</span>` : `<span class="ferry-alert-title">${escapeHtml(displayTitle)}</span>`}</span>`;
+    return `<span class="${itemClass}">${showDetail || a.userMessage || additionalInfo ? `<span class="ferry-alert-detail">${escapeHtml(displayText)}</span>` : `<span class="ferry-alert-title">${escapeHtml(displayTitle)}</span>`}</span>`;
   }).join('');
   const visibleText = displayTextParts.join('   ');
   const tickerDurationSeconds = Math.max(minTickerDurationSeconds, Math.round(visibleText.length / tickerCharsPerSecond));

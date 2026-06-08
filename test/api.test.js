@@ -228,6 +228,8 @@ test('ferry/alerts endpoint — returns normalized route alerts', async () => {
     assert.ok(typeof alert.title === 'string', 'alert has normalized title');
     assert.ok(!alert.title.includes('<'), 'alert title is plain text');
     assert.ok(!alert.text.includes('<'), 'alert text is plain text');
+    assert.ok(typeof alert.additionalInfo === 'string', 'alert has deterministic additionalInfo string');
+    assert.ok(!alert.additionalInfo.includes('<'), 'alert additionalInfo is plain text');
     assert.doesNotMatch(alert.title, /^(?:all routes|(?:[a-z]+\/[a-z]+)(?:\s+[a-z]+\/[a-z]+)*)\s*[-–—:]+/i, 'alert title does not expose WSF route prefix');
     assert.doesNotMatch(alert.text, /^(?:all routes|(?:[a-z]+\/[a-z]+)(?:\s+[a-z]+\/[a-z]+)*)\s*[-–—:]+/i, 'alert text does not expose WSF route prefix');
     assert.ok(
@@ -379,7 +381,9 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
     {
       title: 'Construction activity at Clinton terminal June 8 - July 3',
       text: 'Construction activity at Clinton terminal June 8 - July 3.',
+      additionalInfo: 'soil testing; operations continue',
     },
+    { title: 'Title-only advisory', text: '' },
     { title: 'Terminal status', text: '2 Hour Wait for Drivers' },
     { title: 'General notice', text: 'Good morning. How are you doing?' },
     { title: '', text: 'Dinner at 6:30.', userMessage: true },
@@ -388,9 +392,11 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
   const visibleAlertText = (a) => {
     const title = String(a.title || '').trim();
     const detail = String(a.text || '').trim();
+    const additionalInfo = String(a.additionalInfo || '').trim();
     const normalize = (value) => String(value).replace(/\s+/g, ' ').replace(/[.。]+$/g, '').trim();
     if (a.userMessage) return detail;
-    return detail && normalize(detail) !== normalize(title) ? `${title || detail}: ${detail}` : (title || detail);
+    const text = detail && normalize(detail) !== normalize(title) ? `${title || detail}: ${detail}` : (title || detail);
+    return additionalInfo ? `${text} (${additionalInfo})` : text;
   };
   const visibleText = alerts
     .map(visibleAlertText)
@@ -411,6 +417,7 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
   assert.doesNotMatch(ticker, /ferry-alert-ticker danger/, 'mixed ticker does not make every alert red');
   assert.match(ticker, /ferry-alert-item danger[\s\S]*One vessel canceled/, 'disruptive alert item is red');
   assert.match(ticker, /ferry-alert-item(?! danger)[^>]*><span class="ferry-alert-detail">Pets: New pet rules effective May 20\./, 'informational all-routes item stays yellow');
+  assert.match(ticker, /Construction activity at Clinton terminal June 8 - July 3 \(soil testing; operations continue\)/, 'deterministic additional info renders as parenthetical');
   assert.match(ticker, /ferry-alert-item user-message"><span class="ferry-alert-detail">Dinner at 6:30\./, 'user messages use normal ticker styling');
   assert.equal(
     (ticker.match(/Construction activity at Clinton terminal June 8 - July 3/g) || []).length,
@@ -564,6 +571,61 @@ test('late ferry logic — current vessel position does not resurrect old mornin
   assert.ok(!list.some(s => s.sailTime.getTime() === morningMs), 'old morning sailing is not shown as late');
 });
 
+test('late ferry logic — vessel scheduled departure does not delay nearby earlier sailing', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
+  const script = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+
+  const fixedNow = Date.UTC(2026, 5, 8, 12, 50); // 5:50 AM PDT
+  class FakeDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [fixedNow])); }
+    static now() { return fixedNow; }
+  }
+  Object.assign(FakeDate, Date);
+
+  const nullEl = { style: {}, className: '', textContent: '', innerHTML: '', querySelector: () => null };
+  const context = {
+    console,
+    Date: FakeDate,
+    setInterval: () => 0,
+    setTimeout: () => 0,
+    clearInterval: () => {},
+    fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
+    document: {
+      getElementById: () => nullEl,
+      querySelector: () => nullEl,
+      createElement: () => ({}),
+      head: { appendChild: () => {} },
+    },
+    window: {},
+  };
+  vm.createContext(context);
+  vm.runInContext(script + `\nthis.__lateTest = { buildVesselMap, computeSailingTimings };`, context);
+
+  const earlierMs = Date.UTC(2026, 5, 8, 12, 30); // 5:30 AM PDT
+  const nextMs = Date.UTC(2026, 5, 8, 13, 0);     // 6:00 AM PDT
+  const sailings = [earlierMs, nextMs].map(ms => ({
+    sailTime: new Date(ms),
+    DepartingTime: `/Date(${ms})/`,
+  }));
+  const vesselMap = context.__lateTest.buildVesselMap({ vessels: [{
+    vesselName: 'Tokitae',
+    inService: true,
+    atDock: true,
+    departingTerminalId: 5,
+    arrivingTerminalId: 14,
+    scheduledDepartureMs: nextMs,
+  }] });
+
+  const timings = context.__lateTest.computeSailingTimings(sailings, vesselMap, 5);
+  assert.equal(timings[0].effectiveMs, earlierMs, 'nearby earlier sailing keeps its scheduled time');
+  assert.equal(timings[0].lateInfo, null, 'nearby earlier sailing is not marked delayed');
+  assert.equal(timings[1].effectiveMs, nextMs, 'exact scheduled sailing still matches normally');
+});
+
 test('late ferry logic — delay propagates through later sailings in schedule order', async () => {
   const { readFileSync } = await import('fs');
   const { dirname: dn, join: jn } = await import('path');
@@ -608,10 +670,10 @@ test('late ferry logic — delay propagates through later sailings in schedule o
   const vesselMap = context.__lateTest.buildVesselMap({ vessels: [{
     vesselName: 'Tokitae',
     inService: true,
-    atDock: true,
+    atDock: false,
     departingTerminalId: 14,
     arrivingTerminalId: 5,
-    scheduledDepartureMs: Date.UTC(2026, 5, 8, 0, 40), // 5:40 PM PDT
+    leftDockMs: Date.UTC(2026, 5, 8, 0, 40), // 5:40 PM PDT actual departure
   }] });
 
   const timings = context.__lateTest.computeSailingTimings(sailings, vesselMap, 14);

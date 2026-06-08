@@ -362,6 +362,16 @@ function stripFerryAlertRoutePrefix(value = '') {
     .trim();
 }
 
+const FERRY_ALERT_ADDITIONAL_INFO_BY_TITLE = new Map([
+  ['Low Tide loading restrictions', 'oversized/low-clearance vehicles may be delayed Jun 13-18'],
+  ['Pets on Washington State Ferries effective May 20', 'new pet areas/rules take effect July 1'],
+  ['Construction activity at Clinton terminal June 8 - July 3', 'soil testing; operations continue'],
+]);
+
+function ferryAlertAdditionalInfo(title = '') {
+  return FERRY_ALERT_ADDITIONAL_INFO_BY_TITLE.get(String(title).trim()) || '';
+}
+
 app.get('/api/ferry/alerts', cachedEndpoint('ferry_alerts', 30 * 1000, async () => {
   if (!WSF_API_KEY) return { error: 'WSF_API_KEY not configured', alerts: [] };
   const url = `https://www.wsdot.wa.gov/ferries/api/schedule/rest/alerts?apiaccesscode=${WSF_API_KEY}`;
@@ -370,14 +380,18 @@ app.get('/api/ferry/alerts', cachedEndpoint('ferry_alerts', 30 * 1000, async () 
   const alerts = (Array.isArray(data) ? data : [])
     .filter(alertAppliesToRoute)
     .sort((a, b) => (a.SortSeq ?? 9999) - (b.SortSeq ?? 9999))
-    .map(a => ({
-      id: a.BulletinID,
-      title: stripFerryAlertRoutePrefix(stripHtml(a.AlertFullTitle || a.RouteAlertText || a.AlertDescription || '')),
-      text: stripFerryAlertRoutePrefix(stripHtml(a.RouteAlertText || a.DisruptionDescription || a.BulletinText || a.AlertFullText || '')),
-      publishedAt: a.PublishDate || null,
-      affectedRouteIds: Array.isArray(a.AffectedRouteIDs) ? a.AffectedRouteIDs : [],
-      allRoutes: Boolean(a.AllRoutesFlag),
-    }));
+    .map(a => {
+      const title = stripFerryAlertRoutePrefix(stripHtml(a.AlertFullTitle || a.RouteAlertText || a.AlertDescription || ''));
+      return {
+        id: a.BulletinID,
+        title,
+        text: stripFerryAlertRoutePrefix(stripHtml(a.RouteAlertText || a.DisruptionDescription || a.BulletinText || a.AlertFullText || '')),
+        additionalInfo: ferryAlertAdditionalInfo(title),
+        publishedAt: a.PublishDate || null,
+        affectedRouteIds: Array.isArray(a.AffectedRouteIDs) ? a.AffectedRouteIDs : [],
+        allRoutes: Boolean(a.AllRoutesFlag),
+      };
+    });
   return { alerts };
 }));
 
@@ -394,11 +408,57 @@ function alertAppliesToRoute(alert = {}) {
 //
 // Per-direction store: cacheKey → array of sailing Time objects from last fetch
 const previousSailingsStore = new Map();
+const MIDNIGHT_CARRY_OVER_WINDOW_MS = 90 * 60 * 1000;
 
 // Extract the departure epoch ms from a WSF Times entry
 function parseDepartureMs(timeEntry) {
   const m = timeEntry?.DepartingTime?.match(/\/Date\((\d+)/);
   return m ? parseInt(m[1], 10) : null;
+}
+
+function timeZoneOffsetMs(ms, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(ms));
+  const byType = Object.fromEntries(parts.map(p => [p.type, p.value]));
+  const localAsUtc = Date.UTC(
+    Number(byType.year),
+    Number(byType.month) - 1,
+    Number(byType.day),
+    Number(byType.hour),
+    Number(byType.minute),
+    Number(byType.second)
+  );
+  return localAsUtc - ms;
+}
+
+function startOfLocalDayMs(ms, timeZone = 'America/Los_Angeles') {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date(ms));
+  const byType = Object.fromEntries(parts.map(p => [p.type, p.value]));
+  const localDayAsUtc = Date.UTC(Number(byType.year), Number(byType.month) - 1, Number(byType.day));
+  return localDayAsUtc - timeZoneOffsetMs(localDayAsUtc, timeZone);
+}
+
+function shouldCarryOverSailing(departureMs, nowMs = Date.now()) {
+  if (departureMs == null || departureMs <= nowMs) return false;
+  const todayStartMs = startOfLocalDayMs(nowMs, CONFIG.TIMEZONE);
+  const tomorrowStartMs = todayStartMs + 24 * 60 * 60 * 1000;
+  const nowIsNearMidnight = nowMs - todayStartMs <= MIDNIGHT_CARRY_OVER_WINDOW_MS;
+  const departureIsNearMidnight = departureMs >= todayStartMs &&
+    departureMs - todayStartMs <= MIDNIGHT_CARRY_OVER_WINDOW_MS;
+  return nowIsNearMidnight && departureIsNearMidnight && departureMs < tomorrowStartMs;
 }
 
 function ferryScheduleEndpoint(cacheKey, fromTerminal, toTerminal) {
@@ -424,7 +484,7 @@ function ferryScheduleEndpoint(cacheKey, fromTerminal, toTerminal) {
       const previous = previousSailingsStore.get(cacheKey) || cachedSailingsFor(cacheKey);
       const carryOver = previous.filter(s => {
         const ms = parseDepartureMs(s);
-        return ms !== null && ms > now && !newMs.has(ms);
+        return shouldCarryOverSailing(ms, now) && !newMs.has(ms);
       });
 
       if (carryOver.length > 0) {
