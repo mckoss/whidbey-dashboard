@@ -45,6 +45,11 @@
       font-size: 1rem;
       margin-bottom: 0.85rem;
     }
+    h2 button.text-link {
+      font-size: inherit;
+      font-weight: inherit;
+      color: inherit;
+    }
     .app-version {
       color: var(--dim);
       font-size: 0.85rem;
@@ -188,9 +193,8 @@
     </header>
 
     <section>
-      <h2>Sign In</h2>
+      <h2><button id="sign-in" class="text-link" type="button">Sign In</button></h2>
       <div class="auth-row">
-        <button id="sign-in" class="text-link" type="button">Sign in</button>
         <span id="signed-in" class="signed-in"></span>
         <button id="sign-out" class="hidden" type="button">Sign out</button>
       </div>

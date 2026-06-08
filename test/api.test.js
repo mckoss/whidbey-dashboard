@@ -429,7 +429,7 @@ test('admin page — serves Google-authenticated admin surface', async () => {
   assert.match(html, /accounts\.google\.com\/gsi\/client/, 'loads Google Identity Services');
   assert.doesNotMatch(html, /id="from"/, 'does not expose old email/password-style field');
   assert.match(html, /id="app-version"/, 'shows app version in the admin header');
-  assert.match(html, /id="sign-in"[^>]*>Sign in<\/button>/, 'uses compact text sign-in control');
+  assert.match(html, /<h2><button id="sign-in"[^>]*>Sign In<\/button><\/h2>/, 'uses the sign-in title as the compact sign-in control');
   assert.doesNotMatch(html, /renderButton/, 'does not render Google branded sign-in button');
   assert.match(html, /<textarea[^>]+id="text"/, 'has message text field');
   assert.match(html, /Ferry Alert Parentheticals/, 'has ferry alert parenthetical editor');
