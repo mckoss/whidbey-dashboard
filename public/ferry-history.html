@@ -488,74 +488,89 @@
     function renderDiagram(day, trips, vessels) {
       const bounds = timeBounds(day.date, trips);
       const width = 1040;
-      const height = Math.max(520, Math.round((bounds.endMs - bounds.startMs) / (60 * 60 * 1000)) * 52 + 110);
-      const pad = { top: 52, right: 86, bottom: 34, left: 86 };
-      const leftX = pad.left + 116;
-      const rightX = width - pad.right - 116;
-      const yFor = ms => pad.top + ((ms - bounds.startMs) / (bounds.endMs - bounds.startMs)) * (height - pad.top - pad.bottom);
-      const xForTerminal = name => name === 'Clinton' ? leftX : rightX;
+      const durationMs = bounds.endMs - bounds.startMs;
+      const height = Math.max(520, Math.round((durationMs / 2) / (60 * 60 * 1000)) * 52 + 110);
+      const pad = { top: 70, right: 54, bottom: 34, left: 54 };
       const nowMs = Date.now();
+      const segments = splitTimeline(bounds, width, pad);
 
       const ticks = [];
-      for (let ms = ceilToHour(bounds.startMs); ms <= bounds.endMs; ms += 60 * 60 * 1000) {
-        const y = yFor(ms);
-        const hour = Number(new Intl.DateTimeFormat('en-US', {
-          timeZone: 'America/Los_Angeles',
-          hour: 'numeric',
-          hourCycle: 'h23',
-        }).format(new Date(ms)));
-        const strong = hour % 6 === 0;
-        ticks.push(`<line class="grid" x1="${pad.left}" x2="${width - pad.right}" y1="${y}" y2="${y}" opacity="${strong ? 1 : 0.55}"></line>`);
-        if (strong || ms === ceilToHour(bounds.startMs)) {
-          ticks.push(`<text class="tick-label" x="${pad.left - 14}" y="${y + 4}" text-anchor="end">${formatTimeMs(ms)}</text>`);
+      for (const segment of segments) {
+        for (let ms = ceilToHour(segment.startMs); ms <= segment.endMs; ms += 60 * 60 * 1000) {
+          const y = yForSegment(segment, ms, height, pad);
+          const hour = Number(new Intl.DateTimeFormat('en-US', {
+            timeZone: 'America/Los_Angeles',
+            hour: 'numeric',
+            hourCycle: 'h23',
+          }).format(new Date(ms)));
+          const strong = hour % 6 === 0;
+          ticks.push(`<line class="grid" x1="${segment.panelLeft}" x2="${segment.panelRight}" y1="${y}" y2="${y}" opacity="${strong ? 1 : 0.55}"></line>`);
+          if (strong || ms === ceilToHour(segment.startMs)) {
+            ticks.push(`<text class="tick-label" x="${segment.panelLeft - 12}" y="${y + 4}" text-anchor="end">${formatTimeMs(ms)}</text>`);
+          }
         }
       }
 
       const currentVesselByName = currentVesselMap(day);
-      const lineForTrip = trip => {
+      const lineForTrip = (trip, segment) => {
         const departMs = trip.actualDepartureMs || trip.scheduledDepartureMs;
         const arriveMs = trip.arrivalMs || (departMs + 20 * 60 * 1000);
         if (!departMs || !arriveMs) return '';
-        const fromX = xForTerminal(trip.fromTerminalName);
-        let toX = xForTerminal(trip.toTerminalName);
-        let toY = yFor(arriveMs);
+        let lineEndMs = arriveMs;
+        let lineEndX = xForTerminalInSegment(trip.toTerminalName, segment);
         if (isUnderwayTrip(trip, nowMs)) {
           const currentPoint = currentVesselPoint(
             currentVesselByName.get(trip.vesselName || 'Unknown'),
             trip,
             nowMs,
-            leftX,
-            rightX
+            segment.leftX,
+            segment.rightX
           );
           if (currentPoint) {
-            toX = currentPoint.x;
-            toY = yFor(nowMs);
+            lineEndMs = nowMs;
+            lineEndX = currentPoint.x;
           }
         }
+        const clipStart = Math.max(departMs, segment.startMs);
+        const clipEnd = Math.min(lineEndMs, segment.endMs);
+        if (clipEnd <= clipStart) return '';
+        const fromX = xForTerminalInSegment(trip.fromTerminalName, segment);
+        const duration = Math.max(1, lineEndMs - departMs);
+        const startPct = (clipStart - departMs) / duration;
+        const endPct = (clipEnd - departMs) / duration;
+        const x1 = interpolate(fromX, lineEndX, startPct);
+        const x2 = interpolate(fromX, lineEndX, endPct);
         const scheduleOnly = isScheduleOnlyTrip(trip);
         const color = scheduleOnly ? 'rgba(148, 163, 184, 0.75)' : colorFor(trip.vesselName || 'Unknown', vessels);
-        return `<line class="${tripLineClasses(trip)}" x1="${fromX}" y1="${yFor(departMs)}" x2="${toX}" y2="${toY}" stroke="${color}"></line>`;
+        return `<line class="${tripLineClasses(trip)}" x1="${x1}" y1="${yForSegment(segment, clipStart, height, pad)}" x2="${x2}" y2="${yForSegment(segment, clipEnd, height, pad)}" stroke="${color}"></line>`;
       };
-      const scheduledLines = trips.filter(isScheduleOnlyTrip).map(lineForTrip).join('');
-      const observedLines = trips.filter(trip => !isScheduleOnlyTrip(trip)).map(lineForTrip).join('');
+      const scheduledLines = trips.filter(isScheduleOnlyTrip).flatMap(trip => segments.map(segment => lineForTrip(trip, segment))).join('');
+      const observedLines = trips.filter(trip => !isScheduleOnlyTrip(trip)).flatMap(trip => segments.map(segment => lineForTrip(trip, segment))).join('');
       const lines = scheduledLines + observedLines;
 
-      const vesselDots = currentVesselDots(day, trips, vessels, nowMs, leftX, rightX, yFor);
+      const vesselDots = segments.map(segment =>
+        currentVesselDots(day, trips, vessels, nowMs, segment, ms => yForSegment(segment, ms, height, pad))
+      ).join('');
+
+      const axes = segments.map(segment => `
+          <line class="axis" x1="${segment.leftX}" y1="${pad.top}" x2="${segment.leftX}" y2="${height - pad.bottom}"></line>
+          <line class="axis" x1="${segment.rightX}" y1="${pad.top}" x2="${segment.rightX}" y2="${height - pad.bottom}"></line>
+          <text class="terminal-label" x="${segment.leftX}" y="28" text-anchor="middle">Clinton</text>
+          <text class="terminal-label" x="${segment.rightX}" y="28" text-anchor="middle">Mukilteo</text>
+          <text class="tick-label" x="${(segment.panelLeft + segment.panelRight) / 2}" y="52" text-anchor="middle">${formatTimeMs(segment.startMs)} - ${formatTimeMs(segment.endMs)}</text>
+        `).join('');
 
       diagramEl.innerHTML = `
         <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Ferry time-distance diagram">
           ${ticks.join('')}
-          <line class="axis" x1="${leftX}" y1="${pad.top}" x2="${leftX}" y2="${height - pad.bottom}"></line>
-          <line class="axis" x1="${rightX}" y1="${pad.top}" x2="${rightX}" y2="${height - pad.bottom}"></line>
-          <text class="terminal-label" x="${leftX}" y="28" text-anchor="middle">Clinton</text>
-          <text class="terminal-label" x="${rightX}" y="28" text-anchor="middle">Mukilteo</text>
+          ${axes}
           ${lines}
           ${vesselDots}
         </svg>`;
     }
 
-    function currentVesselDots(day, trips, vessels, nowMs, leftX, rightX, yFor) {
-      if ((day.date || '') !== todayPacific()) return '';
+    function currentVesselDots(day, trips, vessels, nowMs, segment, yFor) {
+      if ((day.date || '') !== todayPacific() || nowMs < segment.startMs || nowMs > segment.endMs) return '';
       const latestByVessel = new Map();
       for (const trip of trips) {
         const name = trip.vesselName || 'Unknown';
@@ -567,10 +582,37 @@
         const name = vessel.vesselName || 'Unknown';
         const trip = latestByVessel.get(name);
         const color = colorFor(name, vessels);
-        const point = currentVesselPoint(vessel, trip, nowMs, leftX, rightX);
+        const point = currentVesselPoint(vessel, trip, nowMs, segment.leftX, segment.rightX);
         if (!point) return '';
         return `<circle class="vessel-dot" cx="${point.x}" cy="${yFor(nowMs)}" r="6" fill="${color}"><title>${escapeHtml(name)}</title></circle>`;
       }).join('');
+    }
+
+    function splitTimeline(bounds, width, pad) {
+      const gap = 58;
+      const panelWidth = (width - pad.left - pad.right - gap) / 2;
+      const midpointMs = bounds.startMs + (bounds.endMs - bounds.startMs) / 2;
+      return [0, 1].map(index => {
+        const panelLeft = pad.left + index * (panelWidth + gap);
+        const panelRight = panelLeft + panelWidth;
+        const terminalInset = Math.min(76, panelWidth * 0.18);
+        return {
+          startMs: index === 0 ? bounds.startMs : midpointMs,
+          endMs: index === 0 ? midpointMs : bounds.endMs,
+          panelLeft,
+          panelRight,
+          leftX: panelLeft + terminalInset,
+          rightX: panelRight - terminalInset,
+        };
+      });
+    }
+
+    function yForSegment(segment, ms, height, pad) {
+      return pad.top + ((ms - segment.startMs) / (segment.endMs - segment.startMs)) * (height - pad.top - pad.bottom);
+    }
+
+    function xForTerminalInSegment(name, segment) {
+      return name === 'Clinton' ? segment.leftX : segment.rightX;
     }
 
     function currentVesselMap(day) {
@@ -788,6 +830,10 @@
 
     function clamp(value, min, max) {
       return Math.max(min, Math.min(max, value));
+    }
+
+    function interpolate(from, to, pct) {
+      return from + (to - from) * pct;
     }
   </script>
 </body>

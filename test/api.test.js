@@ -618,11 +618,16 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /rgba\(148, 163, 184, 0\.75\)/, 'renders schedule-only trips in neutral gray instead of vessel colors');
   assert.match(html, /observed/, 'renders observed trips as emphasized history lines');
   assert.match(html, /observed \/.*schedule-only/, 'summarizes observed trips separately from schedule-only context');
+  assert.match(html, /function splitTimeline/, 'splits the time-distance chart into two equal timeline columns');
+  assert.match(html, /midpointMs = bounds\.startMs \+ \(bounds\.endMs - bounds\.startMs\) \/ 2/, 'splits at the timeline midpoint rather than hard-coded noon');
+  assert.match(html, /clipStart = Math\.max\(departMs, segment\.startMs\)/, 'clips trip lines at the start of each half-day segment');
+  assert.match(html, /clipEnd = Math\.min\(lineEndMs, segment\.endMs\)/, 'clips trip lines at the end of each half-day segment');
+  assert.match(html, /segments\.map\(segment => lineForTrip\(trip, segment\)\)/, 'renders each trip separately inside each time segment');
   assert.match(html, /function terminalXForId/, 'maps docked current vessels by terminal id');
   assert.doesNotMatch(html, /departingTerminalId === 5 \|\| vessel\.arrivingTerminalId === 5/, 'does not place docked vessels by either endpoint');
   assert.match(html, /function currentVesselPoint/, 'shares current vessel placement for dots and underway trail lines');
   assert.match(html, /isUnderwayTrip\(trip, nowMs\)/, 'shortens underway observed trip lines to the live vessel point');
-  assert.match(html, /toY = yFor\(nowMs\)/, 'underway trail stops at the current report time');
+  assert.match(html, /lineEndMs = nowMs/, 'underway trail stops at the current report time');
 
   const scriptMatch = html.match(/<script[^>]*>([\s\S]*?)<\/script>/);
   assert.ok(scriptMatch, 'found ferry history script block');
