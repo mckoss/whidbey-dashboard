@@ -249,16 +249,24 @@ app.get('/api/ferry/alerts', cachedEndpoint('ferry_alerts', 30 * 1000, async () 
   const r = await fetchWithRetry(url, { headers: { Accept: 'application/json' } });
   const data = await r.json();
   const alerts = (Array.isArray(data) ? data : [])
-    .filter(a => a.AllRoutesFlag || (a.AffectedRouteIDs || []).includes(CONFIG.WSF_ROUTE_ID))
+    .filter(alertAppliesToRoute)
     .sort((a, b) => (a.SortSeq ?? 9999) - (b.SortSeq ?? 9999))
     .map(a => ({
       id: a.BulletinID,
       title: stripHtml(a.AlertFullTitle || a.RouteAlertText || a.AlertDescription || ''),
       text: stripHtml(a.RouteAlertText || a.DisruptionDescription || a.BulletinText || a.AlertFullText || ''),
       publishedAt: a.PublishDate || null,
+      affectedRouteIds: Array.isArray(a.AffectedRouteIDs) ? a.AffectedRouteIDs : [],
+      allRoutes: Boolean(a.AllRoutesFlag),
     }));
   return { alerts };
 }));
+
+function alertAppliesToRoute(alert = {}) {
+  if (alert.AllRoutesFlag) return true;
+  const routeIds = Array.isArray(alert.AffectedRouteIDs) ? alert.AffectedRouteIDs : [];
+  return routeIds.includes(CONFIG.WSF_ROUTE_ID);
+}
 //
 // Midnight carry-over fix (issue #18):
 // After midnight, scheduletoday flips to the new day and drops late-night
