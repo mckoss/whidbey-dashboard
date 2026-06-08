@@ -771,6 +771,8 @@ test('late ferry logic — inbound arrival enforces 15 minute turn-around and re
   const card = context.__lateTest.sailingCard(sailing, [sailing, later], {}, vesselMap, 5);
   assert.match(card, /sail-time-est/, 'renders estimated time');
   assert.match(card, /sail-time-sched">\(was /, 'renders original time as parenthetical below');
+  assert.match(card, /sail-vessel">Test Boat<\/div>/, 'keeps the matched vessel name on delayed card');
+  assert.doesNotMatch(card, /Delayed/, 'does not render redundant delayed status text');
 });
 
 test('late ferry logic — current vessel position does not resurrect old morning sailings', async () => {
