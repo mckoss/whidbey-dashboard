@@ -30,6 +30,18 @@ restart.sh         — Kill old server, start new one on :3000
 
 ## Design History & Decisions
 
+### Product Judgment Before Code Completeness
+
+This is a glanceable ambient dashboard, not a generic web page. Passing tests and matching CSS selectors is not enough. Before calling a UI change done, evaluate whether the result makes sense to someone reading the TV from across the room.
+
+For every visible UI change:
+- Check semantic meaning, not just consistency. Color, motion, size, and emphasis must communicate the right thing.
+- Prefer existing design tokens and page patterns before adding new visual language.
+- Treat red as a local alarm state. It should apply only to the specific item that is dangerous or disrupted, not to nearby informational content.
+- Treat yellow as warning/informational attention. Ordinary WSF notices, all-routes policy messages, and non-disruption updates should stay yellow unless their own text indicates cancellation/outage/mechanical/one-boat disruption.
+- Test mixed-content cases when severity can vary within one component. Example: one ferry cancellation plus one all-routes pets notice must render the cancellation red and the pets notice yellow.
+- Ask whether a technically neat simplification changes the product meaning. A single global severity class may be simpler, but it is wrong when unrelated messages need different meanings.
+
 ### Layout (fit-to-TV)
 
 The dashboard went through several rounds of shrinking to fit a TV without scrolling. Padding, gaps, font sizes, and section heights were all reduced iteratively. Key constraints:

@@ -306,9 +306,10 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
 
   const alerts = [
     {
-      title: 'Muk/Clin - Both vessels are 20 minutes behind schedule.',
-      text: 'Customers should expect delays through the evening commute.',
+      title: 'Muk/Clin - One vessel canceled',
+      text: 'The 8:30 PM sailing is canceled due to mechanical issues.',
     },
+    { title: 'All Routes - Pets', text: 'New pet rules effective May 20.' },
     { title: 'Muk/Clin - Low tide warning', text: 'Loading may be restricted.' },
     { title: 'Muk/Clin - Terminal status', text: '2 Hour Wait for Drivers' },
     { title: 'Muk/Clin - General notice', text: 'Good morning. How are you doing?' },
@@ -324,7 +325,11 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
   assert.match(ticker, /Good morning\. How are you doing\?/, 'renders general WSF notice text');
   assert.match(ticker, new RegExp(`--ticker-duration: ${expectedTickerDuration}s`), 'sets ticker speed from visible text at 15 cps');
   assert.equal((ticker.match(/ferry-alert-copy/g) || []).length, 2, 'duplicates content so the scroll wraps');
+  assert.doesNotMatch(ticker, /ferry-alert-ticker danger/, 'mixed ticker does not make every alert red');
+  assert.match(ticker, /ferry-alert-item danger[\s\S]*One vessel canceled/, 'disruptive alert item is red');
+  assert.match(ticker, /ferry-alert-item(?! danger)[^>]*><span class="ferry-alert-title">All Routes - Pets/, 'informational all-routes item stays yellow');
   assert.match(html, /\.ferry-alert-item\s*\{[\s\S]*?color:\s*inherit;/, 'alert item text inherits ticker severity color');
+  assert.match(html, /\.ferry-alert-item\.danger\s*\{[\s\S]*?color:\s*var\(--danger\);/, 'only disruptive alert items use danger red');
   assert.match(html, /\.ferry-alert-title\s*\{[\s\S]*?color:\s*inherit;/, 'alert titles use the ticker severity color');
   assert.match(html, /\.ferry-alert-detail\s*\{[\s\S]*?color:\s*inherit;/, 'alert details use the same severity color as titles');
 });
