@@ -45,6 +45,12 @@
       font-size: 1rem;
       margin-bottom: 0.85rem;
     }
+    .app-version {
+      color: var(--dim);
+      font-size: 0.85rem;
+      font-weight: 500;
+      margin-left: 0.35rem;
+    }
     a {
       color: var(--accent);
       text-decoration: none;
@@ -100,6 +106,18 @@
       background: rgba(248,113,113,0.13);
       color: #fecaca;
       flex: 0 0 auto;
+    }
+    button.text-link {
+      border: 0;
+      background: transparent;
+      color: var(--accent);
+      padding: 0;
+      text-decoration: underline;
+      text-underline-offset: 0.18em;
+    }
+    button.text-link:hover:not(:disabled) {
+      background: transparent;
+      color: #7dd3fc;
     }
     .field {
       margin-bottom: 0.85rem;
@@ -165,14 +183,14 @@
 <body>
   <main>
     <header>
-      <h1>Admin</h1>
+      <h1>Admin <span id="app-version" class="app-version"></span></h1>
       <a href="/">Dashboard</a>
     </header>
 
     <section>
       <h2>Sign In</h2>
       <div class="auth-row">
-        <div id="google-signin"></div>
+        <button id="sign-in" class="text-link" type="button">Sign in</button>
         <span id="signed-in" class="signed-in"></span>
         <button id="sign-out" class="hidden" type="button">Sign out</button>
       </div>
@@ -243,10 +261,11 @@
     const alertContextStatusEl = document.getElementById('alert-context-status');
     const authStatusEl = document.getElementById('auth-status');
     const signedInEl = document.getElementById('signed-in');
+    const signInButton = document.getElementById('sign-in');
     const signOutButton = document.getElementById('sign-out');
     const messagesPanel = document.getElementById('messages-panel');
     const alertContextPanel = document.getElementById('alert-context-panel');
-    const signInContainer = document.getElementById('google-signin');
+    const versionEl = document.getElementById('app-version');
 
     let googleCredential = '';
     let signedInEmail = '';
@@ -258,17 +277,6 @@
         .replaceAll('>', '&gt;')
         .replaceAll('"', '&quot;')
         .replaceAll("'", '&#39;');
-    }
-
-    function decodeJwtPayload(token) {
-      try {
-        const raw = token.split('.')[1] || '';
-        const payload = raw.padEnd(raw.length + ((4 - (raw.length % 4)) % 4), '=');
-        const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
-        return JSON.parse(decodeURIComponent(escape(json)));
-      } catch {
-        return {};
-      }
     }
 
     function setStatus(message, error = false) {
@@ -296,15 +304,14 @@
       row.querySelector('.item-view')?.classList.remove('hidden');
     }
 
-    function setSignedIn(credential) {
-      googleCredential = credential || '';
-      const payload = decodeJwtPayload(googleCredential);
-      signedInEmail = payload.email || '';
+    function setSignedInEmail(email) {
+      googleCredential = '';
+      signedInEmail = email || '';
       signedInEl.textContent = signedInEmail ? `Signed in as ${signedInEmail}` : 'Signed in';
       messagesPanel.classList.remove('hidden');
       alertContextPanel.classList.remove('hidden');
       signOutButton.classList.remove('hidden');
-      signInContainer.classList.add('hidden');
+      signInButton.classList.add('hidden');
       setAuthStatus('');
     }
 
@@ -315,17 +322,38 @@
       messagesPanel.classList.add('hidden');
       alertContextPanel.classList.add('hidden');
       signOutButton.classList.add('hidden');
-      signInContainer.classList.remove('hidden');
+      signInButton.classList.remove('hidden');
       setAuthStatus(message);
     }
 
     async function jsonFetch(url, options = {}) {
       const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
       if (googleCredential) headers.Authorization = `Bearer ${googleCredential}`;
-      const res = await fetch(url, { ...options, headers });
+      const res = await fetch(url, { ...options, credentials: 'same-origin', headers });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       return data;
+    }
+
+    async function createAdminSession(credential) {
+      googleCredential = credential || '';
+      const data = await jsonFetch('/api/admin/session', { method: 'POST' });
+      googleCredential = '';
+      setSignedInEmail(data.admin?.email || '');
+      return data;
+    }
+
+    async function restoreAdminSession() {
+      try {
+        const data = await jsonFetch('/api/admin/session');
+        if (data.signedIn) {
+          setSignedInEmail(data.admin?.email || '');
+          return true;
+        }
+      } catch {
+        setSignedOut('');
+      }
+      return false;
     }
 
     function renderMessages(messages = []) {
@@ -338,17 +366,17 @@
           <div class="item-view">
             <div class="message-text">${escapeHtml(message.text)}</div>
             <div class="actions">
-              <button class="edit" type="button" ${googleCredential ? '' : 'disabled'}>Edit</button>
-              <button class="delete" type="button" ${googleCredential ? '' : 'disabled'}>Delete</button>
+              <button class="edit" type="button" ${signedInEmail ? '' : 'disabled'}>Edit</button>
+              <button class="delete" type="button" ${signedInEmail ? '' : 'disabled'}>Delete</button>
             </div>
           </div>
           <form class="message-edit edit-form hidden">
             <div class="field">
               <label for="message-edit-${escapeHtml(message.id)}">Message</label>
-              <textarea id="message-edit-${escapeHtml(message.id)}" name="text" maxlength="280" ${googleCredential ? '' : 'disabled'} required>${escapeHtml(message.text)}</textarea>
+              <textarea id="message-edit-${escapeHtml(message.id)}" name="text" maxlength="280" ${signedInEmail ? '' : 'disabled'} required>${escapeHtml(message.text)}</textarea>
             </div>
             <div class="actions">
-              <button type="submit" ${googleCredential ? '' : 'disabled'}>Save</button>
+              <button type="submit" ${signedInEmail ? '' : 'disabled'}>Save</button>
               <button class="cancel" type="button">Cancel</button>
             </div>
           </form>
@@ -378,25 +406,25 @@
               ${context.color ? `<div class="context-meta">Color: ${escapeHtml(context.color)}</div>` : ''}
             </div>
             <div class="actions">
-              <button class="edit" type="button" ${googleCredential ? '' : 'disabled'}>Edit</button>
-              <button class="delete" type="button" ${googleCredential ? '' : 'disabled'}>Delete</button>
+              <button class="edit" type="button" ${signedInEmail ? '' : 'disabled'}>Edit</button>
+              <button class="delete" type="button" ${signedInEmail ? '' : 'disabled'}>Delete</button>
             </div>
           </div>
           <form class="context-edit edit-form hidden">
             <div class="field">
               <label for="context-query-${escapeHtml(context.id)}">Query substring</label>
-              <input id="context-query-${escapeHtml(context.id)}" name="query" maxlength="160" value="${escapeHtml(context.query)}" ${googleCredential ? '' : 'disabled'} required>
+              <input id="context-query-${escapeHtml(context.id)}" name="query" maxlength="160" value="${escapeHtml(context.query)}" ${signedInEmail ? '' : 'disabled'} required>
             </div>
             <div class="field">
               <label for="context-info-${escapeHtml(context.id)}">Parenthetical text</label>
-              <textarea id="context-info-${escapeHtml(context.id)}" name="additionalInfo" maxlength="220" ${googleCredential ? '' : 'disabled'} required>${escapeHtml(context.additionalInfo)}</textarea>
+              <textarea id="context-info-${escapeHtml(context.id)}" name="additionalInfo" maxlength="220" ${signedInEmail ? '' : 'disabled'} required>${escapeHtml(context.additionalInfo)}</textarea>
             </div>
             <div class="field">
               <label for="context-color-${escapeHtml(context.id)}">Color</label>
-              <input id="context-color-${escapeHtml(context.id)}" name="color" maxlength="80" value="${escapeHtml(context.color || '')}" placeholder="Any CSS color" ${googleCredential ? '' : 'disabled'}>
+              <input id="context-color-${escapeHtml(context.id)}" name="color" maxlength="80" value="${escapeHtml(context.color || '')}" placeholder="Any CSS color" ${signedInEmail ? '' : 'disabled'}>
             </div>
             <div class="actions">
-              <button type="submit" ${googleCredential ? '' : 'disabled'}>Save</button>
+              <button type="submit" ${signedInEmail ? '' : 'disabled'}>Save</button>
               <button class="cancel" type="button">Cancel</button>
             </div>
           </form>
@@ -415,8 +443,14 @@
 
     async function initGoogleSignIn() {
       const cfg = await jsonFetch('/api/config');
+      versionEl.textContent = cfg.version ? `v${cfg.version}` : '';
+      const restored = await restoreAdminSession();
+      if (restored) {
+        await loadMessages();
+        await loadAlertContexts();
+      }
       if (!cfg.googleClientId) {
-        setSignedOut('Google Sign-In is not configured yet.');
+        if (!restored) setSignedOut('Google Sign-In is not configured yet.');
         return;
       }
       const start = () => {
@@ -426,25 +460,39 @@
         }
         google.accounts.id.initialize({
           client_id: cfg.googleClientId,
-          callback: response => {
-            setSignedIn(response.credential);
-            loadMessages();
-            loadAlertContexts();
+          callback: async response => {
+            setAuthStatus('Signing in...');
+            try {
+              await createAdminSession(response.credential);
+              await loadMessages();
+              await loadAlertContexts();
+            } catch (e) {
+              googleCredential = '';
+              setSignedOut(e.message);
+            }
           },
         });
-        google.accounts.id.renderButton(signInContainer, {
-          theme: 'outline',
-          size: 'large',
-          text: 'signin_with',
-          shape: 'rectangular',
-        });
+        signInButton.disabled = false;
       };
       start();
     }
 
+    signInButton.addEventListener('click', () => {
+      if (!window.google?.accounts?.id) {
+        setAuthStatus('Google Sign-In is still loading.', true);
+        return;
+      }
+      setAuthStatus('Opening sign-in...');
+      google.accounts.id.prompt(notification => {
+        if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+          setAuthStatus('Google could not open the sign-in prompt. Refresh and try again.', true);
+        }
+      });
+    });
+
     form.addEventListener('submit', async event => {
       event.preventDefault();
-      if (!googleCredential) {
+      if (!signedInEmail) {
         setStatus('Sign in with Google first.', true);
         return;
       }
@@ -492,7 +540,7 @@
       const form = event.target.closest('.message-edit');
       if (!form) return;
       event.preventDefault();
-      if (!googleCredential) {
+      if (!signedInEmail) {
         setStatus('Sign in with Google first.', true);
         return;
       }
@@ -513,7 +561,7 @@
 
     alertContextForm.addEventListener('submit', async event => {
       event.preventDefault();
-      if (!googleCredential) {
+      if (!signedInEmail) {
         setAlertContextStatus('Sign in with Google first.', true);
         return;
       }
@@ -541,7 +589,7 @@
       const form = event.target.closest('.context-edit');
       if (!form) return;
       event.preventDefault();
-      if (!googleCredential) {
+      if (!signedInEmail) {
         setAlertContextStatus('Sign in with Google first.', true);
         return;
       }
@@ -590,11 +638,14 @@
       }
     });
 
-    signOutButton.addEventListener('click', () => {
-      google.accounts.id.disableAutoSelect();
+    signOutButton.addEventListener('click', async () => {
+      try {
+        await jsonFetch('/api/admin/session', { method: 'DELETE' });
+      } catch {}
+      window.google?.accounts?.id?.disableAutoSelect();
       setSignedOut('Signed out.');
-      loadMessages();
-      loadAlertContexts();
+      await loadMessages();
+      await loadAlertContexts();
     });
 
     loadMessages();

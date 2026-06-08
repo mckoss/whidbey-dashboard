@@ -34,6 +34,7 @@ before(async () => {
       'valid-admin-token': 'mike@example.com',
       'unauthorized-admin-token': 'someone@example.com',
     },
+    sessionSecret: 'test-session-secret-for-admin-cookies',
   }, null, 2));
 
   serverProcess = spawn('node', [join(__dirname, '../server.js')], {
@@ -80,9 +81,10 @@ async function getJsonAllowError(path) {
   return res.json();
 }
 
-async function sendJson(path, method, body, token = '') {
+async function sendJson(path, method, body, token = '', cookie = '') {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
+  if (cookie) headers.Cookie = cookie;
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers,
@@ -300,6 +302,44 @@ test('messages endpoint — Google-authorized admins can add and delete crawl me
   assert.deepEqual(deleted.data.messages, [], 'returns remaining messages');
 });
 
+test('admin session endpoint — persists Google admin auth in a 30-day HttpOnly cookie', async () => {
+  const unauthenticated = await sendJson('/api/admin/session', 'POST', {});
+  assert.equal(unauthenticated.res.status, 401, 'rejects session creation without Google credential');
+
+  const unauthorized = await sendJson('/api/admin/session', 'POST', {}, 'unauthorized-admin-token');
+  assert.equal(unauthorized.res.status, 403, 'rejects non-admin Google credential');
+
+  const created = await sendJson('/api/admin/session', 'POST', {}, 'valid-admin-token');
+  assert.equal(created.res.status, 201, 'creates session for authorized admin');
+  assert.equal(created.data.signedIn, true, 'session response is signed in');
+  assert.equal(created.data.admin.email, 'mike@example.com', 'returns signed-in admin email');
+
+  const setCookie = created.res.headers.get('set-cookie') || '';
+  assert.match(setCookie, /whidbey_admin_session=/, 'sets admin session cookie');
+  assert.match(setCookie, /HttpOnly/i, 'session cookie is HttpOnly');
+  assert.match(setCookie, /SameSite=Lax/i, 'session cookie is SameSite=Lax');
+  assert.match(setCookie, /Max-Age=2592000/i, 'session cookie lasts 30 days');
+
+  const cookie = setCookie.split(';')[0];
+  const restored = await fetch(`${BASE}/api/admin/session`, { headers: { Cookie: cookie } });
+  assert.equal(restored.status, 200, 'restores session from cookie');
+  const restoredData = await restored.json();
+  assert.equal(restoredData.signedIn, true, 'restored session is signed in');
+  assert.equal(restoredData.admin.email, 'mike@example.com', 'restored session includes admin email');
+
+  const createdMessage = await sendJson('/api/messages', 'POST', {
+    text: 'Cookie-backed message',
+  }, '', cookie);
+  assert.equal(createdMessage.res.status, 201, 'admin write works with session cookie and no bearer token');
+
+  const deletedMessage = await sendJson(`/api/messages/${createdMessage.data.message.id}`, 'DELETE', {}, '', cookie);
+  assert.equal(deletedMessage.res.status, 200, 'admin delete works with session cookie and no bearer token');
+
+  const signedOut = await sendJson('/api/admin/session', 'DELETE', {}, '', cookie);
+  assert.equal(signedOut.res.status, 200, 'sign out endpoint succeeds');
+  assert.match(signedOut.res.headers.get('set-cookie') || '', /whidbey_admin_session=;/, 'sign out clears session cookie in the browser');
+});
+
 test('alert-contexts endpoint — Google-authorized admins can manage ferry alert parentheticals', async () => {
   const defaults = await getJson('/api/alert-contexts');
   assert.ok(Array.isArray(defaults.contexts), 'lists alert contexts');
@@ -388,6 +428,9 @@ test('admin page — serves Google-authenticated admin surface', async () => {
   assert.match(html, /Whidbey Dashboard Admin/, 'page is named admin');
   assert.match(html, /accounts\.google\.com\/gsi\/client/, 'loads Google Identity Services');
   assert.doesNotMatch(html, /id="from"/, 'does not expose old email/password-style field');
+  assert.match(html, /id="app-version"/, 'shows app version in the admin header');
+  assert.match(html, /id="sign-in"[^>]*>Sign in<\/button>/, 'uses compact text sign-in control');
+  assert.doesNotMatch(html, /renderButton/, 'does not render Google branded sign-in button');
   assert.match(html, /<textarea[^>]+id="text"/, 'has message text field');
   assert.match(html, /Ferry Alert Parentheticals/, 'has ferry alert parenthetical editor');
   assert.match(html, /id="alert-query"/, 'has alert query field');
@@ -399,7 +442,13 @@ test('admin page — serves Google-authenticated admin surface', async () => {
   assert.match(html, /Edit/, 'has edit controls');
   assert.match(html, /\/api\/messages/, 'uses user message API');
   assert.match(html, /\/api\/alert-contexts/, 'uses alert context API');
+  assert.match(html, /\/api\/admin\/session/, 'uses cookie-backed admin session API');
+  assert.match(html, /credentials:\s*'same-origin'/, 'sends same-origin session cookies with admin requests');
   assert.match(html, /h1,\s*h2\s*\{[\s\S]*?color:\s*var\(--accent\);/, 'admin headings use dashboard heading blue');
+
+  const scriptMatch = html.match(/<script[^>]*>([\s\S]*?)<\/script>/);
+  assert.ok(scriptMatch, 'found admin script block');
+  assert.doesNotThrow(() => new Function(scriptMatch[1]), 'admin inline JS should parse without syntax errors');
 
   const old = await fetch(`${BASE}/message`);
   assert.equal(old.status, 404, 'old /message link is intentionally gone');
@@ -424,6 +473,7 @@ test('config example — documents runtime and Google admin auth configuration',
   assert.equal(typeof config.wsfRouteId, 'number', 'example has route ID');
   assert.ok('gaMeasurementId' in config, 'example documents optional Google Analytics ID');
   assert.ok(config.googleClientId, 'example has googleClientId placeholder');
+  assert.ok(config.sessionSecret, 'example has sessionSecret placeholder');
   assert.ok(Array.isArray(config.adminUsers), 'example has adminUsers array');
   assert.ok(config.adminUsers.length > 0, 'example includes at least one admin email placeholder');
 });

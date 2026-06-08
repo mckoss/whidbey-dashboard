@@ -43,6 +43,7 @@ Runtime configuration lives in ignored `config.json`. Copy
   "wsfRouteId": 7,
   "gaMeasurementId": null,
   "googleClientId": "your-google-oauth-client-id.apps.googleusercontent.com",
+  "sessionSecret": "replace-with-a-long-random-session-secret",
   "adminUsers": [
     "mike@example.com"
   ]
@@ -79,6 +80,11 @@ CSS color text such as `orange`, `#f59e0b`, `rgb(245 158 11)`, `oklch(80% 0.14
 
 Admin auth uses Google Identity Services. Create a Google OAuth web client and
 put the public client ID plus the approved `adminUsers` list in `config.json`.
+After Google sign-in, the server sets a 30-day `HttpOnly`, `Secure`,
+`SameSite=Lax` admin session cookie so `/admin` stays signed in across page
+reloads and deploys. Set a stable, long random `sessionSecret` in `config.json`
+or Railway `CONFIG_JSON`; changing or omitting that secret logs admins out on
+server restart.
 
 ### Google OAuth Client Setup
 
@@ -119,6 +125,7 @@ the server verifies that token against the configured client ID.
 ```json
 {
   "googleClientId": "your-client-id.apps.googleusercontent.com",
+  "sessionSecret": "replace-with-a-long-random-session-secret",
   "adminUsers": [
     "mike@example.com"
   ]

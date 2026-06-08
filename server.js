@@ -3,7 +3,7 @@ import fetch from 'node-fetch';
 import { OAuth2Client } from 'google-auth-library';
 import morgan from 'morgan';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { randomUUID } from 'crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
 
@@ -17,6 +17,7 @@ const pkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8'));
 const app = express();
 const rootConfig = loadRootConfig();
 const dataDir = resolve(configValue('dataDir', 'data'));
+const configuredSessionSecret = String(configValue('sessionSecret', '')).trim();
 const CONFIG = {
   configFile: CONFIG_FILE,
   port: Number(configValue('port', 3000)),
@@ -29,6 +30,8 @@ const CONFIG = {
   googleClientId: String(configValue('googleClientId', '')).trim(),
   adminUsers: parseAuthorizedUsers(configValue('adminUsers', [])),
   adminTestTokens: parseJsonObject(configValue('adminTestTokens', {})),
+  sessionSecret: configuredSessionSecret || randomUUID(),
+  sessionSecretConfigured: Boolean(configuredSessionSecret),
   noaaStation: String(configValue('noaaStation', '9445526')),
   lat: Number(configValue('lat', 47.9748)),
   lon: Number(configValue('lon', -122.3534)),
@@ -37,6 +40,13 @@ const CONFIG = {
   wsfRouteId: Number(configValue('wsfRouteId', 7)),
   timezone: String(configValue('timezone', 'America/Los_Angeles')),
 };
+
+const ADMIN_SESSION_COOKIE = 'whidbey_admin_session';
+const ADMIN_SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
+
+if (!CONFIG.sessionSecretConfigured && process.env.NODE_ENV !== 'test') {
+  console.warn('[auth] sessionSecret is not configured; admin sessions will not survive server restarts or deploys.');
+}
 
 // ── Request logging (stdout → Railway Log Explorer) ───────────────────
 app.use(morgan('combined'));
@@ -165,6 +175,97 @@ function bearerToken(req) {
   return match ? match[1].trim() : '';
 }
 
+function parseCookies(req) {
+  const header = req.get('cookie') || '';
+  return Object.fromEntries(header
+    .split(';')
+    .map(part => part.trim())
+    .filter(Boolean)
+    .map(part => {
+      const index = part.indexOf('=');
+      if (index === -1) return [part, ''];
+      const key = part.slice(0, index);
+      const value = part.slice(index + 1);
+      try {
+        return [key, decodeURIComponent(value)];
+      } catch {
+        return [key, value];
+      }
+    }));
+}
+
+function signSessionPayload(payload) {
+  return createHmac('sha256', CONFIG.sessionSecret)
+    .update(payload)
+    .digest('base64url');
+}
+
+function createAdminSession(admin) {
+  const expiresAt = Date.now() + ADMIN_SESSION_DURATION_MS;
+  const payload = Buffer.from(JSON.stringify({
+    email: admin.email,
+    exp: expiresAt,
+  })).toString('base64url');
+  return {
+    cookieValue: `${payload}.${signSessionPayload(payload)}`,
+    expiresAt,
+  };
+}
+
+function verifyAdminSessionCookie(req) {
+  const value = parseCookies(req)[ADMIN_SESSION_COOKIE] || '';
+  const [payload, signature] = value.split('.');
+  if (!payload || !signature) return null;
+
+  const expected = signSessionPayload(payload);
+  const actualBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (actualBuffer.length !== expectedBuffer.length || !timingSafeEqual(actualBuffer, expectedBuffer)) {
+    return null;
+  }
+
+  try {
+    const session = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    const email = String(session.email || '').trim().toLowerCase();
+    if (!email || !session.exp || Date.now() > Number(session.exp)) return null;
+    const users = adminUsers();
+    if (users.size === 0 || !users.has(email)) return null;
+    return { email, emailVerified: true, expiresAt: Number(session.exp) };
+  } catch {
+    return null;
+  }
+}
+
+function adminCookieOptions(req) {
+  return {
+    httpOnly: true,
+    secure: req.secure || req.get('x-forwarded-proto') === 'https',
+    sameSite: 'lax',
+    maxAge: ADMIN_SESSION_DURATION_MS,
+    path: '/',
+  };
+}
+
+function setAdminSessionCookie(req, res, admin) {
+  const session = createAdminSession(admin);
+  res.cookie(ADMIN_SESSION_COOKIE, session.cookieValue, adminCookieOptions(req));
+  return session;
+}
+
+function clearAdminSessionCookie(req, res) {
+  res.clearCookie(ADMIN_SESSION_COOKIE, {
+    httpOnly: true,
+    secure: req.secure || req.get('x-forwarded-proto') === 'https',
+    sameSite: 'lax',
+    path: '/',
+  });
+}
+
+function assertAuthorizedAdmin(admin) {
+  const users = adminUsers();
+  return admin?.emailVerified && admin.email && users.size > 0 && users.has(admin.email);
+}
+
 async function verifyAdminToken(token) {
   const testTokens = parseAdminTestTokens();
   if (testTokens[token]) {
@@ -189,16 +290,22 @@ async function verifyAdminToken(token) {
 
 async function requireAdmin(req, res, next) {
   try {
+    const sessionAdmin = verifyAdminSessionCookie(req);
+    if (sessionAdmin) {
+      req.admin = sessionAdmin;
+      return next();
+    }
+
     const token = bearerToken(req);
     if (!token) return res.status(401).json({ error: 'Google sign-in is required.' });
 
     const admin = await verifyAdminToken(token);
-    const users = adminUsers();
-    if (!admin.emailVerified || !admin.email || users.size === 0 || !users.has(admin.email)) {
+    if (!assertAuthorizedAdmin(admin)) {
       return res.status(403).json({ error: 'Not authorized to manage crawl messages.' });
     }
 
     req.admin = admin;
+    setAdminSessionCookie(req, res, admin);
     next();
   } catch (e) {
     const statusCode = e.statusCode || 401;
@@ -347,6 +454,43 @@ app.use(express.static(join(__dirname, 'public')));
 
 app.get('/admin', (req, res) => {
   res.sendFile(join(__dirname, 'public', 'admin.html'));
+});
+
+app.get('/api/admin/session', (req, res) => {
+  const admin = verifyAdminSessionCookie(req);
+  if (!admin) return res.status(401).json({ signedIn: false });
+  res.json({
+    signedIn: true,
+    admin: { email: admin.email },
+    expiresAt: new Date(admin.expiresAt).toISOString(),
+  });
+});
+
+app.post('/api/admin/session', async (req, res) => {
+  try {
+    const token = bearerToken(req);
+    if (!token) return res.status(401).json({ error: 'Google sign-in is required.' });
+
+    const admin = await verifyAdminToken(token);
+    if (!assertAuthorizedAdmin(admin)) {
+      return res.status(403).json({ error: 'Not authorized to manage crawl messages.' });
+    }
+
+    const session = setAdminSessionCookie(req, res, admin);
+    res.status(201).json({
+      signedIn: true,
+      admin: { email: admin.email },
+      expiresAt: new Date(session.expiresAt).toISOString(),
+    });
+  } catch (e) {
+    const statusCode = e.statusCode || 401;
+    res.status(statusCode).json({ error: e.message || 'Google sign-in failed.' });
+  }
+});
+
+app.delete('/api/admin/session', (req, res) => {
+  clearAdminSessionCookie(req, res);
+  res.json({ ok: true });
 });
 
 app.get('/api/messages', (req, res) => {
