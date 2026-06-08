@@ -9,7 +9,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
 import vm from 'node:vm';
@@ -296,6 +296,57 @@ test('ferry/history endpoint — returns a dated trip log shell and validates da
   assert.match(badBody.error, /YYYY-MM-DD/, 'explains date format');
 });
 
+test('ferry/history endpoint — ignores impossible early actual departures from stale vessel matches', async () => {
+  const historyDate = '2026-06-08';
+  const scheduledDepartureMs = Date.UTC(2026, 5, 8, 20, 0);
+  const staleActualDepartureMs = scheduledDepartureMs - 55 * 60 * 1000;
+  const historyDir = join(dataDir, 'ferry-history');
+  await mkdir(historyDir, { recursive: true });
+  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+    date: historyDate,
+    generatedAt: '2026-06-08T20:30:00.000Z',
+    trips: [{
+      id: `${historyDate}:clinton-to-mukilteo:${scheduledDepartureMs}`,
+      date: historyDate,
+      direction: 'clinton-to-mukilteo',
+      fromTerminalId: 5,
+      toTerminalId: 14,
+      fromTerminalName: 'Clinton',
+      toTerminalName: 'Mukilteo',
+      scheduledDepartureMs,
+      actualDepartureMs: staleActualDepartureMs,
+      arrivalMs: scheduledDepartureMs + 5 * 60 * 1000,
+      arrivalBasis: 'observed-at-dock',
+      vesselName: 'Tokitae',
+      status: 'arrived',
+      observations: [],
+    }, {
+      id: `${historyDate}:mukilteo-to-clinton:${scheduledDepartureMs}`,
+      date: historyDate,
+      direction: 'mukilteo-to-clinton',
+      fromTerminalId: 14,
+      toTerminalId: 5,
+      fromTerminalName: 'Mukilteo',
+      toTerminalName: 'Clinton',
+      scheduledDepartureMs,
+      actualDepartureMs: scheduledDepartureMs + 2 * 60 * 1000,
+      arrivalMs: scheduledDepartureMs + 20 * 60 * 1000,
+      arrivalBasis: 'observed-at-dock',
+      vesselName: 'Suquamish',
+      status: 'in-progress',
+      observations: [],
+    }],
+    currentVessels: [],
+  }, null, 2));
+
+  const d = await getJson(`/api/ferry/history?date=${historyDate}`);
+  assert.equal(d.trips[0].actualDepartureMs, null, 'drops actual departure that predates schedule by too much');
+  assert.equal(d.trips[0].arrivalBasis, 'scheduled-estimate', 'restores schedule-only arrival basis');
+  assert.equal(d.trips[0].arrivalMs, scheduledDepartureMs + 20 * 60 * 1000, 'restores normal crossing estimate');
+  assert.equal(d.trips[0].status, 'scheduled-past', 'stale match is no longer labeled underway or arrived');
+  assert.equal(d.trips[1].status, 'completed', 'finished observed trip is not left labeled underway');
+});
+
 test('messages endpoint — Google-authorized admins can add and delete crawl messages', async () => {
   const unauthenticated = await sendJson('/api/messages', 'POST', {
     text: 'Private party at 7',
@@ -556,6 +607,10 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /Mukilteo to Clinton/, 'has Mukilteo to Clinton table column');
   assert.match(html, /Time Distance/, 'has diagram section');
   assert.match(html, /terminalProgress/, 'can plot current vessel position from coordinates');
+  assert.match(html, /scheduled-estimate/, 'renders schedule-only trips as subdued estimate lines');
+  assert.match(html, /rgba\(148, 163, 184, 0\.75\)/, 'renders schedule-only trips in neutral gray instead of vessel colors');
+  assert.match(html, /observed/, 'renders observed trips as emphasized history lines');
+  assert.match(html, /observed \/.*schedule-only/, 'summarizes observed trips separately from schedule-only context');
 
   const scriptMatch = html.match(/<script[^>]*>([\s\S]*?)<\/script>/);
   assert.ok(scriptMatch, 'found ferry history script block');

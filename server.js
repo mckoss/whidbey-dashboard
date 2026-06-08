@@ -1038,6 +1038,7 @@ app.get('/api/ferry/vessels', cachedEndpoint('ferry_vessels', 30 * 1000, fetchFe
 const FERRY_HISTORY_RETENTION_DAYS = CONFIG.ferryHistoryRetentionDays;
 const FERRY_HISTORY_SAMPLE_INTERVAL_MS = CONFIG.ferryHistorySampleMs;
 const FERRY_CROSSING_ESTIMATE_MS = 20 * 60 * 1000;
+const FERRY_HISTORY_DEPARTURE_MATCH_MS = 20 * 60 * 1000;
 const TERMINAL_NAMES = new Map([
   [CONFIG.wsfDepartingTerminal, 'Clinton'],
   [CONFIG.wsfArrivingTerminal, 'Mukilteo'],
@@ -1075,17 +1076,43 @@ function readFerryHistoryDay(date) {
   try {
     if (!existsSync(ferryHistoryFile(date))) return emptyFerryHistoryDay(date);
     const parsed = JSON.parse(readFileSync(ferryHistoryFile(date), 'utf8'));
-    return {
+    return normalizeFerryHistoryDay({
       ...emptyFerryHistoryDay(date),
       ...(parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}),
       date,
       trips: Array.isArray(parsed?.trips) ? parsed.trips : [],
       currentVessels: Array.isArray(parsed?.currentVessels) ? parsed.currentVessels : [],
-    };
+    });
   } catch (e) {
     console.warn(`[ferry-history] ignoring ${date}: ${e.message}`);
     return emptyFerryHistoryDay(date);
   }
+}
+
+function normalizeFerryHistoryDay(day) {
+  const reportMs = day.sampledAtMs || Date.parse(day.generatedAt || '') || Date.now();
+  return {
+    ...day,
+    trips: (day.trips || []).map(trip => {
+      if (!trip.actualDepartureMs ||
+          trip.actualDepartureMs >= trip.scheduledDepartureMs - FERRY_HISTORY_DEPARTURE_MATCH_MS) {
+        return {
+          ...trip,
+          status: ferryHistoryTripStatus(trip, null, reportMs),
+        };
+      }
+      const normalized = {
+        ...trip,
+        actualDepartureMs: null,
+        arrivalMs: trip.scheduledDepartureMs + FERRY_CROSSING_ESTIMATE_MS,
+        arrivalBasis: 'scheduled-estimate',
+      };
+      return {
+        ...normalized,
+        status: ferryHistoryTripStatus(normalized, null, reportMs),
+      };
+    }),
+  };
 }
 
 function writeFerryHistoryDay(day) {
@@ -1131,11 +1158,59 @@ function tripId(date, direction, scheduledDepartureMs) {
 function vesselMatchesTrip(vessel, trip, nowMs) {
   if (!vessel || !trip) return false;
   if (vessel.departingTerminalId !== trip.fromTerminalId || vessel.arrivingTerminalId !== trip.toTerminalId) return false;
-  if (vessel.scheduledDepartureMs && Math.abs(vessel.scheduledDepartureMs - trip.scheduledDepartureMs) <= 20 * 60 * 1000) return true;
+  if (vessel.scheduledDepartureMs && Math.abs(vessel.scheduledDepartureMs - trip.scheduledDepartureMs) <= FERRY_HISTORY_DEPARTURE_MATCH_MS) return true;
+  if (vessel.leftDockMs && Math.abs(vessel.leftDockMs - trip.scheduledDepartureMs) <= FERRY_HISTORY_DEPARTURE_MATCH_MS) return true;
   if (vessel.vesselName && trip.vesselName && vessel.vesselName === trip.vesselName) {
-    return Math.abs(nowMs - trip.scheduledDepartureMs) <= 45 * 60 * 1000;
+    return !vessel.scheduledDepartureMs &&
+      !vessel.leftDockMs &&
+      Math.abs(nowMs - trip.scheduledDepartureMs) <= FERRY_HISTORY_DEPARTURE_MATCH_MS;
   }
   return false;
+}
+
+function vesselMatchKey(vessel) {
+  return vessel?.vesselId || `${vessel?.vesselName || 'Unknown'}:${vessel?.departingTerminalId || ''}:${vessel?.arrivingTerminalId || ''}`;
+}
+
+function vesselMatchScore(vessel, trip, nowMs) {
+  if (!vesselMatchesTrip(vessel, trip, nowMs)) return null;
+  if (vessel.scheduledDepartureMs) return Math.abs(vessel.scheduledDepartureMs - trip.scheduledDepartureMs);
+  if (vessel.leftDockMs) return Math.abs(vessel.leftDockMs - trip.scheduledDepartureMs);
+  return Math.abs(nowMs - trip.scheduledDepartureMs);
+}
+
+function assignVesselsToTrips(vessels, trips, nowMs) {
+  const candidates = [];
+  for (const vessel of vessels) {
+    const key = vesselMatchKey(vessel);
+    for (const trip of trips) {
+      const score = vesselMatchScore(vessel, trip, nowMs);
+      if (score !== null) candidates.push({ key, vessel, tripId: trip.id, score });
+    }
+  }
+  candidates.sort((a, b) => a.score - b.score);
+  const usedVessels = new Set();
+  const usedTrips = new Set();
+  const assigned = new Map();
+  for (const candidate of candidates) {
+    if (usedVessels.has(candidate.key) || usedTrips.has(candidate.tripId)) continue;
+    usedVessels.add(candidate.key);
+    usedTrips.add(candidate.tripId);
+    assigned.set(candidate.tripId, candidate.vessel);
+  }
+  return assigned;
+}
+
+function ferryHistoryTripStatus(trip, vessel, nowMs) {
+  if (!trip.actualDepartureMs) {
+    return trip.scheduledDepartureMs < nowMs ? 'scheduled-past' : 'scheduled';
+  }
+  const arrivalMs = trip.arrivalMs || trip.actualDepartureMs + FERRY_CROSSING_ESTIMATE_MS;
+  if (arrivalMs <= nowMs ||
+      (vessel?.atDock && vessel?.arrivingTerminalId === trip.toTerminalId && nowMs > trip.actualDepartureMs)) {
+    return 'completed';
+  }
+  return 'in-progress';
 }
 
 function mergeTripObservation(existing, next, vessel, nowMs) {
@@ -1154,9 +1229,7 @@ function mergeTripObservation(existing, next, vessel, nowMs) {
   const arrivalBasis = observedArrivalMs
     ? 'observed-at-dock'
     : (existing.arrivalBasis === 'observed-at-dock' ? existing.arrivalBasis : (vessel?.etaMs ? 'wsf-eta' : (existing.arrivalBasis || 'scheduled-estimate')));
-  const status = actualDepartureMs
-    ? (vessel?.atDock && vessel?.arrivingTerminalId === next.toTerminalId && nowMs > actualDepartureMs ? 'arrived' : 'in-progress')
-    : (next.scheduledDepartureMs < nowMs ? 'scheduled-past' : 'scheduled');
+  const status = ferryHistoryTripStatus({ ...existing, ...next, actualDepartureMs, arrivalMs }, vessel, nowMs);
   const observation = vessel ? {
     observedAt: new Date(nowMs).toISOString(),
     vesselId: vessel.vesselId || null,
@@ -1240,9 +1313,11 @@ async function recordFerryHistoryDay(date = pacificDateForMs(), nowMs = Date.now
 
   const vessels = Array.isArray(vesselData?.vessels) ? vesselData.vessels : [];
   const byId = new Map((existing.trips || []).map(trip => [trip.id, trip]));
+  const assignmentTrips = scheduledTrips.map(scheduled => ({ ...byId.get(scheduled.id), ...scheduled }));
+  const assignedVessels = assignVesselsToTrips(vessels, assignmentTrips, nowMs);
   for (const scheduled of scheduledTrips) {
     const existingTrip = byId.get(scheduled.id) || {};
-    const vessel = vessels.find(v => vesselMatchesTrip(v, { ...existingTrip, ...scheduled }, nowMs));
+    const vessel = assignedVessels.get(scheduled.id);
     byId.set(scheduled.id, mergeTripObservation(existingTrip, scheduled, vessel, nowMs));
   }
 

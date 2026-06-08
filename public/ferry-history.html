@@ -178,12 +178,25 @@
     }
     .trip-line {
       fill: none;
-      stroke-width: 3;
+      opacity: 0.9;
+      stroke-width: 3.5;
       stroke-linecap: round;
     }
-    .trip-line.estimate {
-      stroke-dasharray: 5 5;
-      opacity: 0.62;
+    .trip-line.scheduled-estimate {
+      stroke-dasharray: 2 8;
+      stroke-width: 1.25;
+      opacity: 0.16;
+    }
+    .trip-line.scheduled-past {
+      opacity: 0.08;
+    }
+    .trip-line.observed {
+      opacity: 0.95;
+      stroke-width: 4;
+    }
+    .trip-line.in-progress {
+      opacity: 1;
+      stroke-width: 5;
     }
     .vessel-dot {
       stroke: var(--bg);
@@ -266,6 +279,7 @@
       white-space: nowrap;
     }
     .state.arrived { color: var(--accent2); background: rgba(52, 211, 153, 0.12); }
+    .state.completed { color: var(--accent2); background: rgba(52, 211, 153, 0.12); }
     .state.scheduled-past { color: var(--warn); background: rgba(251, 191, 36, 0.12); }
 
     .error {
@@ -408,7 +422,8 @@
         metric('Actual departures', String(completed)) +
         metric('Updated', escapeHtml(generated));
 
-      diagramMetaEl.textContent = trips.length ? `${trips.length} scheduled sailings` : 'No trips logged';
+      const scheduleOnly = trips.length - completed;
+      diagramMetaEl.textContent = trips.length ? `${completed} observed / ${scheduleOnly} schedule-only` : 'No trips logged';
       tableMetaEl.textContent = vessels.length ? `${vessels.length} vessels` : '';
       errorEl.hidden = !(day.error || (day.errors && day.errors.length));
       errorEl.textContent = day.error || (day.errors || []).join('; ');
@@ -473,16 +488,19 @@
         }
       }
 
-      const lines = trips.map(trip => {
+      const lineForTrip = trip => {
         const departMs = trip.actualDepartureMs || trip.scheduledDepartureMs;
         const arriveMs = trip.arrivalMs || (departMs + 20 * 60 * 1000);
         if (!departMs || !arriveMs) return '';
         const fromX = xForTerminal(trip.fromTerminalName);
         const toX = xForTerminal(trip.toTerminalName);
-        const color = colorFor(trip.vesselName || 'Unknown', vessels);
-        const estimate = !trip.actualDepartureMs || trip.arrivalBasis === 'scheduled-estimate';
-        return `<line class="trip-line ${estimate ? 'estimate' : ''}" x1="${fromX}" y1="${yFor(departMs)}" x2="${toX}" y2="${yFor(arriveMs)}" stroke="${color}"></line>`;
-      }).join('');
+        const scheduleOnly = isScheduleOnlyTrip(trip);
+        const color = scheduleOnly ? 'rgba(148, 163, 184, 0.75)' : colorFor(trip.vesselName || 'Unknown', vessels);
+        return `<line class="${tripLineClasses(trip)}" x1="${fromX}" y1="${yFor(departMs)}" x2="${toX}" y2="${yFor(arriveMs)}" stroke="${color}"></line>`;
+      };
+      const scheduledLines = trips.filter(isScheduleOnlyTrip).map(lineForTrip).join('');
+      const observedLines = trips.filter(trip => !isScheduleOnlyTrip(trip)).map(lineForTrip).join('');
+      const lines = scheduledLines + observedLines;
 
       const vesselDots = currentVesselDots(day, trips, vessels, nowMs, leftX, rightX, yFor);
 
@@ -529,6 +547,18 @@
         if (x === null) return '';
         return `<circle class="vessel-dot" cx="${x}" cy="${y}" r="6" fill="${color}"><title>${escapeHtml(name)}</title></circle>`;
       }).join('');
+    }
+
+    function isScheduleOnlyTrip(trip) {
+      return !trip.actualDepartureMs;
+    }
+
+    function tripLineClasses(trip) {
+      const classes = ['trip-line'];
+      if (isScheduleOnlyTrip(trip)) classes.push('scheduled-estimate');
+      else classes.push('observed');
+      if (trip.status) classes.push(trip.status);
+      return classes.map(escapeHtml).join(' ');
     }
 
     function terminalProgress(lat, lon) {
@@ -582,6 +612,7 @@
     function statusText(status) {
       return ({
         'arrived': 'arrived',
+        'completed': 'completed',
         'in-progress': 'underway',
         'scheduled-past': 'past',
         'scheduled': 'scheduled',
