@@ -298,13 +298,19 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
   vm.createContext(context);
   vm.runInContext(script + `\nthis.__alertTest = { renderFerryAlerts };`, context);
 
-  const ticker = context.__alertTest.renderFerryAlerts([{
-    title: 'Muk/Clin - Both vessels are 20 minutes behind schedule.',
-    text: 'Customers should expect delays through the evening commute.',
-  }]);
+  const ticker = context.__alertTest.renderFerryAlerts([
+    {
+      title: 'Muk/Clin - Both vessels are 20 minutes behind schedule.',
+      text: 'Customers should expect delays through the evening commute.',
+    },
+    { title: 'Muk/Clin - Low tide warning', text: 'Loading may be restricted.' },
+    { title: 'Muk/Clin - Terminal status', text: '2 Hour Wait for Drivers' },
+    { title: 'Muk/Clin - General notice', text: 'Good morning. How are you doing?' },
+  ]);
   assert.match(ticker, /ferry-alert-ticker/, 'renders one shared ticker container');
   assert.match(ticker, /ferry-alert-title/, 'renders title span');
   assert.match(ticker, /ferry-alert-detail/, 'renders detail span');
+  assert.match(ticker, /Good morning\. How are you doing\?/, 'renders general WSF notice text');
   assert.equal((ticker.match(/ferry-alert-copy/g) || []).length, 2, 'duplicates content so the scroll wraps');
 });
 
@@ -485,6 +491,64 @@ test('late ferry logic — delay propagates through later sailings in schedule o
   const card = context.__lateTest.sailingCard(sailings[1], sailings, {}, vesselMap, 14);
   assert.match(card, /1:10 PM|6:10 PM/, 'renders the propagated estimate instead of duplicating 5:40 PM');
   assert.doesNotMatch(card, /5:40 PM.*was 5:35 PM/s, 'does not apply the same estimate to the next scheduled card');
+});
+
+test('late ferry logic — departed delayed sailing shows actual and scheduled times muted', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
+  const script = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+
+  const fixedNow = Date.UTC(2026, 5, 8, 0, 50); // 5:50 PM PDT
+  class FakeDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [fixedNow])); }
+    static now() { return fixedNow; }
+  }
+  Object.assign(FakeDate, Date);
+
+  const nullEl = { style: {}, className: '', textContent: '', innerHTML: '', querySelector: () => null };
+  const context = {
+    console,
+    Date: FakeDate,
+    setInterval: () => 0,
+    setTimeout: () => 0,
+    clearInterval: () => {},
+    fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
+    document: {
+      getElementById: () => nullEl,
+      querySelector: () => nullEl,
+      createElement: () => ({}),
+      head: { appendChild: () => {} },
+    },
+    window: {},
+  };
+  vm.createContext(context);
+  vm.runInContext(script + `\nthis.__lateTest = { buildVesselMap, sailingCard };`, context);
+
+  const scheduledMs = Date.UTC(2026, 5, 8, 0, 5); // 5:05 PM PDT
+  const leftDockMs = Date.UTC(2026, 5, 8, 0, 40); // 5:40 PM PDT
+  const nextMs = Date.UTC(2026, 5, 8, 1, 5);      // 6:05 PM PDT
+  const sailing = { sailTime: new Date(scheduledMs), DepartingTime: `/Date(${scheduledMs})/` };
+  const next = { sailTime: new Date(nextMs), DepartingTime: `/Date(${nextMs})/` };
+  const vesselMap = context.__lateTest.buildVesselMap({ vessels: [{
+    vesselName: 'Tokitae',
+    inService: true,
+    atDock: false,
+    departingTerminalId: 14,
+    arrivingTerminalId: 5,
+    leftDockMs,
+  }] });
+  const spaceMap = {
+    [String(scheduledMs)]: { maxSpaces: 100, driveUpSpaces: 0 },
+  };
+
+  const card = context.__lateTest.sailingCard(sailing, [sailing, next], spaceMap, vesselMap, 14);
+  assert.match(card, /departed-confirmed/, 'confirmed past departure');
+  assert.match(card, /sail-time-actual">5:40 PM/, 'shows the actual/best-known departure time');
+  assert.match(card, /sail-time-sched">\(was 5:05 PM\)/, 'keeps the scheduled time for history');
+  assert.doesNotMatch(card, /sail-time-est/, 'confirmed historical delay is not styled as red estimate');
 });
 
 test('weather endpoint — second request is served from cache', async () => {

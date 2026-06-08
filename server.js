@@ -243,19 +243,6 @@ function stripHtml(value = '') {
     .trim();
 }
 
-function operationalFerryAlert(alert) {
-  const text = [
-    alert.AlertFullTitle,
-    alert.RouteAlertText,
-    alert.BulletinText,
-    alert.DisruptionDescription,
-    alert.AlertFullText,
-  ].filter(Boolean).join(' ');
-  const plain = stripHtml(text);
-  if (/\b(low tide|loading restrictions?|construction|pets?)\b/i.test(plain)) return false;
-  return /\b(out of service|cancel(?:led|lation)?|delayed?|behind|late|one[- ]boat|service disruption|shortage|mechanical|reduced capacity)\b/i.test(plain);
-}
-
 app.get('/api/ferry/alerts', cachedEndpoint('ferry_alerts', 30 * 1000, async () => {
   if (!WSF_API_KEY) return { error: 'WSF_API_KEY not configured', alerts: [] };
   const url = `https://www.wsdot.wa.gov/ferries/api/schedule/rest/alerts?apiaccesscode=${WSF_API_KEY}`;
@@ -263,9 +250,7 @@ app.get('/api/ferry/alerts', cachedEndpoint('ferry_alerts', 30 * 1000, async () 
   const data = await r.json();
   const alerts = (Array.isArray(data) ? data : [])
     .filter(a => a.AllRoutesFlag || (a.AffectedRouteIDs || []).includes(CONFIG.WSF_ROUTE_ID))
-    .filter(operationalFerryAlert)
     .sort((a, b) => (a.SortSeq ?? 9999) - (b.SortSeq ?? 9999))
-    .slice(0, 3)
     .map(a => ({
       id: a.BulletinID,
       title: stripHtml(a.AlertFullTitle || a.RouteAlertText || a.AlertDescription || ''),

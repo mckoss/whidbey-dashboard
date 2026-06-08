@@ -380,7 +380,6 @@
     .space-warning { color: var(--warn); font-size: 0.65rem; font-weight: 600; white-space: nowrap; }
     #ferry-alert-ticker {
       grid-column: 1 / -1;
-      min-height: 2rem;
     }
 
     .ferry-alert-ticker {
@@ -436,6 +435,8 @@
 
     /* Late departure: red estimated time + smaller original scheduled time below */
     .sail-time-est { color: var(--danger); display: block; }
+    .sail-time-actual { color: var(--text); display: block; }
+    .sailing.past .sail-time-actual { color: var(--dim); }
     .sail-time-sched { font-size: 0.62em; color: var(--dim); display: block; line-height: 1.3; }
 
     .loading { color: var(--dim); font-size: 0.9rem; padding: 1rem 0; }
@@ -553,6 +554,8 @@
       }
       /* Late ferry: est time inherits .sail-time sizing; sched is 60% of that */
       .sailing .sail-time-est { color: var(--danger); display: block; }
+      .sailing .sail-time-actual { color: var(--text); display: block; }
+      .sailing.past .sail-time-actual { color: var(--dim); }
       .sailing .sail-time-sched {
         /* 0.6em of the computed sail-time font-size — scales with all the cqh/cqi rules above */
         font-size: 0.6em;
@@ -1388,10 +1391,14 @@ function sailingCard(s, parsedSailings, spaceMap, vesselMap = {}, fromTerminalId
   else if (isNext)               { cssClass += ' next';                    statusText = '▶ Next'; }
   else if (isTrueLast)           { cssClass += ' last-of-day';             statusText = '🔔 Last'; }
 
-  // Late departure display: red estimated time with original scheduled below
-  const lateInfo = !confirmed ? timing.lateInfo : null;
+  // Late departure display: upcoming/unconfirmed estimates are red; confirmed
+  // past departures keep both times as muted history.
+  const lateInfo = timing.lateInfo;
   let timeHtml;
-  if (lateInfo) {
+  if (lateInfo && confirmed) {
+    const actualTime = new Date(lateInfo.estimatedDepartureMs).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
+    timeHtml = `<div class="sail-time"><span class="sail-time-actual">${actualTime}</span><span class="sail-time-sched">(was ${display})</span></div>`;
+  } else if (lateInfo) {
     const estTime = new Date(lateInfo.estimatedDepartureMs).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
     timeHtml = `<div class="sail-time"><span class="sail-time-est">${estTime}</span><span class="sail-time-sched">(was ${display})</span></div>`;
     statusText = '⚠ Delayed';
@@ -1510,8 +1517,7 @@ function escapeHtml(value = '') {
 
 function renderFerryAlerts(alerts = []) {
   const usable = alerts
-    .filter(a => a && (a.title || a.text))
-    .slice(0, 3);
+    .filter(a => a && (a.title || a.text));
   if (!usable.length) return '';
   const danger = usable.some(a => /\b(out of service|cancel|canceled|cancelled|mechanical|shortage|one[- ]boat)\b/i.test(`${a.title || ''} ${a.text || ''}`));
   const items = usable.map(a => {
