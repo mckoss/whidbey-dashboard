@@ -445,7 +445,7 @@
     }
     @keyframes ferryAlertScroll {
       from { transform: translateX(0); }
-      to   { transform: translateX(-50%); }
+      to   { transform: translateX(var(--ticker-translate, -50%)); }
     }
 
     /* Late departure: red estimated time + smaller original scheduled time below */
@@ -1576,6 +1576,7 @@ function adjustFerryAlertTickerSpeed(root) {
   const pixelsPerSecond = pixelsPerCharacter * targetCharsPerSecond;
   const durationSeconds = Math.max(minTickerDurationSeconds, copyPixelWidth / pixelsPerSecond);
   ticker.style.setProperty('--ticker-duration', `${Math.round(durationSeconds)}s`);
+  ticker.style.setProperty('--ticker-translate', `-${copyPixelWidth}px`);
 }
 
 function updateFerryAlerts(alerts = []) {
