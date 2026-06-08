@@ -599,6 +599,8 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   const html = await res.text();
 
   assert.match(html, /Ferry History/, 'page is named ferry history');
+  assert.match(html, /id="version"/, 'shows app version in the header');
+  assert.match(html, /\/api\/config/, 'loads app version from config API');
   assert.match(html, /id="prev-date"/, 'has previous date control');
   assert.match(html, /id="next-date"/, 'has next date control');
   assert.match(html, /id="date-input"[^>]+type="date"/, 'has date picker');
@@ -611,11 +613,16 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /Time Distance/, 'has diagram section');
   assert.match(html, /terminalProgress/, 'can plot current vessel position from coordinates');
   assert.match(html, /scheduled-estimate/, 'renders schedule-only trips as subdued estimate lines');
+  assert.match(html, /\.trip-line\.scheduled-estimate\s*\{[\s\S]*?stroke-width:\s*1\.8;/, 'schedule-only trips are thinner than observed routes');
+  assert.match(html, /\.trip-line\.scheduled-estimate\s*\{[\s\S]*?opacity:\s*0\.44;/, 'schedule-only trips remain visible dashed context');
   assert.match(html, /rgba\(148, 163, 184, 0\.75\)/, 'renders schedule-only trips in neutral gray instead of vessel colors');
   assert.match(html, /observed/, 'renders observed trips as emphasized history lines');
   assert.match(html, /observed \/.*schedule-only/, 'summarizes observed trips separately from schedule-only context');
   assert.match(html, /function terminalXForId/, 'maps docked current vessels by terminal id');
   assert.doesNotMatch(html, /departingTerminalId === 5 \|\| vessel\.arrivingTerminalId === 5/, 'does not place docked vessels by either endpoint');
+  assert.match(html, /function currentVesselPoint/, 'shares current vessel placement for dots and underway trail lines');
+  assert.match(html, /isUnderwayTrip\(trip, nowMs\)/, 'shortens underway observed trip lines to the live vessel point');
+  assert.match(html, /toY = yFor\(nowMs\)/, 'underway trail stops at the current report time');
 
   const scriptMatch = html.match(/<script[^>]*>([\s\S]*?)<\/script>/);
   assert.ok(scriptMatch, 'found ferry history script block');

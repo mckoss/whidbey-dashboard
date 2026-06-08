@@ -52,6 +52,15 @@
       text-transform: uppercase;
     }
 
+    #version {
+      color: #64748b;
+      font-size: 0.45em;
+      letter-spacing: 0.08em;
+      text-transform: none;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+
     .nav {
       display: flex;
       align-items: center;
@@ -184,11 +193,11 @@
     }
     .trip-line.scheduled-estimate {
       stroke-dasharray: 2 8;
-      stroke-width: 1.25;
-      opacity: 0.16;
+      stroke-width: 1.8;
+      opacity: 0.44;
     }
     .trip-line.scheduled-past {
-      opacity: 0.08;
+      opacity: 0.28;
     }
     .trip-line.observed {
       opacity: 0.95;
@@ -302,7 +311,7 @@
 </head>
 <body>
   <header>
-    <h1>Ferry History</h1>
+    <h1>Ferry History <span id="version"></span></h1>
     <div class="nav">
       <a class="button" id="main-link" href="/">Dashboard</a>
       <button id="prev-date" type="button" title="Previous day">Prev</button>
@@ -361,6 +370,7 @@
     const errorEl = document.getElementById('error');
     const diagramMetaEl = document.getElementById('diagram-meta');
     const tableMetaEl = document.getElementById('table-meta');
+    const versionEl = document.getElementById('version');
 
     const params = new URLSearchParams(window.location.search);
     const initialDate = validDate(params.get('date')) || todayPacific();
@@ -370,7 +380,17 @@
     document.getElementById('next-date').addEventListener('click', () => shiftDate(1));
     dateInput.addEventListener('change', () => navigateTo(dateInput.value));
 
+    loadConfig();
     loadHistory(initialDate);
+
+    async function loadConfig() {
+      try {
+        const cfg = await fetch('/api/config').then(r => r.json());
+        if (cfg.version) versionEl.textContent = 'v ' + cfg.version;
+      } catch (e) {
+        versionEl.textContent = '';
+      }
+    }
 
     function validDate(value) {
       return /^\d{4}-\d{2}-\d{2}$/.test(value || '') ? value : '';
@@ -491,15 +511,30 @@
         }
       }
 
+      const currentVesselByName = currentVesselMap(day);
       const lineForTrip = trip => {
         const departMs = trip.actualDepartureMs || trip.scheduledDepartureMs;
         const arriveMs = trip.arrivalMs || (departMs + 20 * 60 * 1000);
         if (!departMs || !arriveMs) return '';
         const fromX = xForTerminal(trip.fromTerminalName);
-        const toX = xForTerminal(trip.toTerminalName);
+        let toX = xForTerminal(trip.toTerminalName);
+        let toY = yFor(arriveMs);
+        if (isUnderwayTrip(trip, nowMs)) {
+          const currentPoint = currentVesselPoint(
+            currentVesselByName.get(trip.vesselName || 'Unknown'),
+            trip,
+            nowMs,
+            leftX,
+            rightX
+          );
+          if (currentPoint) {
+            toX = currentPoint.x;
+            toY = yFor(nowMs);
+          }
+        }
         const scheduleOnly = isScheduleOnlyTrip(trip);
         const color = scheduleOnly ? 'rgba(148, 163, 184, 0.75)' : colorFor(trip.vesselName || 'Unknown', vessels);
-        return `<line class="${tripLineClasses(trip)}" x1="${fromX}" y1="${yFor(departMs)}" x2="${toX}" y2="${yFor(arriveMs)}" stroke="${color}"></line>`;
+        return `<line class="${tripLineClasses(trip)}" x1="${fromX}" y1="${yFor(departMs)}" x2="${toX}" y2="${toY}" stroke="${color}"></line>`;
       };
       const scheduledLines = trips.filter(isScheduleOnlyTrip).map(lineForTrip).join('');
       const observedLines = trips.filter(trip => !isScheduleOnlyTrip(trip)).map(lineForTrip).join('');
@@ -532,25 +567,35 @@
         const name = vessel.vesselName || 'Unknown';
         const trip = latestByVessel.get(name);
         const color = colorFor(name, vessels);
-        let x = null;
-        let y = yFor(nowMs);
-        if (vessel.atDock) {
-          x = terminalXForId(vessel.departingTerminalId, leftX, rightX) ||
-            terminalXForId(vessel.arrivingTerminalId, leftX, rightX);
-        } else if (typeof vessel.latitude === 'number' && typeof vessel.longitude === 'number') {
-          const pct = terminalProgress(vessel.latitude, vessel.longitude);
-          x = leftX + (rightX - leftX) * pct;
-        } else if (trip) {
-          const depart = trip.actualDepartureMs || trip.scheduledDepartureMs;
-          const arrive = trip.arrivalMs || depart + 20 * 60 * 1000;
-          const pct = clamp((nowMs - depart) / Math.max(1, arrive - depart), 0, 1);
-          const fromX = trip.fromTerminalName === 'Clinton' ? leftX : rightX;
-          const toX = trip.toTerminalName === 'Clinton' ? leftX : rightX;
-          x = fromX + (toX - fromX) * pct;
-        }
-        if (x === null) return '';
-        return `<circle class="vessel-dot" cx="${x}" cy="${y}" r="6" fill="${color}"><title>${escapeHtml(name)}</title></circle>`;
+        const point = currentVesselPoint(vessel, trip, nowMs, leftX, rightX);
+        if (!point) return '';
+        return `<circle class="vessel-dot" cx="${point.x}" cy="${yFor(nowMs)}" r="6" fill="${color}"><title>${escapeHtml(name)}</title></circle>`;
       }).join('');
+    }
+
+    function currentVesselMap(day) {
+      return new Map((day.currentVessels || []).map(vessel => [vessel.vesselName || 'Unknown', vessel]));
+    }
+
+    function currentVesselPoint(vessel, trip, nowMs, leftX, rightX) {
+      if (vessel && vessel.atDock) {
+        const x = terminalXForId(vessel.departingTerminalId, leftX, rightX) ||
+          terminalXForId(vessel.arrivingTerminalId, leftX, rightX);
+        return x === null ? null : { x };
+      }
+      if (vessel && typeof vessel.latitude === 'number' && typeof vessel.longitude === 'number') {
+        const pct = terminalProgress(vessel.latitude, vessel.longitude);
+        return { x: leftX + (rightX - leftX) * pct };
+      }
+      if (trip) {
+        const depart = trip.actualDepartureMs || trip.scheduledDepartureMs;
+        const arrive = trip.arrivalMs || depart + 20 * 60 * 1000;
+        const pct = clamp((nowMs - depart) / Math.max(1, arrive - depart), 0, 1);
+        const fromX = trip.fromTerminalName === 'Clinton' ? leftX : rightX;
+        const toX = trip.toTerminalName === 'Clinton' ? leftX : rightX;
+        return { x: fromX + (toX - fromX) * pct };
+      }
+      return null;
     }
 
     function terminalXForId(terminalId, leftX, rightX) {
@@ -561,6 +606,12 @@
 
     function isScheduleOnlyTrip(trip) {
       return !trip.actualDepartureMs;
+    }
+
+    function isUnderwayTrip(trip, nowMs) {
+      const departMs = trip.actualDepartureMs || trip.scheduledDepartureMs;
+      const arriveMs = trip.arrivalMs || (departMs + 20 * 60 * 1000);
+      return !isScheduleOnlyTrip(trip) && trip.status === 'in-progress' && departMs <= nowMs && nowMs < arriveMs;
     }
 
     function tripLineClasses(trip) {
