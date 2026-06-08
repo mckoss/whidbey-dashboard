@@ -610,6 +610,7 @@ test('late ferry logic — departed delayed sailing shows actual and scheduled t
 
   const card = context.__lateTest.sailingCard(sailing, [sailing, next], spaceMap, vesselMap, 14);
   assert.match(card, /departed-confirmed/, 'confirmed past departure');
+  assert.match(card, /sail-vessel">Tokitae<\/div>/, 'uses matched live vessel name when schedule/space row lacks vessel name');
   assert.match(card, /sail-time-actual">5:40 PM/, 'shows the actual/best-known departure time');
   assert.match(card, /sail-time-sched">\(was 5:05 PM\)/, 'keeps the scheduled time for history');
   assert.doesNotMatch(card, /sail-time-est/, 'confirmed historical delay is not styled as red estimate');

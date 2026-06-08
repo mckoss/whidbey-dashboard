@@ -1441,7 +1441,7 @@ function sailingCard(s, parsedSailings, spaceMap, vesselMap = {}, fromTerminalId
       : `<div class="sail-fill-label" style="color:var(--accent2)">${spaceLabel}</div>`;
     fillHtml = `<div class="sail-fill-wrap">${label}</div>`;
   }
-  const vesselName = s.VesselName || space?.vesselName || '';
+  const vesselName = s.VesselName || space?.vesselName || timing.vessel?.vesselName || '';
   const vesselHtml = vesselName ? `<div class="sail-vessel">${vesselName}</div>` : '';
   return `<div class="${cssClass}">${timeHtml}${vesselHtml}<div class="sail-status">${statusText}</div>${fillHtml}</div>`;
 }
