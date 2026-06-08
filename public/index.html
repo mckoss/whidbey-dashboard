@@ -435,6 +435,9 @@
     .ferry-alert-item.danger {
       color: var(--danger);
     }
+    .ferry-alert-item.user-message {
+      color: var(--accent);
+    }
     .ferry-alert-title {
       font-weight: 800;
       letter-spacing: 0.02em;
@@ -1543,12 +1546,13 @@ function renderFerryAlerts(alerts = []) {
   const items = usable.map(a => {
     const title = String(a.title || '').trim();
     const detail = String(a.text || '').trim();
-    const showDetail = detail && normalizeFerryAlertDisplayText(detail) !== normalizeFerryAlertDisplayText(title);
+    const showDetail = !a.userMessage && detail && normalizeFerryAlertDisplayText(detail) !== normalizeFerryAlertDisplayText(title);
     const displayTitle = title || detail;
-    const displayText = showDetail ? `${displayTitle}: ${detail}` : displayTitle;
+    const displayText = a.userMessage ? detail : (showDetail ? `${displayTitle}: ${detail}` : displayTitle);
     const danger = ferryAlertIsDanger(a);
     displayTextParts.push(displayText);
-    return `<span class="ferry-alert-item${danger ? ' danger' : ''}">${showDetail ? `<span class="ferry-alert-detail">${escapeHtml(displayText)}</span>` : `<span class="ferry-alert-title">${escapeHtml(displayTitle)}</span>`}</span>`;
+    const itemClass = `ferry-alert-item${danger ? ' danger' : ''}${a.userMessage ? ' user-message' : ''}`;
+    return `<span class="${itemClass}">${showDetail || a.userMessage ? `<span class="ferry-alert-detail">${escapeHtml(displayText)}</span>` : `<span class="ferry-alert-title">${escapeHtml(displayTitle)}</span>`}</span>`;
   }).join('');
   const visibleText = displayTextParts.join('   ');
   const tickerDurationSeconds = Math.max(minTickerDurationSeconds, Math.round(visibleText.length / tickerCharsPerSecond));
@@ -1563,6 +1567,7 @@ function normalizeFerryAlertDisplayText(value = '') {
 }
 
 function ferryAlertIsDanger(alert = {}) {
+  if (alert.userMessage) return false;
   return /\b(out of service|cancel|canceled|cancelled|mechanical|shortage|one[- ]boat)\b/i
     .test(`${alert.title || ''} ${alert.text || ''}`);
 }
@@ -1692,12 +1697,13 @@ function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spac
 
 // ── Ferry loader ───────────────────────────────────────────────────────
 async function loadFerry() {
-  const [clintonSched, clintonSpace, mukilteoSched, mukilteoSpace, ferryAlerts, vesselRes] = await Promise.allSettled([
+  const [clintonSched, clintonSpace, mukilteoSched, mukilteoSpace, ferryAlerts, userMessages, vesselRes] = await Promise.allSettled([
     fetch('/api/ferry/clinton').then(r => r.json()),
     fetch('/api/ferry/clinton/space').then(r => r.json()),
     fetch('/api/ferry/mukilteo').then(r => r.json()),
     fetch('/api/ferry/mukilteo/space').then(r => r.json()),
     fetch('/api/ferry/alerts').then(r => r.json()),
+    fetch('/api/messages').then(r => r.json()),
     fetch('/api/ferry/vessels').then(r => r.json()),
   ]);
 
@@ -1706,12 +1712,15 @@ async function loadFerry() {
   const mukilteoData = mukilteoSched.status === 'fulfilled' ? mukilteoSched.value : null;
   const mukilteoSp   = (mukilteoSpace.status === 'fulfilled' && !mukilteoSpace.value?.error) ? mukilteoSpace.value : {};
   const routeAlerts  = (ferryAlerts.status === 'fulfilled' && Array.isArray(ferryAlerts.value?.alerts)) ? ferryAlerts.value.alerts : [];
+  const crawlMessages = (userMessages.status === 'fulfilled' && Array.isArray(userMessages.value?.messages))
+    ? userMessages.value.messages.map(message => ({ id: message.id, title: '', text: message.text, userMessage: true }))
+    : [];
   const clintonSpaceMissing = !hasUsableSpaceData(clintonSp);
   const mukilteoSpaceMissing = !hasUsableSpaceData(mukilteoSp);
   const vesselData   = vesselRes.status === 'fulfilled' ? vesselRes.value : null;
   // Build vessel map (scheduledDepartureMs → vessel); safe to pass empty map on API failure
   const vesselMap    = buildVesselMap(vesselData);
-  updateFerryAlerts(routeAlerts);
+  updateFerryAlerts([...routeAlerts, ...crawlMessages]);
 
   if (clintonData?.error === 'WSF_API_KEY not configured') {
     document.getElementById('ferry').innerHTML = `<div class="no-ferry-key">Ferry schedule requires a free WSDOT API key. <a href="https://www.wsdot.wa.gov/traffic/api/" target="_blank">Register here</a>, then add to <code>.env</code> as <code>WSF_API_KEY</code>.</div>`;

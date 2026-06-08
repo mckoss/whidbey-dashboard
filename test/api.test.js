@@ -25,7 +25,12 @@ let dataDir;
 before(async () => {
   dataDir = await mkdtemp(join(tmpdir(), 'whidbey-dashboard-test-'));
   serverProcess = spawn('node', [join(__dirname, '../server.js')], {
-    env: { ...process.env, PORT: '3001', DATA_DIR: dataDir },
+    env: {
+      ...process.env,
+      PORT: '3001',
+      DATA_DIR: dataDir,
+      AUTHORIZED_MESSAGE_EMAIL_USERS: JSON.stringify(['mike@example.com']),
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -62,6 +67,16 @@ async function getJson(path) {
 async function getJsonAllowError(path) {
   const res = await fetch(`${BASE}${path}`);
   return res.json();
+}
+
+async function sendJson(path, method, body) {
+  const res = await fetch(`${BASE}${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  return { res, data };
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────
@@ -238,6 +253,31 @@ test('ferry/vessels endpoint — normalized vessel location data', async () => {
   }
 });
 
+test('messages endpoint — authorized users can add and delete crawl messages', async () => {
+  const unauthorized = await sendJson('/api/messages', 'POST', {
+    from: 'someone@example.com',
+    text: 'Private party at 7',
+  });
+  assert.equal(unauthorized.res.status, 403, 'rejects unconfigured senders');
+
+  const created = await sendJson('/api/messages', 'POST', {
+    from: 'mike@example.com',
+    text: '<b>Bring firewood</b>',
+  });
+  assert.equal(created.res.status, 201, 'creates message for authorized sender');
+  assert.equal(created.data.message.text, 'Bring firewood', 'stores plain text only');
+  assert.ok(created.data.message.id, 'created message has id');
+
+  const list = await getJson('/api/messages');
+  assert.deepEqual(list.messages.map(m => m.text), ['Bring firewood'], 'lists user crawl messages separately from WSF alerts');
+
+  const deleted = await sendJson(`/api/messages/${created.data.message.id}`, 'DELETE', {
+    from: 'mike@example.com',
+  });
+  assert.equal(deleted.res.status, 200, 'deletes message for authorized sender');
+  assert.deepEqual(deleted.data.messages, [], 'returns remaining messages');
+});
+
 test('cache-status endpoint — returns cache metadata', async () => {
   const d = await getJson('/api/cache-status');
   // After above tests ran, we should have weather and tides cached
@@ -266,6 +306,29 @@ test('static HTML — index.html contains required elements', async () => {
   assert.match(html, /#ferry-alert-ticker\s*\{[\s\S]*?min-width:\s*0;/, 'ticker grid item cannot widen the dashboard');
   assert.match(html, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s*minmax\(0,\s*1fr\)/, 'main grid columns can shrink to viewport');
   assert.ok(html.includes('Whidbey'), 'mentions Whidbey');
+});
+
+test('message page — serves user crawl message editor', async () => {
+  const res = await fetch(`${BASE}/message`);
+  assert.ok(res.ok, 'message page responds OK');
+  const html = await res.text();
+
+  assert.match(html, /<input[^>]+id="from"[^>]+type="password"/, 'from field is password-styled');
+  assert.match(html, /<textarea[^>]+id="text"/, 'has message text field');
+  assert.match(html, /Delete/, 'has delete controls');
+  assert.match(html, /\/api\/messages/, 'uses user message API');
+  assert.match(html, /h1\s*\{[\s\S]*?color:\s*var\(--accent\);/, 'message page title uses dashboard heading blue');
+});
+
+test('config example — documents authorized message email users JSON', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const config = JSON.parse(readFileSync(jn(dir, '..', 'config.example.json'), 'utf8'));
+
+  assert.ok(Array.isArray(config.authorizedMessageEmailUsers), 'example has authorizedMessageEmailUsers array');
+  assert.ok(config.authorizedMessageEmailUsers.length > 0, 'example includes at least one email placeholder');
 });
 
 test('static HTML — inline JavaScript parses without errors', async () => {
@@ -319,12 +382,14 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
     },
     { title: 'Terminal status', text: '2 Hour Wait for Drivers' },
     { title: 'General notice', text: 'Good morning. How are you doing?' },
+    { title: '', text: 'Dinner at 6:30.', userMessage: true },
   ];
   const ticker = context.__alertTest.renderFerryAlerts(alerts);
   const visibleAlertText = (a) => {
     const title = String(a.title || '').trim();
     const detail = String(a.text || '').trim();
     const normalize = (value) => String(value).replace(/\s+/g, ' ').replace(/[.。]+$/g, '').trim();
+    if (a.userMessage) return detail;
     return detail && normalize(detail) !== normalize(title) ? `${title || detail}: ${detail}` : (title || detail);
   };
   const visibleText = alerts
@@ -332,16 +397,21 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
     .join('   ');
   const expectedTickerDuration = Math.max(4, Math.round(visibleText.length / 15));
   assert.match(ticker, /ferry-alert-ticker/, 'renders one shared ticker container');
+  assert.equal((ticker.match(/<div class="ferry-alert-ticker"/g) || []).length, 1, 'renders one ticker row for WSF and user messages together');
   assert.match(ticker, /ferry-alert-title/, 'renders title span');
   assert.match(ticker, /ferry-alert-detail/, 'renders detail span');
   assert.match(ticker, /<span class="ferry-alert-detail">Low tide warning: Loading may be restricted\.<\/span>/, 'meaningfully different detail uses title-colon-detail text');
   assert.doesNotMatch(ticker, /<span class="ferry-alert-title">Low tide warning<\/span>/, 'meaningfully different title is not rendered bold separately');
   assert.match(ticker, /Good morning\. How are you doing\?/, 'renders general WSF notice text');
+  assert.match(ticker, /Dinner at 6:30\./, 'renders user-added crawl messages');
+  assert.doesNotMatch(ticker, /Dinner at 6:30\.: Dinner at 6:30\./, 'user-added crawl messages are not formatted as duplicated title/detail text');
+  assert.match(ticker, /Good morning\. How are you doing\?[\s\S]*Dinner at 6:30\./, 'user-added crawl messages are appended after WSF alerts before the wrap copy');
   assert.match(ticker, new RegExp(`--ticker-duration: ${expectedTickerDuration}s`), 'sets ticker speed from visible text at 15 cps');
   assert.equal((ticker.match(/ferry-alert-copy/g) || []).length, 2, 'duplicates content so the scroll wraps');
   assert.doesNotMatch(ticker, /ferry-alert-ticker danger/, 'mixed ticker does not make every alert red');
   assert.match(ticker, /ferry-alert-item danger[\s\S]*One vessel canceled/, 'disruptive alert item is red');
   assert.match(ticker, /ferry-alert-item(?! danger)[^>]*><span class="ferry-alert-detail">Pets: New pet rules effective May 20\./, 'informational all-routes item stays yellow');
+  assert.match(ticker, /ferry-alert-item user-message"><span class="ferry-alert-detail">Dinner at 6:30\./, 'user messages use normal ticker styling');
   assert.equal(
     (ticker.match(/Construction activity at Clinton terminal June 8 - July 3/g) || []).length,
     2,
@@ -349,6 +419,7 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
   );
   assert.match(html, /\.ferry-alert-item\s*\{[\s\S]*?color:\s*inherit;/, 'alert item text inherits ticker severity color');
   assert.match(html, /\.ferry-alert-item\.danger\s*\{[\s\S]*?color:\s*var\(--danger\);/, 'only disruptive alert items use danger red');
+  assert.match(html, /\.ferry-alert-item\.user-message\s*\{[\s\S]*?color:\s*var\(--accent\);/, 'user-added crawl messages use dashboard heading blue');
   assert.match(html, /\.ferry-alert-title\s*\{[\s\S]*?color:\s*inherit;/, 'alert titles use the ticker severity color');
   assert.match(html, /\.ferry-alert-detail\s*\{[\s\S]*?color:\s*inherit;/, 'alert details use the same severity color as titles');
 });

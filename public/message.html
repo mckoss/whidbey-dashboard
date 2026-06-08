@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Whidbey Dashboard Messages</title>
+  <style>
+    :root {
+      --bg: #08111f;
+      --card: #0c1a2e;
+      --text: #e5eefb;
+      --dim: #94a3b8;
+      --accent: #38bdf8;
+      --warn: #fbbf24;
+      --danger: #f87171;
+      --border: rgba(148,163,184,0.22);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      padding: 1.5rem;
+    }
+    main {
+      max-width: 760px;
+      margin: 0 auto;
+    }
+    header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+    h1 {
+      font-size: 1.4rem;
+      margin: 0;
+      letter-spacing: 0;
+      color: var(--accent);
+    }
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    section {
+      border: 1px solid var(--border);
+      background: var(--card);
+      border-radius: 0.5rem;
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+    label {
+      display: block;
+      color: var(--dim);
+      font-size: 0.8rem;
+      margin-bottom: 0.35rem;
+    }
+    input, textarea, button {
+      font: inherit;
+      border-radius: 0.4rem;
+    }
+    input, textarea {
+      width: 100%;
+      border: 1px solid var(--border);
+      background: #07101d;
+      color: var(--text);
+      padding: 0.65rem 0.7rem;
+      outline: none;
+    }
+    input:focus, textarea:focus {
+      border-color: var(--accent);
+    }
+    textarea {
+      min-height: 5.5rem;
+      resize: vertical;
+    }
+    .field {
+      margin-bottom: 0.85rem;
+    }
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    button {
+      border: 1px solid rgba(56,189,248,0.45);
+      background: rgba(56,189,248,0.16);
+      color: var(--text);
+      padding: 0.55rem 0.85rem;
+      cursor: pointer;
+    }
+    button:hover {
+      background: rgba(56,189,248,0.24);
+    }
+    button.delete {
+      border-color: rgba(248,113,113,0.45);
+      background: rgba(248,113,113,0.13);
+      color: #fecaca;
+      flex: 0 0 auto;
+    }
+    .status {
+      color: var(--dim);
+      font-size: 0.85rem;
+    }
+    .status.error {
+      color: var(--danger);
+    }
+    .message-list {
+      display: grid;
+      gap: 0.65rem;
+    }
+    .message-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      border: 1px solid var(--border);
+      border-radius: 0.45rem;
+      padding: 0.7rem;
+      background: rgba(255,255,255,0.025);
+    }
+    .message-text {
+      overflow-wrap: anywhere;
+      line-height: 1.35;
+    }
+    .empty {
+      color: var(--dim);
+      padding: 0.4rem 0;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Crawl Messages</h1>
+      <a href="/">Dashboard</a>
+    </header>
+
+    <section>
+      <form id="message-form">
+        <div class="field">
+          <label for="from">From</label>
+          <input id="from" name="from" type="password" inputmode="email" autocomplete="username" placeholder="email address" required>
+        </div>
+        <div class="field">
+          <label for="text">Message</label>
+          <textarea id="text" name="text" maxlength="280" required></textarea>
+        </div>
+        <div class="actions">
+          <button type="submit">OK</button>
+          <span id="status" class="status" role="status"></span>
+        </div>
+      </form>
+    </section>
+
+    <section>
+      <div id="message-list" class="message-list">
+        <div class="empty">Loading...</div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const form = document.getElementById('message-form');
+    const fromEl = document.getElementById('from');
+    const textEl = document.getElementById('text');
+    const listEl = document.getElementById('message-list');
+    const statusEl = document.getElementById('status');
+
+    function escapeHtml(value = '') {
+      return String(value)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+    }
+
+    function setStatus(message, error = false) {
+      statusEl.textContent = message;
+      statusEl.classList.toggle('error', error);
+    }
+
+    async function jsonFetch(url, options = {}) {
+      const res = await fetch(url, {
+        ...options,
+        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      return data;
+    }
+
+    function renderMessages(messages = []) {
+      if (!messages.length) {
+        listEl.innerHTML = '<div class="empty">No user messages in the crawl.</div>';
+        return;
+      }
+      listEl.innerHTML = messages.map(message => `
+        <div class="message-row" data-id="${escapeHtml(message.id)}">
+          <div class="message-text">${escapeHtml(message.text)}</div>
+          <button class="delete" type="button" data-id="${escapeHtml(message.id)}">Delete</button>
+        </div>
+      `).join('');
+    }
+
+    async function loadMessages() {
+      try {
+        const data = await jsonFetch('/api/messages');
+        renderMessages(data.messages || []);
+      } catch (e) {
+        listEl.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      setStatus('Saving...');
+      try {
+        await jsonFetch('/api/messages', {
+          method: 'POST',
+          body: JSON.stringify({ from: fromEl.value, text: textEl.value }),
+        });
+        textEl.value = '';
+        setStatus('Saved.');
+        await loadMessages();
+      } catch (e) {
+        setStatus(e.message, true);
+      }
+    });
+
+    listEl.addEventListener('click', async event => {
+      const button = event.target.closest('button.delete');
+      if (!button) return;
+      setStatus('Deleting...');
+      try {
+        await jsonFetch(`/api/messages/${encodeURIComponent(button.dataset.id)}`, {
+          method: 'DELETE',
+          body: JSON.stringify({ from: fromEl.value }),
+        });
+        setStatus('Deleted.');
+        await loadMessages();
+      } catch (e) {
+        setStatus(e.message, true);
+      }
+    });
+
+    loadMessages();
+  </script>
+</body>
+</html>

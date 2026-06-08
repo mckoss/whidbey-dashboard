@@ -2,6 +2,7 @@ import express from 'express';
 import fetch from 'node-fetch';
 import morgan from 'morgan';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { randomUUID } from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
 
@@ -26,9 +27,12 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = resolve(process.env.DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || 'data');
 const CACHE_FILE = join(DATA_DIR, 'cache.json');
+const MESSAGE_FILE = join(DATA_DIR, 'messages.json');
+const CONFIG_FILE = join(__dirname, 'config.json');
 
 // ── Request logging (stdout → Railway Log Explorer) ───────────────────
 app.use(morgan('combined'));
+app.use(express.json({ limit: '16kb' }));
 const WSF_API_KEY = process.env.WSF_API_KEY || '';
 
 // Config
@@ -84,6 +88,72 @@ function writePersistentCache() {
   }
 }
 
+function loadRootConfig() {
+  try {
+    if (!existsSync(CONFIG_FILE)) return {};
+    const parsed = JSON.parse(readFileSync(CONFIG_FILE, 'utf8'));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (e) {
+    console.warn(`[config] ignoring ${CONFIG_FILE}: ${e.message}`);
+    return {};
+  }
+}
+
+function parseAuthorizedMessageUsers(value) {
+  if (!value) return [];
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    const users = Array.isArray(parsed)
+      ? parsed
+      : parsed?.authorizedMessageEmailUsers || parsed?.authorizedUsers || parsed?.users || [];
+    return Array.isArray(users)
+      ? users.map(user => String(user).trim().toLowerCase()).filter(Boolean)
+      : [];
+  } catch (e) {
+    console.warn(`[config] invalid authorized message users JSON: ${e.message}`);
+    return [];
+  }
+}
+
+function authorizedMessageUsers() {
+  const localConfig = loadRootConfig();
+  const configured = localConfig.authorizedMessageEmailUsers
+    ?? localConfig.authorized_message_email_users
+    ?? localConfig.messageUsers
+    ?? process.env.AUTHORIZED_MESSAGE_EMAIL_USERS;
+  return new Set(parseAuthorizedMessageUsers(configured));
+}
+
+function isAuthorizedMessageUser(from) {
+  const users = authorizedMessageUsers();
+  return users.size > 0 && users.has(String(from || '').trim().toLowerCase());
+}
+
+function loadUserMessages() {
+  try {
+    if (!existsSync(MESSAGE_FILE)) return [];
+    const parsed = JSON.parse(readFileSync(MESSAGE_FILE, 'utf8'));
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(m => m && typeof m === 'object' && typeof m.text === 'string')
+      .map(m => ({
+        id: String(m.id || ''),
+        text: stripHtml(m.text).slice(0, 280),
+        createdAt: m.createdAt || null,
+        updatedAt: m.updatedAt || null,
+      }))
+      .filter(m => m.id && m.text);
+  } catch (e) {
+    console.warn(`[messages] ignoring persisted messages: ${e.message}`);
+    return [];
+  }
+}
+
+function writeUserMessages(messages) {
+  mkdirSync(DATA_DIR, { recursive: true });
+  writeFileSync(MESSAGE_FILE, JSON.stringify(messages, null, 2));
+}
+
 // ── Fetch with retry ────────────────────────────────────────────────────
 async function fetchWithRetry(url, options = {}, retries = 1) {
   try {
@@ -124,6 +194,49 @@ function cachedEndpoint(cacheKey, ttlMs, fetcher) {
 }
 
 app.use(express.static(join(__dirname, 'public')));
+
+app.get('/message', (req, res) => {
+  res.sendFile(join(__dirname, 'public', 'message.html'));
+});
+
+app.get('/api/messages', (req, res) => {
+  res.json({ messages: loadUserMessages() });
+});
+
+app.post('/api/messages', (req, res) => {
+  const from = req.body?.from;
+  if (!isAuthorizedMessageUser(from)) {
+    return res.status(403).json({ error: 'Not authorized to add crawl messages.' });
+  }
+  const text = stripHtml(req.body?.text || '').slice(0, 280);
+  if (!text) return res.status(400).json({ error: 'Message text is required.' });
+
+  const messages = loadUserMessages();
+  const now = new Date().toISOString();
+  const message = {
+    id: randomUUID(),
+    text,
+    createdAt: now,
+    updatedAt: now,
+  };
+  messages.push(message);
+  writeUserMessages(messages);
+  res.status(201).json({ message });
+});
+
+app.delete('/api/messages/:id', (req, res) => {
+  const from = req.body?.from;
+  if (!isAuthorizedMessageUser(from)) {
+    return res.status(403).json({ error: 'Not authorized to delete crawl messages.' });
+  }
+  const messages = loadUserMessages();
+  const next = messages.filter(m => m.id !== req.params.id);
+  if (next.length === messages.length) {
+    return res.status(404).json({ error: 'Message not found.' });
+  }
+  writeUserMessages(next);
+  res.json({ ok: true, messages: next });
+});
 
 // ── Tides (hi/lo, 3 days) ─────────────────────────────────────────────
 app.get('/api/tides', cachedEndpoint('tides', 2 * 60 * 60 * 1000, async () => {

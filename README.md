@@ -30,6 +30,36 @@ Free key from https://www.wsdot.wa.gov/traffic/api/ — add as `WSF_API_KEY=your
 
 Weather and tides work without any API keys.
 
+## User Crawl Messages
+
+Visit `/message` to add or delete user-managed messages in the bottom crawl. The
+`From` field is an email address typed into a password-style input; the server
+accepts changes only from configured senders.
+
+User messages are separate from WSF ferry alerts in storage and management, but
+they render in the same single-line marquee: WSF alerts first, then user-added
+messages, then the duplicate wrap copy. User messages use the dashboard heading
+blue (`--accent`) so they are visually distinct from WSF warning yellow and
+disruption red.
+
+Production configuration uses JSON in `AUTHORIZED_MESSAGE_EMAIL_USERS`, either
+as an array or an object with `authorizedMessageEmailUsers`:
+
+```bash
+AUTHORIZED_MESSAGE_EMAIL_USERS='["mike@example.com"]'
+```
+
+For local development, copy `config.example.json` to ignored `config.json` in
+the repo root and edit the email list:
+
+```json
+{
+  "authorizedMessageEmailUsers": [
+    "mike@example.com"
+  ]
+}
+```
+
 ## Architecture
 
 **Single-file frontend:** `public/index.html` — all HTML, CSS, and JS in one file. No build step, no bundler.
@@ -77,6 +107,9 @@ Each card shows an inline age tag after the title. Thresholds are per-source:
 | `GET /api/ferry/clinton/space` | Drive-up space by departure (Clinton) |
 | `GET /api/ferry/mukilteo/space` | Drive-up space by departure (Mukilteo) |
 | `GET /api/ferry` | Legacy alias for `/api/ferry/clinton` |
+| `GET /api/messages` | User-managed crawl messages |
+| `POST /api/messages` | Add an authorized user-managed crawl message |
+| `DELETE /api/messages/:id` | Delete an authorized user-managed crawl message |
 | `GET /api/cache-status` | Debug: cache metadata for all endpoints |
 
 ## Moon Phase Display
