@@ -322,6 +322,31 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
   assert.equal((ticker.match(/ferry-alert-copy/g) || []).length, 2, 'duplicates content so the scroll wraps');
 });
 
+test('static HTML — ferry ticker scrolls by measured copy width', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
+
+  assert.match(html, /--ticker-copy-width/, 'pins both ticker copies to one measured width');
+  assert.match(html, /--ticker-translate/, 'uses a measured pixel distance for the loop');
+  assert.doesNotMatch(html, /to\s*\{\s*transform:\s*translateX\(-50%\)/, 'does not animate by percentage width');
+});
+
+test('static HTML — ferry alert refresh swaps at the marquee loop boundary', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
+
+  assert.match(html, /currentFerryAlertSignature/, 'tracks current visible alert text');
+  assert.match(html, /pendingFerryAlerts/, 'queues changed alert text instead of snapping mid-scroll');
+  assert.match(html, /animationiteration/, 'applies queued alert text at the loop boundary');
+  assert.match(html, /signature === currentFerryAlertSignature/, 'unchanged polls do not rebuild the ticker');
+});
+
 test('late ferry logic — inbound arrival enforces 15 minute turn-around and red delayed card', async () => {
   const { readFileSync } = await import('fs');
   const { dirname: dn, join: jn } = await import('path');
