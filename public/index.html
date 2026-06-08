@@ -1543,15 +1543,23 @@ function renderFerryAlerts(alerts = []) {
   const items = usable.map(a => {
     const title = String(a.title || '').trim();
     const detail = String(a.text || '').trim();
-    const showDetail = detail && detail !== title;
+    const showDetail = detail && normalizeFerryAlertDisplayText(detail) !== normalizeFerryAlertDisplayText(title);
     const displayTitle = title || detail;
+    const displayText = showDetail ? `${displayTitle}: ${detail}` : displayTitle;
     const danger = ferryAlertIsDanger(a);
-    displayTextParts.push(showDetail ? `${displayTitle} ${detail}` : displayTitle);
-    return `<span class="ferry-alert-item${danger ? ' danger' : ''}"><span class="ferry-alert-title">${escapeHtml(displayTitle)}</span>${showDetail ? `<span class="ferry-alert-detail">${escapeHtml(detail)}</span>` : ''}</span>`;
+    displayTextParts.push(displayText);
+    return `<span class="ferry-alert-item${danger ? ' danger' : ''}">${showDetail ? `<span class="ferry-alert-detail">${escapeHtml(displayText)}</span>` : `<span class="ferry-alert-title">${escapeHtml(displayTitle)}</span>`}</span>`;
   }).join('');
   const visibleText = displayTextParts.join('   ');
   const tickerDurationSeconds = Math.max(minTickerDurationSeconds, Math.round(visibleText.length / tickerCharsPerSecond));
   return `<div class="ferry-alert-ticker" style="--ticker-duration: ${tickerDurationSeconds}s"><div class="ferry-alert-track"><div class="ferry-alert-copy">${items}</div><div class="ferry-alert-copy" aria-hidden="true">${items}</div></div></div>`;
+}
+
+function normalizeFerryAlertDisplayText(value = '') {
+  return String(value)
+    .replace(/\s+/g, ' ')
+    .replace(/[.。]+$/g, '')
+    .trim();
 }
 
 function ferryAlertIsDanger(alert = {}) {

@@ -313,23 +313,40 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
     },
     { title: 'Pets', text: 'New pet rules effective May 20.' },
     { title: 'Low tide warning', text: 'Loading may be restricted.' },
+    {
+      title: 'Construction activity at Clinton terminal June 8 - July 3',
+      text: 'Construction activity at Clinton terminal June 8 - July 3.',
+    },
     { title: 'Terminal status', text: '2 Hour Wait for Drivers' },
     { title: 'General notice', text: 'Good morning. How are you doing?' },
   ];
   const ticker = context.__alertTest.renderFerryAlerts(alerts);
+  const visibleAlertText = (a) => {
+    const title = String(a.title || '').trim();
+    const detail = String(a.text || '').trim();
+    const normalize = (value) => String(value).replace(/\s+/g, ' ').replace(/[.。]+$/g, '').trim();
+    return detail && normalize(detail) !== normalize(title) ? `${title || detail}: ${detail}` : (title || detail);
+  };
   const visibleText = alerts
-    .map(a => (a.text && a.text !== a.title) ? `${a.title} ${a.text}` : a.title)
+    .map(visibleAlertText)
     .join('   ');
   const expectedTickerDuration = Math.max(4, Math.round(visibleText.length / 15));
   assert.match(ticker, /ferry-alert-ticker/, 'renders one shared ticker container');
   assert.match(ticker, /ferry-alert-title/, 'renders title span');
   assert.match(ticker, /ferry-alert-detail/, 'renders detail span');
+  assert.match(ticker, /<span class="ferry-alert-detail">Low tide warning: Loading may be restricted\.<\/span>/, 'meaningfully different detail uses title-colon-detail text');
+  assert.doesNotMatch(ticker, /<span class="ferry-alert-title">Low tide warning<\/span>/, 'meaningfully different title is not rendered bold separately');
   assert.match(ticker, /Good morning\. How are you doing\?/, 'renders general WSF notice text');
   assert.match(ticker, new RegExp(`--ticker-duration: ${expectedTickerDuration}s`), 'sets ticker speed from visible text at 15 cps');
   assert.equal((ticker.match(/ferry-alert-copy/g) || []).length, 2, 'duplicates content so the scroll wraps');
   assert.doesNotMatch(ticker, /ferry-alert-ticker danger/, 'mixed ticker does not make every alert red');
   assert.match(ticker, /ferry-alert-item danger[\s\S]*One vessel canceled/, 'disruptive alert item is red');
-  assert.match(ticker, /ferry-alert-item(?! danger)[^>]*><span class="ferry-alert-title">Pets/, 'informational all-routes item stays yellow');
+  assert.match(ticker, /ferry-alert-item(?! danger)[^>]*><span class="ferry-alert-detail">Pets: New pet rules effective May 20\./, 'informational all-routes item stays yellow');
+  assert.equal(
+    (ticker.match(/Construction activity at Clinton terminal June 8 - July 3/g) || []).length,
+    2,
+    'trailing punctuation differences do not duplicate alert title/detail within each ticker copy'
+  );
   assert.match(html, /\.ferry-alert-item\s*\{[\s\S]*?color:\s*inherit;/, 'alert item text inherits ticker severity color');
   assert.match(html, /\.ferry-alert-item\.danger\s*\{[\s\S]*?color:\s*var\(--danger\);/, 'only disruptive alert items use danger red');
   assert.match(html, /\.ferry-alert-title\s*\{[\s\S]*?color:\s*inherit;/, 'alert titles use the ticker severity color');
