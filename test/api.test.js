@@ -605,6 +605,9 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /\/api\/ferry\/history\?date=/, 'loads history API by URL date');
   assert.match(html, /Clinton to Mukilteo/, 'has Clinton to Mukilteo table column');
   assert.match(html, /Mukilteo to Clinton/, 'has Mukilteo to Clinton table column');
+  assert.match(html, /Trip min/, 'has trip duration column');
+  assert.match(html, /Dock min/, 'has dock duration column');
+  assert.match(html, /function formatMinutes/, 'formats durations as fractional minutes');
   assert.match(html, /Time Distance/, 'has diagram section');
   assert.match(html, /terminalProgress/, 'can plot current vessel position from coordinates');
   assert.match(html, /scheduled-estimate/, 'renders schedule-only trips as subdued estimate lines');

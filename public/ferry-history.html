@@ -256,6 +256,7 @@
 
     tr:last-child td { border-bottom: 0; }
     .vessel { font-weight: 600; }
+    .duration { text-align: right; white-space: nowrap; }
     .empty { color: var(--dim); }
     .actual { color: var(--text); }
     .scheduled,
@@ -335,6 +336,8 @@
               <th>Vessel</th>
               <th>Clinton to Mukilteo</th>
               <th>Mukilteo to Clinton</th>
+              <th>Trip min</th>
+              <th>Dock min</th>
               <th>Status</th>
             </tr>
           </thead>
@@ -406,7 +409,7 @@
       summaryEl.innerHTML = metric('Date', escapeHtml(date)) + metric('Trips', '...') + metric('Vessels', '...') + metric('Updated', '...');
       diagramEl.innerHTML = '';
       legendEl.innerHTML = '';
-      rowsEl.innerHTML = '<tr><td colspan="4" class="empty">Loading ferry history...</td></tr>';
+      rowsEl.innerHTML = '<tr><td colspan="6" class="empty">Loading ferry history...</td></tr>';
       errorEl.hidden = true;
     }
 
@@ -437,7 +440,7 @@
       summaryEl.innerHTML = metric('Error', escapeHtml(message));
       diagramEl.innerHTML = '';
       legendEl.innerHTML = '';
-      rowsEl.innerHTML = '<tr><td colspan="4" class="empty">No ferry history is available.</td></tr>';
+      rowsEl.innerHTML = '<tr><td colspan="6" class="empty">No ferry history is available.</td></tr>';
       errorEl.hidden = false;
       errorEl.textContent = message;
     }
@@ -585,16 +588,19 @@
 
     function renderRows(trips) {
       if (!trips.length) {
-        rowsEl.innerHTML = '<tr><td colspan="4" class="empty">No trips have been recorded for this date yet.</td></tr>';
+        rowsEl.innerHTML = '<tr><td colspan="6" class="empty">No trips have been recorded for this date yet.</td></tr>';
         return;
       }
       rowsEl.innerHTML = trips.map(trip => {
         const isClinton = trip.direction === 'clinton-to-mukilteo';
         const cell = tripCell(trip);
+        const dockMs = dockDurationMs(trip, trips);
         return `<tr>
           <td class="vessel">${escapeHtml(trip.vesselName || 'Unknown')}</td>
           <td>${isClinton ? cell : '<span class="empty">-</span>'}</td>
           <td>${!isClinton ? cell : '<span class="empty">-</span>'}</td>
+          <td class="duration">${formatMinutes(tripDurationMs(trip))}</td>
+          <td class="duration">${formatMinutes(dockMs)}</td>
           <td><span class="state ${escapeHtml(trip.status || '')}">${escapeHtml(statusText(trip.status))}</span></td>
         </tr>`;
       }).join('');
@@ -607,6 +613,35 @@
       return `<div class="actual ${late ? 'late' : 'ok'}">${formatTimeMs(departed)} - ${formatTimeMs(arrived)}</div>
         <div class="scheduled">scheduled ${formatTimeMs(trip.scheduledDepartureMs)}</div>
         <div class="basis">${escapeHtml(arrivalBasisText(trip.arrivalBasis))}</div>`;
+    }
+
+    function tripStartMs(trip) {
+      return trip.actualDepartureMs || trip.scheduledDepartureMs || null;
+    }
+
+    function tripEndMs(trip) {
+      const departed = tripStartMs(trip);
+      return trip.arrivalMs || (departed ? departed + 20 * 60 * 1000 : null);
+    }
+
+    function tripDurationMs(trip) {
+      const departed = tripStartMs(trip);
+      const arrived = tripEndMs(trip);
+      return departed && arrived && arrived > departed ? arrived - departed : null;
+    }
+
+    function dockDurationMs(trip, trips) {
+      const arrived = tripEndMs(trip);
+      if (!arrived || !trip.vesselName || !trip.toTerminalId) return null;
+      const next = trips
+        .filter(candidate =>
+          candidate !== trip &&
+          candidate.vesselName === trip.vesselName &&
+          candidate.fromTerminalId === trip.toTerminalId &&
+          tripStartMs(candidate) > arrived)
+        .sort((a, b) => tripStartMs(a) - tripStartMs(b))[0];
+      if (!next) return null;
+      return tripStartMs(next) - arrived;
     }
 
     function statusText(status) {
@@ -634,6 +669,10 @@
     function formatTimeMs(ms) {
       if (!ms) return '--';
       return new Intl.DateTimeFormat([], { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' }).format(new Date(ms));
+    }
+
+    function formatMinutes(ms) {
+      return ms == null ? '--' : (ms / 60000).toFixed(1);
     }
 
     function addDays(date, days) {
