@@ -378,28 +378,60 @@
     .sail-fill-fill { height: 100%; border-radius: 2px; transition: width 0.4s ease; }
     .sail-fill-label { font-size: 0.58rem; color: var(--dim); margin-top: 0.1rem; }
     .space-warning { color: var(--warn); font-size: 0.65rem; font-weight: 600; white-space: nowrap; }
-    .ferry-alerts {
-      display: grid;
-      gap: 0.25rem;
-      margin: 0 0 0.4rem;
+    #ferry-alert-ticker {
+      grid-column: 1 / -1;
+      min-height: 2rem;
     }
-    .ferry-alert {
+
+    .ferry-alert-ticker {
       border: 1px solid rgba(251,191,36,0.38);
       background: rgba(251,191,36,0.12);
       color: var(--warn);
-      border-radius: 0.35rem;
-      padding: 0.22rem 0.4rem;
-      font-size: 0.68rem;
-      font-weight: 600;
-      line-height: 1.25;
+      border-radius: 0.5rem;
+      height: 2rem;
       overflow: hidden;
-      text-overflow: ellipsis;
       white-space: nowrap;
+      display: flex;
+      align-items: center;
+      position: relative;
     }
-    .ferry-alert.danger {
+    .ferry-alert-ticker.danger {
       border-color: rgba(248,113,113,0.45);
       background: rgba(248,113,113,0.12);
       color: var(--danger);
+    }
+    .ferry-alert-track {
+      display: inline-flex;
+      align-items: center;
+      width: max-content;
+      min-width: 200%;
+      animation: ferryAlertScroll 42s linear infinite;
+    }
+    .ferry-alert-copy {
+      display: inline-flex;
+      align-items: center;
+      gap: 2.2rem;
+      padding-right: 2.2rem;
+    }
+    .ferry-alert-item {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 0.45rem;
+      font-size: 0.78rem;
+      line-height: 1;
+    }
+    .ferry-alert-title {
+      font-weight: 800;
+      letter-spacing: 0.02em;
+    }
+    .ferry-alert-detail {
+      font-weight: 500;
+      color: var(--text);
+      opacity: 0.92;
+    }
+    @keyframes ferryAlertScroll {
+      from { transform: translateX(0); }
+      to   { transform: translateX(-50%); }
     }
 
     /* Late departure: red estimated time + smaller original scheduled time below */
@@ -621,6 +653,7 @@
   <div class="ferry-panel" id="ferry-mukilteo"><div class="loading">Loading...</div></div>
   <div class="ferry-panel" id="ferry-clinton"><div class="loading">Loading...</div></div>
 </div>
+<div id="ferry-alert-ticker"></div>
 
 <script type="module">
 
@@ -1220,29 +1253,60 @@ function estimateDepartureFromVessel(vessel, fromTerminalId, schedMs) {
     return vessel.etaMs + MIN_TURNAROUND_MS;
   }
 
-  // At the departure dock but not gone yet. WSF does not expose actual arrival
-  // time here, so once scheduled time has passed we conservatively use "now".
+  // At the departure dock but not gone yet. Keep this estimate stable across
+  // refreshes; using Date.now() here makes countdowns drift and retriggers the
+  // slide animation even when the next scheduled sailing has not changed.
   if (vessel.atDock && vessel.departingTerminalId === fromTerminalId) {
-    return Math.max(schedMs, Date.now());
+    return vessel.scheduledDepartureMs || schedMs;
   }
 
   return vessel.scheduledDepartureMs || null;
 }
 
-function getSailingTiming(s, vesselMap, fromTerminalId, parsedSailings = null) {
+function buildLateInfo(effectiveMs, scheduledMs, vessel = null) {
+  const delayMs = effectiveMs - scheduledMs;
+  return delayMs > LATE_THRESHOLD_MS
+    ? { estimatedDepartureMs: effectiveMs, delayMs, atDock: !!vessel?.atDock }
+    : null;
+}
+
+function getRawSailingTiming(s, vesselMap, fromTerminalId, parsedSailings = null) {
   const scheduledMs = s.sailTime.getTime();
   const vessel = findVesselForSailing(s, vesselMap, fromTerminalId, parsedSailings);
   const estimateMs = estimateDepartureFromVessel(vessel, fromTerminalId, scheduledMs);
   const effectiveMs = estimateMs == null ? scheduledMs : Math.max(scheduledMs, estimateMs);
-  const delayMs = effectiveMs - scheduledMs;
   return {
     scheduledMs,
     effectiveMs,
     vessel,
-    lateInfo: delayMs > LATE_THRESHOLD_MS
-      ? { estimatedDepartureMs: effectiveMs, delayMs, atDock: !!vessel?.atDock }
-      : null,
+    lateInfo: buildLateInfo(effectiveMs, scheduledMs, vessel),
   };
+}
+
+function computeSailingTimings(parsedSailings, vesselMap = {}, fromTerminalId = 5) {
+  let carriedDelayMs = 0;
+  return parsedSailings.map(s => {
+    const raw = getRawSailingTiming(s, vesselMap, fromTerminalId, parsedSailings);
+    const rawDelayMs = Math.max(0, raw.effectiveMs - raw.scheduledMs);
+    carriedDelayMs = Math.max(carriedDelayMs, rawDelayMs);
+    const effectiveMs = raw.scheduledMs + carriedDelayMs;
+    return {
+      ...raw,
+      sailing: s,
+      effectiveMs,
+      lateInfo: buildLateInfo(effectiveMs, raw.scheduledMs, raw.vessel),
+      propagatedDelayMs: carriedDelayMs,
+    };
+  });
+}
+
+function getSailingTiming(s, vesselMap, fromTerminalId, parsedSailings = null) {
+  if (parsedSailings) {
+    return computeSailingTimings(parsedSailings, vesselMap, fromTerminalId)
+      .find(t => t.sailing === s || t.scheduledMs === s.sailTime.getTime()) ||
+      getRawSailingTiming(s, vesselMap, fromTerminalId, parsedSailings);
+  }
+  return getRawSailingTiming(s, vesselMap, fromTerminalId, parsedSailings);
 }
 
 function formatCountdown(ms) {
@@ -1305,10 +1369,11 @@ function isDepartureConfirmed(s, parsedSailings, spaceMap, vesselMap = {}, fromT
 
 function sailingCard(s, parsedSailings, spaceMap, vesselMap = {}, fromTerminalId = 5) {
   const now = Date.now();
-  const timings = parsedSailings.map(x => getSailingTiming(x, vesselMap, fromTerminalId, parsedSailings));
+  const timings = computeSailingTimings(parsedSailings, vesselMap, fromTerminalId);
   const trueNextIdx = timings.findIndex(t => t.effectiveMs >= now);
   const trueLastIdx = parsedSailings.length - 1;
-  const timing = getSailingTiming(s, vesselMap, fromTerminalId, parsedSailings);
+  const timing = timings.find(t => t.sailing === s || t.scheduledMs === s.sailTime.getTime()) ||
+    getSailingTiming(s, vesselMap, fromTerminalId, parsedSailings);
   const isPast = timing.effectiveMs < now;
   const isNext = trueNextIdx >= 0 && s.sailTime.getTime() === parsedSailings[trueNextIdx].sailTime.getTime();
   const isTrueLast = s.sailTime.getTime() === parsedSailings[trueLastIdx].sailTime.getTime();
@@ -1329,8 +1394,7 @@ function sailingCard(s, parsedSailings, spaceMap, vesselMap = {}, fromTerminalId
   if (lateInfo) {
     const estTime = new Date(lateInfo.estimatedDepartureMs).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
     timeHtml = `<div class="sail-time"><span class="sail-time-est">${estTime}</span><span class="sail-time-sched">(was ${display})</span></div>`;
-    // Override status to show delay when the vessel is still at dock
-    if (lateInfo.atDock) statusText = '⚠ Delayed';
+    statusText = '⚠ Delayed';
   } else {
     timeHtml = `<div class="sail-time">${display}</div>`;
   }
@@ -1362,7 +1426,9 @@ const panelNextTime = {};
 
 function buildDisplayList(parsedSailings, vesselMap = {}, fromTerminalId = 5) {
   const now = Date.now();
-  const isFuture = s => getSailingTiming(s, vesselMap, fromTerminalId, parsedSailings).effectiveMs >= now;
+  const timings = computeSailingTimings(parsedSailings, vesselMap, fromTerminalId);
+  const timingFor = s => timings.find(t => t.sailing === s || t.scheduledMs === s.sailTime.getTime());
+  const isFuture = s => timingFor(s).effectiveMs >= now;
   const lastDeparted = [...parsedSailings].reverse().find(s => !isFuture(s));
   const next3 = parsedSailings.filter(isFuture).slice(0, 3);
   const list = [];
@@ -1378,7 +1444,8 @@ function updateFerryCards(panelId, countdownId, parsedSailings, spaceMap, animat
   if (!grid) return;
 
   const now = Date.now();
-  const trueNextIdx = parsedSailings.findIndex(s => getSailingTiming(s, vesselMap, fromTerminalId, parsedSailings).effectiveMs >= now);
+  const timings = computeSailingTimings(parsedSailings, vesselMap, fromTerminalId);
+  const trueNextIdx = timings.findIndex(t => t.effectiveMs >= now);
   const trueLastIdx = parsedSailings.length - 1;
   const nextIsLast = trueNextIdx === trueLastIdx && trueNextIdx >= 0;
 
@@ -1389,7 +1456,7 @@ function updateFerryCards(panelId, countdownId, parsedSailings, spaceMap, animat
     if (!next) {
       cdEl.textContent = 'Done for day'; cdEl.className = 'countdown-badge';
     } else {
-      const remaining = getSailingTiming(next, vesselMap, fromTerminalId, parsedSailings).effectiveMs - Date.now();
+      const remaining = timings[trueNextIdx].effectiveMs - Date.now();
       const text = formatCountdown(remaining);
       const urgent = remaining < 15 * 60 * 1000;
       cdEl.textContent = `⛴ ${text}`;
@@ -1444,27 +1511,36 @@ function escapeHtml(value = '') {
 function renderFerryAlerts(alerts = []) {
   const usable = alerts
     .filter(a => a && (a.title || a.text))
-    .slice(0, 2);
+    .slice(0, 3);
   if (!usable.length) return '';
+  const danger = usable.some(a => /\b(out of service|cancel|canceled|cancelled|mechanical|shortage|one[- ]boat)\b/i.test(`${a.title || ''} ${a.text || ''}`));
   const items = usable.map(a => {
-    const text = a.title || a.text;
-    const danger = /\b(out of service|cancel|canceled|cancelled|mechanical|shortage|one[- ]boat)\b/i.test(text);
-    return `<div class="ferry-alert${danger ? ' danger' : ''}">${escapeHtml(text)}</div>`;
+    const title = String(a.title || '').trim();
+    const detail = String(a.text || '').trim();
+    const showDetail = detail && detail !== title;
+    return `<span class="ferry-alert-item"><span class="ferry-alert-title">${escapeHtml(title || detail)}</span>${showDetail ? `<span class="ferry-alert-detail">${escapeHtml(detail)}</span>` : ''}</span>`;
   }).join('');
-  return `<div class="ferry-alerts">${items}</div>`;
+  return `<div class="ferry-alert-ticker${danger ? ' danger' : ''}"><div class="ferry-alert-track"><div class="ferry-alert-copy">${items}</div><div class="ferry-alert-copy" aria-hidden="true">${items}</div></div></div>`;
 }
 
-function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spaceMap, schedData, spaceDataMissing = false, alerts = [], vesselMap = {}, fromTerminalId = 5) {
+function updateFerryAlerts(alerts = []) {
+  const el = document.getElementById('ferry-alert-ticker');
+  if (!el) return;
+  el.innerHTML = renderFerryAlerts(alerts);
+}
+
+function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spaceMap, schedData, spaceDataMissing = false, vesselMap = {}, fromTerminalId = 5) {
   const isStale = schedData && schedData._stale;
   const el = document.getElementById(panelId);
   if (!el) return;
   if (!parsedSailings.length) { el.innerHTML = `<div class="error-msg">No sailings found.</div>`; return; }
 
   const now = Date.now();
-  const trueNextIdx = parsedSailings.findIndex(s => getSailingTiming(s, vesselMap, fromTerminalId, parsedSailings).effectiveMs >= now);
+  const timings = computeSailingTimings(parsedSailings, vesselMap, fromTerminalId);
+  const trueNextIdx = timings.findIndex(t => t.effectiveMs >= now);
   const trueLastIdx = parsedSailings.length - 1;
   const nextIsLast = trueNextIdx === trueLastIdx && trueNextIdx >= 0;
-  const nextTime = trueNextIdx >= 0 ? getSailingTiming(parsedSailings[trueNextIdx], vesselMap, fromTerminalId, parsedSailings).effectiveMs : null;
+  const nextSailingKey = trueNextIdx >= 0 ? parsedSailings[trueNextIdx].sailTime.getTime() : null;
 
   // Full rebuild of panel HTML (header + grid)
   const displayList = buildDisplayList(parsedSailings, vesselMap, fromTerminalId);
@@ -1479,20 +1555,20 @@ function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spac
       <span id="${countdownId}" class="countdown-badge">⛴ ...</span>
       ${nextIsLast ? '<span class="last-sailing-note">⚠ Last</span>' : ''}
     </div>
-    ${renderFerryAlerts(alerts)}
     <div class="sailings-grid">${cards}</div>`;
 
-  panelNextTime[panelId] = nextTime;
+  panelNextTime[panelId] = nextSailingKey;
 
   // Countdown + slide-check ticker
   if (countdownIntervals[countdownId]) clearInterval(countdownIntervals[countdownId]);
   countdownIntervals[countdownId] = setInterval(() => {
     const now2 = Date.now();
-    const newNextIdx = parsedSailings.findIndex(s => getSailingTiming(s, vesselMap, fromTerminalId, parsedSailings).effectiveMs >= now2);
-    const newNextTime = newNextIdx >= 0 ? getSailingTiming(parsedSailings[newNextIdx], vesselMap, fromTerminalId, parsedSailings).effectiveMs : null;
+    const newTimings = computeSailingTimings(parsedSailings, vesselMap, fromTerminalId);
+    const newNextIdx = newTimings.findIndex(t => t.effectiveMs >= now2);
+    const newNextSailingKey = newNextIdx >= 0 ? parsedSailings[newNextIdx].sailTime.getTime() : null;
 
-    const shouldAnimate = newNextTime !== panelNextTime[panelId];
-    if (shouldAnimate) panelNextTime[panelId] = newNextTime;
+    const shouldAnimate = newNextSailingKey !== panelNextTime[panelId];
+    if (shouldAnimate) panelNextTime[panelId] = newNextSailingKey;
 
     updateFerryCards(panelId, countdownId, parsedSailings, spaceMap, shouldAnimate, vesselMap, fromTerminalId);
   }, 30000);
@@ -1522,6 +1598,7 @@ async function loadFerry() {
   const vesselData   = vesselRes.status === 'fulfilled' ? vesselRes.value : null;
   // Build vessel map (scheduledDepartureMs → vessel); safe to pass empty map on API failure
   const vesselMap    = buildVesselMap(vesselData);
+  updateFerryAlerts(routeAlerts);
 
   if (clintonData?.error === 'WSF_API_KEY not configured') {
     document.getElementById('ferry').innerHTML = `<div class="no-ferry-key">Ferry schedule requires a free WSDOT API key. <a href="https://www.wsdot.wa.gov/traffic/api/" target="_blank">Register here</a>, then add to <code>.env</code> as <code>WSF_API_KEY</code>.</div>`;
@@ -1530,13 +1607,13 @@ async function loadFerry() {
 
   if (mukilteoData && !mukilteoData.error) {
     if (!mukilteoData._stale) markFresh('ferry-mukilteo');
-    renderFerryPanel('ferry-mukilteo', 'countdown-mukilteo', 'Mukilteo → Clinton', parseSailings(mukilteoData), mukilteoSp, mukilteoData, mukilteoSpaceMissing, routeAlerts, vesselMap, 14);
+    renderFerryPanel('ferry-mukilteo', 'countdown-mukilteo', 'Mukilteo → Clinton', parseSailings(mukilteoData), mukilteoSp, mukilteoData, mukilteoSpaceMissing, vesselMap, 14);
   } else if (!mukilteoData || mukilteoData.error) {
     delete dataUpdatedAt['ferry-mukilteo'];
   }
   if (clintonData && !clintonData.error) {
     if (!clintonData._stale) markFresh('ferry-clinton');
-    renderFerryPanel('ferry-clinton',  'countdown-clinton',  'Clinton → Mukilteo',  parseSailings(clintonData),  clintonSp,  clintonData, clintonSpaceMissing, routeAlerts, vesselMap, 5);
+    renderFerryPanel('ferry-clinton',  'countdown-clinton',  'Clinton → Mukilteo',  parseSailings(clintonData),  clintonSp,  clintonData, clintonSpaceMissing, vesselMap, 5);
   } else if (!clintonData || clintonData.error) {
     delete dataUpdatedAt['ferry-clinton'];
   }

@@ -271,6 +271,43 @@ test('static HTML — inline JavaScript parses without errors', async () => {
   assert.doesNotThrow(() => new Function(scriptMatch[1]), 'inline JS should parse without syntax errors');
 });
 
+test('static HTML — ferry alerts render as a single scrolling ticker with title and detail', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
+  const script = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+
+  const nullEl = { style: {}, className: '', textContent: '', innerHTML: '', querySelector: () => null };
+  const context = {
+    console,
+    Date,
+    setInterval: () => 0,
+    setTimeout: () => 0,
+    clearInterval: () => {},
+    fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
+    document: {
+      getElementById: () => nullEl,
+      querySelector: () => nullEl,
+      createElement: () => ({}),
+      head: { appendChild: () => {} },
+    },
+    window: {},
+  };
+  vm.createContext(context);
+  vm.runInContext(script + `\nthis.__alertTest = { renderFerryAlerts };`, context);
+
+  const ticker = context.__alertTest.renderFerryAlerts([{
+    title: 'Muk/Clin - Both vessels are 20 minutes behind schedule.',
+    text: 'Customers should expect delays through the evening commute.',
+  }]);
+  assert.match(ticker, /ferry-alert-ticker/, 'renders one shared ticker container');
+  assert.match(ticker, /ferry-alert-title/, 'renders title span');
+  assert.match(ticker, /ferry-alert-detail/, 'renders detail span');
+  assert.equal((ticker.match(/ferry-alert-copy/g) || []).length, 2, 'duplicates content so the scroll wraps');
+});
+
 test('late ferry logic — inbound arrival enforces 15 minute turn-around and red delayed card', async () => {
   const { readFileSync } = await import('fs');
   const { dirname: dn, join: jn } = await import('path');
@@ -384,6 +421,70 @@ test('late ferry logic — current vessel position does not resurrect old mornin
   const list = context.__lateTest.buildDisplayList(sailings, vesselMap, 14);
   assert.equal(list[0].sailTime.getTime(), priorMs, 'last departed is the prior evening sailing');
   assert.ok(!list.some(s => s.sailTime.getTime() === morningMs), 'old morning sailing is not shown as late');
+});
+
+test('late ferry logic — delay propagates through later sailings in schedule order', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
+  const script = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+
+  const fixedNow = Date.UTC(2026, 5, 8, 0, 15); // 5:15 PM PDT
+  class FakeDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [fixedNow])); }
+    static now() { return fixedNow; }
+  }
+  Object.assign(FakeDate, Date);
+
+  const nullEl = { style: {}, className: '', textContent: '', innerHTML: '', querySelector: () => null };
+  const context = {
+    console,
+    Date: FakeDate,
+    setInterval: () => 0,
+    setTimeout: () => 0,
+    clearInterval: () => {},
+    fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
+    document: {
+      getElementById: () => nullEl,
+      querySelector: () => nullEl,
+      createElement: () => ({}),
+      head: { appendChild: () => {} },
+    },
+    window: {},
+  };
+  vm.createContext(context);
+  vm.runInContext(script + `\nthis.__lateTest = { buildVesselMap, computeSailingTimings, buildDisplayList, sailingCard };`, context);
+
+  const firstMs = Date.UTC(2026, 5, 8, 0, 5);   // 5:05 PM PDT
+  const secondMs = Date.UTC(2026, 5, 8, 0, 35); // 5:35 PM PDT
+  const thirdMs = Date.UTC(2026, 5, 8, 1, 5);   // 6:05 PM PDT
+  const sailings = [firstMs, secondMs, thirdMs].map(ms => ({
+    sailTime: new Date(ms),
+    DepartingTime: `/Date(${ms})/`,
+  }));
+  const vesselMap = context.__lateTest.buildVesselMap({ vessels: [{
+    vesselName: 'Tokitae',
+    inService: true,
+    atDock: true,
+    departingTerminalId: 14,
+    arrivingTerminalId: 5,
+    scheduledDepartureMs: Date.UTC(2026, 5, 8, 0, 40), // 5:40 PM PDT
+  }] });
+
+  const timings = context.__lateTest.computeSailingTimings(sailings, vesselMap, 14);
+  assert.equal(timings[0].effectiveMs, Date.UTC(2026, 5, 8, 0, 40), 'first late sailing uses vessel estimate');
+  assert.equal(timings[1].effectiveMs, Date.UTC(2026, 5, 8, 1, 10), 'later sailing inherits the same delay');
+  assert.equal(timings[2].effectiveMs, Date.UTC(2026, 5, 8, 1, 40), 'delay continues through subsequent sailings');
+  assert.ok(timings[0].effectiveMs < timings[1].effectiveMs, 'effective times stay in schedule order');
+
+  const list = context.__lateTest.buildDisplayList(sailings, vesselMap, 14);
+  assert.equal(list[0].sailTime.getTime(), firstMs, 'late first sailing remains the next card');
+
+  const card = context.__lateTest.sailingCard(sailings[1], sailings, {}, vesselMap, 14);
+  assert.match(card, /1:10 PM|6:10 PM/, 'renders the propagated estimate instead of duplicating 5:40 PM');
+  assert.doesNotMatch(card, /5:40 PM.*was 5:35 PM/s, 'does not apply the same estimate to the next scheduled card');
 });
 
 test('weather endpoint — second request is served from cache', async () => {
