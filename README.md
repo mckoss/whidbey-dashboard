@@ -18,23 +18,46 @@ See the hosted version at [whidbey-dashboard.mckoss.com](https://whidbey-dashboa
 
 ```bash
 npm install
-cp .env.example .env
-# Edit .env — add your WSDOT API key (free, see below)
+cp config.example.json config.json
+# Edit config.json — add your WSDOT API key and Google admin settings
 npm start
 # Open http://localhost:3000
 ```
 
-## WSDOT Ferry API Key
+## Configuration
 
-Free key from https://www.wsdot.wa.gov/traffic/api/ — add as `WSF_API_KEY=your_key` in `.env`.
+Runtime configuration lives in ignored `config.json`. Copy
+`config.example.json` and edit it for local development or production deploys:
+
+```json
+{
+  "port": 3000,
+  "dataDir": "data",
+  "noaaStation": "9445526",
+  "lat": 47.9748,
+  "lon": -122.3534,
+  "timezone": "America/Los_Angeles",
+  "wsfApiKey": "your_wsdot_api_key_here",
+  "wsfDepartingTerminal": 5,
+  "wsfArrivingTerminal": 14,
+  "wsfRouteId": 7,
+  "gaMeasurementId": null,
+  "googleClientId": "your-google-oauth-client-id.apps.googleusercontent.com",
+  "adminUsers": [
+    "mike@example.com"
+  ]
+}
+```
+
+The WSDOT ferry API key is free from https://www.wsdot.wa.gov/traffic/api/.
+`config.json` is the single runtime configuration file.
 
 Weather and tides work without any API keys.
 
-## User Crawl Messages
+## Admin
 
-Visit `/message` to add or delete user-managed messages in the bottom crawl. The
-`From` field is an email address typed into a password-style input; the server
-accepts changes only from configured senders.
+Visit `/admin` to sign in with Google and manage the dashboard. The first admin
+tool adds or deletes user-managed messages in the bottom crawl.
 
 User messages are separate from WSF ferry alerts in storage and management, but
 they render in the same single-line marquee: WSF alerts first, then user-added
@@ -42,29 +65,49 @@ messages, then the duplicate wrap copy. User messages use the dashboard heading
 blue (`--accent`) so they are visually distinct from WSF warning yellow and
 disruption red.
 
-Production configuration uses JSON in `AUTHORIZED_MESSAGE_EMAIL_USERS`, either
-as an array or an object with `authorizedMessageEmailUsers`:
+Admin auth uses Google Identity Services. Create a Google OAuth web client and
+put the public client ID plus the approved `adminUsers` list in `config.json`.
 
-```bash
-AUTHORIZED_MESSAGE_EMAIL_USERS='["mike@example.com"]'
-```
+### Google OAuth Client Setup
 
-For local development, copy `config.example.json` to ignored `config.json` in
-the repo root and edit the email list:
+The admin page uses a Google OAuth **web client ID** only. It does not use a
+client secret or service account because the browser gets a Google ID token and
+the server verifies that token against the configured client ID.
+
+1. Open the [Google Cloud Console](https://console.cloud.google.com/) and select
+   the project that should own the dashboard auth settings.
+2. Go to **Google Auth Platform** → **Branding** and configure the OAuth consent
+   screen if the project does not already have one. For a private admin tool,
+   keep the app audience internal/test-only as appropriate for the account.
+3. Go to **Google Auth Platform** → **Clients**.
+4. Click **Create client**, choose **Web application**, and give it a name such
+   as `Whidbey Dashboard Admin`.
+5. Under **Authorized JavaScript origins**, add every origin that will serve the
+   admin page:
+   - `http://localhost:3000`
+   - `https://whidbey-dashboard.mckoss.com`
+6. Leave **Authorized redirect URIs** empty for this app. The dashboard uses the
+   Google Identity Services sign-in button and sends the resulting ID token to
+   the server; it does not run a redirect callback flow.
+7. Copy the generated client ID into `config.json`:
 
 ```json
 {
-  "authorizedMessageEmailUsers": [
+  "googleClientId": "your-client-id.apps.googleusercontent.com",
+  "adminUsers": [
     "mike@example.com"
   ]
 }
 ```
 
+Only emails listed in `adminUsers` can add or delete dashboard crawl messages,
+even if another Google account successfully signs in.
+
 ## Architecture
 
 **Single-file frontend:** `public/index.html` — all HTML, CSS, and JS in one file. No build step, no bundler.
 
-**Server:** `server.js` — Express, memory-first cache per endpoint persisted to `data/cache.json`, stale-while-revalidate pattern. If a fresh fetch fails, serves stale data with `_stale: true` flag.
+**Server:** `server.js` — Express, ignored `config.json` for runtime settings, memory-first cache per endpoint persisted to `data/cache.json`, stale-while-revalidate pattern. If a fresh fetch fails, serves stale data with `_stale: true` flag.
 
 **Tests:** `npm test` runs `node --test test/api.test.js`. Tests spawn their own server on port 3001.
 
@@ -82,10 +125,11 @@ the repo root and edit the email list:
 
 Data windows include headroom beyond the refresh interval (e.g., tide hourly fetches 52h for a 48h display with 2h refresh cycle).
 
-Cache files are written to `DATA_DIR`, then `RAILWAY_VOLUME_MOUNT_PATH`,
-then local `./data` as a fallback. For Railway persistence across deploys,
-mount a Railway Volume at `/app/data`; local development will keep using the
-repo's `data/` directory.
+Cache files are written to `dataDir` in `config.json`, or local `./data` when
+`dataDir` is omitted. For Railway persistence across deploys, mount a Railway
+Volume at `/app/data` and set `"dataDir": "/app/data"` in `config.json`; local
+development will keep using the repo's `data/` directory unless configured
+otherwise.
 
 ## Staleness Indicators
 
@@ -108,8 +152,8 @@ Each card shows an inline age tag after the title. Thresholds are per-source:
 | `GET /api/ferry/mukilteo/space` | Drive-up space by departure (Mukilteo) |
 | `GET /api/ferry` | Legacy alias for `/api/ferry/clinton` |
 | `GET /api/messages` | User-managed crawl messages |
-| `POST /api/messages` | Add an authorized user-managed crawl message |
-| `DELETE /api/messages/:id` | Delete an authorized user-managed crawl message |
+| `POST /api/messages` | Add a user-managed crawl message (Google admin auth required) |
+| `DELETE /api/messages/:id` | Delete a user-managed crawl message (Google admin auth required) |
 | `GET /api/cache-status` | Debug: cache metadata for all endpoints |
 
 ## Moon Phase Display

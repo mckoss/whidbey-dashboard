@@ -1,5 +1,6 @@
 import express from 'express';
 import fetch from 'node-fetch';
+import { OAuth2Client } from 'google-auth-library';
 import morgan from 'morgan';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { randomUUID } from 'crypto';
@@ -7,44 +8,38 @@ import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-
-// Load .env manually (no bundler)
-try {
-  const env = readFileSync(join(__dirname, '.env'), 'utf8');
-  for (const line of env.split('\n')) {
-    const [k, ...rest] = line.split('=');
-    const v = rest.join('=');
-    // Don't overwrite env vars already set (e.g. PORT passed via spawn)
-    if (k && v && !process.env[k.trim()]) process.env[k.trim()] = v.trim();
-  }
-} catch {}
+const CONFIG_FILE = resolve(process.env.CONFIG_FILE || join(__dirname, 'config.json'));
 
 // package.json is the single source of truth for the version string;
 // the client reads it via /api/config and renders it in the header.
 const pkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8'));
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-const DATA_DIR = resolve(process.env.DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || 'data');
-const CACHE_FILE = join(DATA_DIR, 'cache.json');
-const MESSAGE_FILE = join(DATA_DIR, 'messages.json');
-const CONFIG_FILE = join(__dirname, 'config.json');
+const rootConfig = loadRootConfig();
+const dataDir = resolve(configValue('dataDir', 'data'));
+const CONFIG = {
+  configFile: CONFIG_FILE,
+  port: Number(configValue('port', 3000)),
+  dataDir,
+  cacheFile: join(dataDir, 'cache.json'),
+  messageFile: join(dataDir, 'messages.json'),
+  wsfApiKey: String(configValue('wsfApiKey', '')).trim(),
+  gaMeasurementId: configValue('gaMeasurementId', null),
+  googleClientId: String(configValue('googleClientId', '')).trim(),
+  adminUsers: parseAuthorizedUsers(configValue('adminUsers', [])),
+  adminTestTokens: parseJsonObject(configValue('adminTestTokens', {})),
+  noaaStation: String(configValue('noaaStation', '9445526')),
+  lat: Number(configValue('lat', 47.9748)),
+  lon: Number(configValue('lon', -122.3534)),
+  wsfDepartingTerminal: Number(configValue('wsfDepartingTerminal', 5)),
+  wsfArrivingTerminal: Number(configValue('wsfArrivingTerminal', 14)),
+  wsfRouteId: Number(configValue('wsfRouteId', 7)),
+  timezone: String(configValue('timezone', 'America/Los_Angeles')),
+};
 
 // ── Request logging (stdout → Railway Log Explorer) ───────────────────
 app.use(morgan('combined'));
 app.use(express.json({ limit: '16kb' }));
-const WSF_API_KEY = process.env.WSF_API_KEY || '';
-
-// Config
-const CONFIG = {
-  NOAA_STATION: '9445526',        // Hansville (closest to south Whidbey)
-  LAT: 47.9748,
-  LON: -122.3534,
-  WSF_DEPARTING_TERMINAL: 5,      // Clinton (Whidbey side)
-  WSF_ARRIVING_TERMINAL: 14,      // Mukilteo (mainland side)
-  WSF_ROUTE_ID: 7,                // Mukilteo / Clinton
-  TIMEZONE: 'America/Los_Angeles',
-};
 
 // ── Cache: memory first, persisted for restart/deploy continuity ────────
 const cache = loadPersistentCache();
@@ -67,10 +62,10 @@ function getStale(key) {
 
 function loadPersistentCache() {
   try {
-    if (!existsSync(CACHE_FILE)) return {};
-    const parsed = JSON.parse(readFileSync(CACHE_FILE, 'utf8'));
+    if (!existsSync(CONFIG.cacheFile)) return {};
+    const parsed = JSON.parse(readFileSync(CONFIG.cacheFile, 'utf8'));
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      console.log(`[cache] loaded ${Object.keys(parsed).length} persisted entries from ${CACHE_FILE}`);
+      console.log(`[cache] loaded ${Object.keys(parsed).length} persisted entries from ${CONFIG.cacheFile}`);
       return parsed;
     }
   } catch (e) {
@@ -81,8 +76,8 @@ function loadPersistentCache() {
 
 function writePersistentCache() {
   try {
-    mkdirSync(DATA_DIR, { recursive: true });
-    writeFileSync(CACHE_FILE, JSON.stringify(cache, null, 2));
+    mkdirSync(CONFIG.dataDir, { recursive: true });
+    writeFileSync(CONFIG.cacheFile, JSON.stringify(cache, null, 2));
   } catch (e) {
     console.warn(`[cache] could not persist cache: ${e.message}`);
   }
@@ -99,40 +94,109 @@ function loadRootConfig() {
   }
 }
 
-function parseAuthorizedMessageUsers(value) {
+function configValue(key, defaultValue = null) {
+  const value = rootConfig[key];
+  if (value !== undefined && value !== null && value !== '') return value;
+  return defaultValue;
+}
+
+function parseJsonObject(value) {
+  if (!value) return {};
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (e) {
+    console.warn(`[config] invalid JSON object: ${e.message}`);
+    return {};
+  }
+}
+
+function parseAuthorizedUsers(value) {
   if (!value) return [];
   try {
     const parsed = typeof value === 'string' ? JSON.parse(value) : value;
-    const users = Array.isArray(parsed)
-      ? parsed
-      : parsed?.authorizedMessageEmailUsers || parsed?.authorizedUsers || parsed?.users || [];
-    return Array.isArray(users)
-      ? users.map(user => String(user).trim().toLowerCase()).filter(Boolean)
+    return Array.isArray(parsed)
+      ? parsed.map(user => String(user).trim().toLowerCase()).filter(Boolean)
       : [];
   } catch (e) {
-    console.warn(`[config] invalid authorized message users JSON: ${e.message}`);
+    console.warn(`[config] invalid adminUsers JSON: ${e.message}`);
     return [];
   }
 }
 
-function authorizedMessageUsers() {
-  const localConfig = loadRootConfig();
-  const configured = localConfig.authorizedMessageEmailUsers
-    ?? localConfig.authorized_message_email_users
-    ?? localConfig.messageUsers
-    ?? process.env.AUTHORIZED_MESSAGE_EMAIL_USERS;
-  return new Set(parseAuthorizedMessageUsers(configured));
+function googleClientId() {
+  return CONFIG.googleClientId;
 }
 
-function isAuthorizedMessageUser(from) {
-  const users = authorizedMessageUsers();
-  return users.size > 0 && users.has(String(from || '').trim().toLowerCase());
+function adminUsers() {
+  return new Set(CONFIG.adminUsers);
+}
+
+function parseAdminTestTokens() {
+  if (process.env.NODE_ENV !== 'test') return {};
+  return CONFIG.adminTestTokens;
+}
+
+const googleClients = new Map();
+
+function googleClientFor(clientId) {
+  if (!googleClients.has(clientId)) {
+    googleClients.set(clientId, new OAuth2Client(clientId));
+  }
+  return googleClients.get(clientId);
+}
+
+function bearerToken(req) {
+  const header = req.get('authorization') || '';
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  return match ? match[1].trim() : '';
+}
+
+async function verifyAdminToken(token) {
+  const testTokens = parseAdminTestTokens();
+  if (testTokens[token]) {
+    return { email: String(testTokens[token]).trim().toLowerCase(), emailVerified: true };
+  }
+
+  const clientId = googleClientId();
+  if (!clientId) {
+    throw Object.assign(new Error('Google Sign-In is not configured.'), { statusCode: 503 });
+  }
+
+  const ticket = await googleClientFor(clientId).verifyIdToken({
+    idToken: token,
+    audience: clientId,
+  });
+  const payload = ticket.getPayload();
+  return {
+    email: String(payload?.email || '').trim().toLowerCase(),
+    emailVerified: payload?.email_verified === true,
+  };
+}
+
+async function requireAdmin(req, res, next) {
+  try {
+    const token = bearerToken(req);
+    if (!token) return res.status(401).json({ error: 'Google sign-in is required.' });
+
+    const admin = await verifyAdminToken(token);
+    const users = adminUsers();
+    if (!admin.emailVerified || !admin.email || users.size === 0 || !users.has(admin.email)) {
+      return res.status(403).json({ error: 'Not authorized to manage crawl messages.' });
+    }
+
+    req.admin = admin;
+    next();
+  } catch (e) {
+    const statusCode = e.statusCode || 401;
+    res.status(statusCode).json({ error: e.message || 'Google sign-in failed.' });
+  }
 }
 
 function loadUserMessages() {
   try {
-    if (!existsSync(MESSAGE_FILE)) return [];
-    const parsed = JSON.parse(readFileSync(MESSAGE_FILE, 'utf8'));
+    if (!existsSync(CONFIG.messageFile)) return [];
+    const parsed = JSON.parse(readFileSync(CONFIG.messageFile, 'utf8'));
     if (!Array.isArray(parsed)) return [];
     return parsed
       .filter(m => m && typeof m === 'object' && typeof m.text === 'string')
@@ -150,8 +214,8 @@ function loadUserMessages() {
 }
 
 function writeUserMessages(messages) {
-  mkdirSync(DATA_DIR, { recursive: true });
-  writeFileSync(MESSAGE_FILE, JSON.stringify(messages, null, 2));
+  mkdirSync(CONFIG.dataDir, { recursive: true });
+  writeFileSync(CONFIG.messageFile, JSON.stringify(messages, null, 2));
 }
 
 // ── Fetch with retry ────────────────────────────────────────────────────
@@ -195,19 +259,15 @@ function cachedEndpoint(cacheKey, ttlMs, fetcher) {
 
 app.use(express.static(join(__dirname, 'public')));
 
-app.get('/message', (req, res) => {
-  res.sendFile(join(__dirname, 'public', 'message.html'));
+app.get('/admin', (req, res) => {
+  res.sendFile(join(__dirname, 'public', 'admin.html'));
 });
 
 app.get('/api/messages', (req, res) => {
   res.json({ messages: loadUserMessages() });
 });
 
-app.post('/api/messages', (req, res) => {
-  const from = req.body?.from;
-  if (!isAuthorizedMessageUser(from)) {
-    return res.status(403).json({ error: 'Not authorized to add crawl messages.' });
-  }
+app.post('/api/messages', requireAdmin, (req, res) => {
   const text = stripHtml(req.body?.text || '').slice(0, 280);
   if (!text) return res.status(400).json({ error: 'Message text is required.' });
 
@@ -224,11 +284,7 @@ app.post('/api/messages', (req, res) => {
   res.status(201).json({ message });
 });
 
-app.delete('/api/messages/:id', (req, res) => {
-  const from = req.body?.from;
-  if (!isAuthorizedMessageUser(from)) {
-    return res.status(403).json({ error: 'Not authorized to delete crawl messages.' });
-  }
+app.delete('/api/messages/:id', requireAdmin, (req, res) => {
   const messages = loadUserMessages();
   const next = messages.filter(m => m.id !== req.params.id);
   if (next.length === messages.length) {
@@ -247,7 +303,7 @@ app.get('/api/tides', cachedEndpoint('tides', 2 * 60 * 60 * 1000, async () => {
   const end = formatDate(new Date(today.getTime() + 3 * 86400000));
   const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter` +
     `?begin_date=${begin}&end_date=${end}` +
-    `&station=${CONFIG.NOAA_STATION}` +
+    `&station=${CONFIG.noaaStation}` +
     `&product=predictions&datum=MLLW&time_zone=lst_ldt` +
     `&interval=hilo&units=english&application=whidbey_dashboard&format=json`;
   const r = await fetchWithRetry(url);
@@ -270,7 +326,7 @@ app.get('/api/tides/hourly', cachedEndpoint('tides_hourly', 2 * 60 * 60 * 1000, 
   const end = formatDate(new Date(today.getTime() + 3 * 86400000));
   const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter` +
     `?begin_date=${begin}&end_date=${end}` +
-    `&station=${CONFIG.NOAA_STATION}` +
+    `&station=${CONFIG.noaaStation}` +
     `&product=predictions&datum=MLLW&time_zone=lst_ldt` +
     `&interval=hilo&units=english&application=whidbey_dashboard&format=json`;
   const r = await fetchWithRetry(url);
@@ -288,7 +344,7 @@ app.get('/api/tides/hourly', cachedEndpoint('tides_hourly', 2 * 60 * 60 * 1000, 
   // Get current Pacific hour as a fake-UTC epoch so loop ms values stay in Pacific space.
   const offset = pacificOffset();
   const predictions = [];
-  const nowPac = new Date().toLocaleString('sv-SE', { timeZone: 'America/Los_Angeles' });
+  const nowPac = new Date().toLocaleString('sv-SE', { timeZone: CONFIG.timezone });
   const startMs = new Date(nowPac.slice(0, 13) + ':00:00Z').getTime();
   const endMs = startMs + 72 * 3600 * 1000; // 48h display + 24h headroom
 
@@ -324,12 +380,12 @@ app.get('/api/tides/hourly', cachedEndpoint('tides_hourly', 2 * 60 * 60 * 1000, 
 // ── Weather (Open-Meteo) ───────────────────────────────────────────────
 app.get('/api/weather', cachedEndpoint('weather', 60 * 60 * 1000, async () => {
   const url = `https://api.open-meteo.com/v1/forecast` +
-    `?latitude=${CONFIG.LAT}&longitude=${CONFIG.LON}` +
+    `?latitude=${CONFIG.lat}&longitude=${CONFIG.lon}` +
     `&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max,wind_direction_10m_dominant,sunrise,sunset` +
     `&hourly=temperature_2m,weather_code,wind_speed_10m` +
     `&current=temperature_2m,weather_code,wind_speed_10m,wind_direction_10m,relative_humidity_2m` +
     `&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch` +
-    `&timezone=${encodeURIComponent(CONFIG.TIMEZONE)}&forecast_days=3`;
+    `&timezone=${encodeURIComponent(CONFIG.timezone)}&forecast_days=3`;
   const r = await fetchWithRetry(url);
   const data = await r.json();
   // Stamp sunrise/sunset with explicit Pacific offset so clients parse unambiguously
@@ -373,8 +429,8 @@ function ferryAlertAdditionalInfo(title = '') {
 }
 
 app.get('/api/ferry/alerts', cachedEndpoint('ferry_alerts', 30 * 1000, async () => {
-  if (!WSF_API_KEY) return { error: 'WSF_API_KEY not configured', alerts: [] };
-  const url = `https://www.wsdot.wa.gov/ferries/api/schedule/rest/alerts?apiaccesscode=${WSF_API_KEY}`;
+  if (!CONFIG.wsfApiKey) return { error: 'WSF API key not configured', alerts: [] };
+  const url = `https://www.wsdot.wa.gov/ferries/api/schedule/rest/alerts?apiaccesscode=${CONFIG.wsfApiKey}`;
   const r = await fetchWithRetry(url, { headers: { Accept: 'application/json' } });
   const data = await r.json();
   const alerts = (Array.isArray(data) ? data : [])
@@ -398,7 +454,7 @@ app.get('/api/ferry/alerts', cachedEndpoint('ferry_alerts', 30 * 1000, async () 
 function alertAppliesToRoute(alert = {}) {
   if (alert.AllRoutesFlag) return true;
   const routeIds = Array.isArray(alert.AffectedRouteIDs) ? alert.AffectedRouteIDs : [];
-  return routeIds.includes(CONFIG.WSF_ROUTE_ID);
+  return routeIds.includes(CONFIG.wsfRouteId);
 }
 //
 // Midnight carry-over fix (issue #18):
@@ -439,7 +495,7 @@ function timeZoneOffsetMs(ms, timeZone) {
   return localAsUtc - ms;
 }
 
-function startOfLocalDayMs(ms, timeZone = 'America/Los_Angeles') {
+function startOfLocalDayMs(ms, timeZone = CONFIG.timezone) {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone,
     year: 'numeric',
@@ -453,7 +509,7 @@ function startOfLocalDayMs(ms, timeZone = 'America/Los_Angeles') {
 
 function shouldCarryOverSailing(departureMs, nowMs = Date.now()) {
   if (departureMs == null || departureMs <= nowMs) return false;
-  const todayStartMs = startOfLocalDayMs(nowMs, CONFIG.TIMEZONE);
+  const todayStartMs = startOfLocalDayMs(nowMs, CONFIG.timezone);
   const tomorrowStartMs = todayStartMs + 24 * 60 * 60 * 1000;
   const nowIsNearMidnight = nowMs - todayStartMs <= MIDNIGHT_CARRY_OVER_WINDOW_MS;
   const departureIsNearMidnight = departureMs >= todayStartMs &&
@@ -463,9 +519,9 @@ function shouldCarryOverSailing(departureMs, nowMs = Date.now()) {
 
 function ferryScheduleEndpoint(cacheKey, fromTerminal, toTerminal) {
   return cachedEndpoint(cacheKey, 30 * 1000, async () => {
-    if (!WSF_API_KEY) return { error: 'WSF_API_KEY not configured', sailings: [] };
+    if (!CONFIG.wsfApiKey) return { error: 'WSF API key not configured', sailings: [] };
     const url = `https://www.wsdot.wa.gov/ferries/api/schedule/rest/scheduletoday` +
-      `/${fromTerminal}/${toTerminal}/false?apiaccesscode=${WSF_API_KEY}`;
+      `/${fromTerminal}/${toTerminal}/false?apiaccesscode=${CONFIG.wsfApiKey}`;
     const r = await fetchWithRetry(url, { headers: { Accept: 'application/json' } });
     const data = await r.json();
 
@@ -520,9 +576,9 @@ function cachedSailingsFor(cacheKey) {
 // ── Ferry space helper (reusable for either terminal) ─────────────────
 function ferrySpaceEndpoint(cacheKey, fromTerminal, toTerminal) {
   return cachedEndpoint(cacheKey, 30 * 1000, async () => {
-    if (!WSF_API_KEY) return { error: 'WSF_API_KEY not configured' };
+    if (!CONFIG.wsfApiKey) return { error: 'WSF API key not configured' };
     const url = `https://www.wsdot.wa.gov/ferries/api/terminals/rest/terminalsailingspace` +
-      `/${fromTerminal}?apiaccesscode=${WSF_API_KEY}`;
+      `/${fromTerminal}?apiaccesscode=${CONFIG.wsfApiKey}`;
     const r = await fetchWithRetry(url, { headers: { Accept: 'application/json' } });
     const data = await r.json();
     const byDeparture = {};
@@ -542,16 +598,16 @@ function ferrySpaceEndpoint(cacheKey, fromTerminal, toTerminal) {
 }
 
 // Clinton → Mukilteo
-app.get('/api/ferry/clinton', ferryScheduleEndpoint('ferry_clinton', 5, 14));
-app.get('/api/ferry/clinton/space', ferrySpaceEndpoint('ferry_clinton_space', 5, 14));
+app.get('/api/ferry/clinton', ferryScheduleEndpoint('ferry_clinton', CONFIG.wsfDepartingTerminal, CONFIG.wsfArrivingTerminal));
+app.get('/api/ferry/clinton/space', ferrySpaceEndpoint('ferry_clinton_space', CONFIG.wsfDepartingTerminal, CONFIG.wsfArrivingTerminal));
 
 // Mukilteo → Clinton
-app.get('/api/ferry/mukilteo', ferryScheduleEndpoint('ferry_mukilteo', 14, 5));
-app.get('/api/ferry/mukilteo/space', ferrySpaceEndpoint('ferry_mukilteo_space', 14, 5));
+app.get('/api/ferry/mukilteo', ferryScheduleEndpoint('ferry_mukilteo', CONFIG.wsfArrivingTerminal, CONFIG.wsfDepartingTerminal));
+app.get('/api/ferry/mukilteo/space', ferrySpaceEndpoint('ferry_mukilteo_space', CONFIG.wsfArrivingTerminal, CONFIG.wsfDepartingTerminal));
 
 // Legacy alias (keep working during transition)
-app.get('/api/ferry', ferryScheduleEndpoint('ferry_clinton', 5, 14));
-app.get('/api/ferry/space', ferrySpaceEndpoint('ferry_clinton_space', 5, 14));
+app.get('/api/ferry', ferryScheduleEndpoint('ferry_clinton', CONFIG.wsfDepartingTerminal, CONFIG.wsfArrivingTerminal));
+app.get('/api/ferry/space', ferrySpaceEndpoint('ferry_clinton_space', CONFIG.wsfDepartingTerminal, CONFIG.wsfArrivingTerminal));
 
 // ── Vessel locations (Clinton–Mukilteo route) ─────────────────────────
 // Used by the client to detect late departures and update the displayed time.
@@ -567,11 +623,11 @@ function parseWsfMs(d) {
 }
 
 app.get('/api/ferry/vessels', cachedEndpoint('ferry_vessels', 30 * 1000, async () => {
-  if (!WSF_API_KEY) return { error: 'WSF_API_KEY not configured', vessels: [] };
-  const url = `https://www.wsdot.wa.gov/ferries/api/vessels/rest/vessellocations?apiaccesscode=${WSF_API_KEY}`;
+  if (!CONFIG.wsfApiKey) return { error: 'WSF API key not configured', vessels: [] };
+  const url = `https://www.wsdot.wa.gov/ferries/api/vessels/rest/vessellocations?apiaccesscode=${CONFIG.wsfApiKey}`;
   const r = await fetchWithRetry(url, { headers: { Accept: 'application/json' } });
   const data = await r.json();
-  const routeTerminals = new Set([5, 14]); // Clinton=5, Mukilteo=14
+  const routeTerminals = new Set([CONFIG.wsfDepartingTerminal, CONFIG.wsfArrivingTerminal]);
   const vessels = (Array.isArray(data) ? data : [])
     .filter(v => routeTerminals.has(v.DepartingTerminalID) || routeTerminals.has(v.ArrivingTerminalID))
     .map(v => ({
@@ -593,7 +649,8 @@ app.get('/api/ferry/vessels', cachedEndpoint('ferry_vessels', 30 * 1000, async (
 // ── Client config (feature flags, analytics ID) ──────────────────────
 app.get('/api/config', (req, res) => {
   res.json({
-    gaMeasurementId: process.env.GA_MEASUREMENT_ID || null,
+    gaMeasurementId: CONFIG.gaMeasurementId,
+    googleClientId: googleClientId() || null,
     version: pkg.version,
   });
 });
@@ -614,7 +671,7 @@ app.get('/api/cache-status', (req, res) => {
 // Returns the current Pacific UTC offset string: "-07:00" (PDT) or "-08:00" (PST)
 function pacificOffset() {
   const now = new Date();
-  const pacStr = now.toLocaleString('sv-SE', { timeZone: 'America/Los_Angeles' });
+  const pacStr = now.toLocaleString('sv-SE', { timeZone: CONFIG.timezone });
   const pacEpoch = new Date(pacStr.replace(' ', 'T') + 'Z').getTime();
   const diffH = Math.round((pacEpoch - now.getTime()) / 3600000);
   return diffH >= 0 ? `+${String(diffH).padStart(2,'0')}:00` : `-${String(-diffH).padStart(2,'0')}:00`;
@@ -622,10 +679,10 @@ function pacificOffset() {
 
 function formatDate(d) {
   // Always use the Pacific calendar date regardless of server timezone
-  const s = d.toLocaleString('sv-SE', { timeZone: 'America/Los_Angeles' });
+  const s = d.toLocaleString('sv-SE', { timeZone: CONFIG.timezone });
   return s.slice(0, 10).replace(/-/g, ''); // "YYYYMMDD"
 }
 
-app.listen(PORT, () => {
-  console.log(`Whidbey Dashboard running at http://localhost:${PORT}`);
+app.listen(CONFIG.port, () => {
+  console.log(`Whidbey Dashboard running at http://localhost:${CONFIG.port}`);
 });

@@ -9,7 +9,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
 import vm from 'node:vm';
@@ -24,12 +24,23 @@ let dataDir;
 // ── Server lifecycle ───────────────────────────────────────────────────
 before(async () => {
   dataDir = await mkdtemp(join(tmpdir(), 'whidbey-dashboard-test-'));
+  const configFile = join(dataDir, 'config.json');
+  await writeFile(configFile, JSON.stringify({
+    port: 3001,
+    dataDir,
+    googleClientId: 'test-google-client-id',
+    adminUsers: ['mike@example.com'],
+    adminTestTokens: {
+      'valid-admin-token': 'mike@example.com',
+      'unauthorized-admin-token': 'someone@example.com',
+    },
+  }, null, 2));
+
   serverProcess = spawn('node', [join(__dirname, '../server.js')], {
     env: {
       ...process.env,
-      PORT: '3001',
-      DATA_DIR: dataDir,
-      AUTHORIZED_MESSAGE_EMAIL_USERS: JSON.stringify(['mike@example.com']),
+      NODE_ENV: 'test',
+      CONFIG_FILE: configFile,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -69,10 +80,12 @@ async function getJsonAllowError(path) {
   return res.json();
 }
 
-async function sendJson(path, method, body) {
+async function sendJson(path, method, body, token = '') {
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(body),
   });
   const data = await res.json();
@@ -134,8 +147,8 @@ test('tides/hourly endpoint — returns hourly predictions', async () => {
 
 // ── Ferry schedule helper ──────────────────────────────────────────────
 function assertFerrySchedule(d, label) {
-  if (d.error === 'WSF_API_KEY not configured') {
-    console.log(`  (skipping ${label} assertions — WSF_API_KEY not set)`);
+  if (d.error === 'WSF API key not configured') {
+    console.log(`  (skipping ${label} assertions — WSF API key not set)`);
     return false;
   }
   assert.ok(!d.error, `no error in ${label} response (got: ${d.error})`);
@@ -163,8 +176,8 @@ test('ferry/mukilteo endpoint — Mukilteo→Clinton schedule', async () => {
 
 test('ferry/clinton/space endpoint — vessel name and capacity per sailing', async () => {
   const d = await getJsonAllowError('/api/ferry/clinton/space');
-  if (d.error === 'WSF_API_KEY not configured') {
-    console.log('  (skipping clinton space assertions — WSF_API_KEY not set)');
+  if (d.error === 'WSF API key not configured') {
+    console.log('  (skipping clinton space assertions — WSF API key not set)');
     return;
   }
   if (d.error) {
@@ -191,8 +204,8 @@ test('ferry/clinton/space endpoint — vessel name and capacity per sailing', as
 
 test('ferry/mukilteo/space endpoint — vessel name and capacity per sailing', async () => {
   const d = await getJsonAllowError('/api/ferry/mukilteo/space');
-  if (d.error === 'WSF_API_KEY not configured') {
-    console.log('  (skipping mukilteo space assertions — WSF_API_KEY not set)');
+  if (d.error === 'WSF API key not configured') {
+    console.log('  (skipping mukilteo space assertions — WSF API key not set)');
     return;
   }
   if (d.error) {
@@ -208,8 +221,8 @@ test('ferry/mukilteo/space endpoint — vessel name and capacity per sailing', a
 test('ferry legacy alias — /api/ferry still works', async () => {
   const d = await getJson('/api/ferry');
   // Should return same shape as /api/ferry/clinton
-  if (d.error === 'WSF_API_KEY not configured') {
-    console.log('  (skipping legacy ferry alias — WSF_API_KEY not set)');
+  if (d.error === 'WSF API key not configured') {
+    console.log('  (skipping legacy ferry alias — WSF API key not set)');
     return;
   }
   assert.ok(!d.error, 'no error in legacy ferry response');
@@ -218,8 +231,8 @@ test('ferry legacy alias — /api/ferry still works', async () => {
 
 test('ferry/alerts endpoint — returns normalized route alerts', async () => {
   const d = await getJson('/api/ferry/alerts');
-  if (d.error === 'WSF_API_KEY not configured') {
-    console.log('  (skipping ferry alerts assertions — WSF_API_KEY not set)');
+  if (d.error === 'WSF API key not configured') {
+    console.log('  (skipping ferry alerts assertions — WSF API key not set)');
     return;
   }
   assert.ok(Array.isArray(d.alerts), 'alerts is an array');
@@ -241,8 +254,8 @@ test('ferry/alerts endpoint — returns normalized route alerts', async () => {
 
 test('ferry/vessels endpoint — normalized vessel location data', async () => {
   const d = await getJson('/api/ferry/vessels');
-  if (d.error === 'WSF_API_KEY not configured') {
-    console.log('  (skipping vessel assertions — WSF_API_KEY not set)');
+  if (d.error === 'WSF API key not configured') {
+    console.log('  (skipping vessel assertions — WSF API key not set)');
     return;
   }
   assert.ok(Array.isArray(d.vessels), 'vessels is an array');
@@ -255,28 +268,29 @@ test('ferry/vessels endpoint — normalized vessel location data', async () => {
   }
 });
 
-test('messages endpoint — authorized users can add and delete crawl messages', async () => {
-  const unauthorized = await sendJson('/api/messages', 'POST', {
-    from: 'someone@example.com',
+test('messages endpoint — Google-authorized admins can add and delete crawl messages', async () => {
+  const unauthenticated = await sendJson('/api/messages', 'POST', {
     text: 'Private party at 7',
   });
-  assert.equal(unauthorized.res.status, 403, 'rejects unconfigured senders');
+  assert.equal(unauthenticated.res.status, 401, 'rejects requests without Google credential');
+
+  const unauthorized = await sendJson('/api/messages', 'POST', {
+    text: 'Private party at 7',
+  }, 'unauthorized-admin-token');
+  assert.equal(unauthorized.res.status, 403, 'rejects signed-in users outside admin allowlist');
 
   const created = await sendJson('/api/messages', 'POST', {
-    from: 'mike@example.com',
     text: '<b>Bring firewood</b>',
-  });
-  assert.equal(created.res.status, 201, 'creates message for authorized sender');
+  }, 'valid-admin-token');
+  assert.equal(created.res.status, 201, 'creates message for authorized admin');
   assert.equal(created.data.message.text, 'Bring firewood', 'stores plain text only');
   assert.ok(created.data.message.id, 'created message has id');
 
   const list = await getJson('/api/messages');
   assert.deepEqual(list.messages.map(m => m.text), ['Bring firewood'], 'lists user crawl messages separately from WSF alerts');
 
-  const deleted = await sendJson(`/api/messages/${created.data.message.id}`, 'DELETE', {
-    from: 'mike@example.com',
-  });
-  assert.equal(deleted.res.status, 200, 'deletes message for authorized sender');
+  const deleted = await sendJson(`/api/messages/${created.data.message.id}`, 'DELETE', {}, 'valid-admin-token');
+  assert.equal(deleted.res.status, 200, 'deletes message for authorized admin');
   assert.deepEqual(deleted.data.messages, [], 'returns remaining messages');
 });
 
@@ -310,27 +324,44 @@ test('static HTML — index.html contains required elements', async () => {
   assert.ok(html.includes('Whidbey'), 'mentions Whidbey');
 });
 
-test('message page — serves user crawl message editor', async () => {
-  const res = await fetch(`${BASE}/message`);
-  assert.ok(res.ok, 'message page responds OK');
+test('admin page — serves Google-authenticated admin surface', async () => {
+  const res = await fetch(`${BASE}/admin`);
+  assert.ok(res.ok, 'admin page responds OK');
   const html = await res.text();
 
-  assert.match(html, /<input[^>]+id="from"[^>]+type="password"/, 'from field is password-styled');
+  assert.match(html, /Whidbey Dashboard Admin/, 'page is named admin');
+  assert.match(html, /accounts\.google\.com\/gsi\/client/, 'loads Google Identity Services');
+  assert.doesNotMatch(html, /id="from"/, 'does not expose old email/password-style field');
   assert.match(html, /<textarea[^>]+id="text"/, 'has message text field');
   assert.match(html, /Delete/, 'has delete controls');
   assert.match(html, /\/api\/messages/, 'uses user message API');
-  assert.match(html, /h1\s*\{[\s\S]*?color:\s*var\(--accent\);/, 'message page title uses dashboard heading blue');
+  assert.match(html, /h1,\s*h2\s*\{[\s\S]*?color:\s*var\(--accent\);/, 'admin headings use dashboard heading blue');
+
+  const old = await fetch(`${BASE}/message`);
+  assert.equal(old.status, 404, 'old /message link is intentionally gone');
 });
 
-test('config example — documents authorized message email users JSON', async () => {
+test('config example — documents runtime and Google admin auth configuration', async () => {
   const { readFileSync } = await import('fs');
   const { dirname: dn, join: jn } = await import('path');
   const { fileURLToPath: fu } = await import('url');
   const dir = dn(fu(import.meta.url));
   const config = JSON.parse(readFileSync(jn(dir, '..', 'config.example.json'), 'utf8'));
 
-  assert.ok(Array.isArray(config.authorizedMessageEmailUsers), 'example has authorizedMessageEmailUsers array');
-  assert.ok(config.authorizedMessageEmailUsers.length > 0, 'example includes at least one email placeholder');
+  assert.equal(config.port, 3000, 'example has port');
+  assert.ok(config.dataDir, 'example has dataDir');
+  assert.ok(config.noaaStation, 'example has noaaStation');
+  assert.equal(typeof config.lat, 'number', 'example has latitude');
+  assert.equal(typeof config.lon, 'number', 'example has longitude');
+  assert.ok(config.timezone, 'example has timezone');
+  assert.ok(config.wsfApiKey, 'example has wsfApiKey placeholder');
+  assert.equal(typeof config.wsfDepartingTerminal, 'number', 'example has departing terminal ID');
+  assert.equal(typeof config.wsfArrivingTerminal, 'number', 'example has arriving terminal ID');
+  assert.equal(typeof config.wsfRouteId, 'number', 'example has route ID');
+  assert.ok('gaMeasurementId' in config, 'example documents optional Google Analytics ID');
+  assert.ok(config.googleClientId, 'example has googleClientId placeholder');
+  assert.ok(Array.isArray(config.adminUsers), 'example has adminUsers array');
+  assert.ok(config.adminUsers.length > 0, 'example includes at least one admin email placeholder');
 });
 
 test('static HTML — inline JavaScript parses without errors', async () => {

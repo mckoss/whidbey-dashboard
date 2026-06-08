@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Whidbey Dashboard Messages</title>
+  <title>Whidbey Dashboard Admin</title>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <style>
     :root {
       --bg: #08111f;
@@ -11,7 +12,6 @@
       --text: #e5eefb;
       --dim: #94a3b8;
       --accent: #38bdf8;
-      --warn: #fbbf24;
       --danger: #f87171;
       --border: rgba(148,163,184,0.22);
     }
@@ -35,11 +35,15 @@
       gap: 1rem;
       margin-bottom: 1rem;
     }
-    h1 {
-      font-size: 1.4rem;
+    h1, h2 {
       margin: 0;
       letter-spacing: 0;
       color: var(--accent);
+    }
+    h1 { font-size: 1.4rem; }
+    h2 {
+      font-size: 1rem;
+      margin-bottom: 0.85rem;
     }
     a {
       color: var(--accent);
@@ -58,32 +62,22 @@
       font-size: 0.8rem;
       margin-bottom: 0.35rem;
     }
-    input, textarea, button {
+    textarea, button {
       font: inherit;
       border-radius: 0.4rem;
     }
-    input, textarea {
+    textarea {
       width: 100%;
       border: 1px solid var(--border);
       background: #07101d;
       color: var(--text);
       padding: 0.65rem 0.7rem;
-      outline: none;
-    }
-    input:focus, textarea:focus {
-      border-color: var(--accent);
-    }
-    textarea {
       min-height: 5.5rem;
+      outline: none;
       resize: vertical;
     }
-    .field {
-      margin-bottom: 0.85rem;
-    }
-    .actions {
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
+    textarea:focus {
+      border-color: var(--accent);
     }
     button {
       border: 1px solid rgba(56,189,248,0.45);
@@ -92,8 +86,12 @@
       padding: 0.55rem 0.85rem;
       cursor: pointer;
     }
-    button:hover {
+    button:hover:not(:disabled) {
       background: rgba(56,189,248,0.24);
+    }
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.5;
     }
     button.delete {
       border-color: rgba(248,113,113,0.45);
@@ -101,7 +99,16 @@
       color: #fecaca;
       flex: 0 0 auto;
     }
-    .status {
+    .field {
+      margin-bottom: 0.85rem;
+    }
+    .actions, .auth-row {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+    .status, .signed-in {
       color: var(--dim);
       font-size: 0.85rem;
     }
@@ -130,33 +137,44 @@
       color: var(--dim);
       padding: 0.4rem 0;
     }
+    .hidden {
+      display: none;
+    }
   </style>
 </head>
 <body>
   <main>
     <header>
-      <h1>Crawl Messages</h1>
+      <h1>Admin</h1>
       <a href="/">Dashboard</a>
     </header>
 
     <section>
+      <h2>Sign In</h2>
+      <div class="auth-row">
+        <div id="google-signin"></div>
+        <span id="signed-in" class="signed-in"></span>
+        <button id="sign-out" class="hidden" type="button">Sign out</button>
+      </div>
+      <div id="auth-status" class="status" role="status"></div>
+    </section>
+
+    <section id="messages-panel" class="hidden">
+      <h2>Crawl Messages</h2>
       <form id="message-form">
-        <div class="field">
-          <label for="from">From</label>
-          <input id="from" name="from" type="password" inputmode="email" autocomplete="username" placeholder="email address" required>
-        </div>
         <div class="field">
           <label for="text">Message</label>
           <textarea id="text" name="text" maxlength="280" required></textarea>
         </div>
         <div class="actions">
-          <button type="submit">OK</button>
+          <button id="save-message" type="submit">OK</button>
           <span id="status" class="status" role="status"></span>
         </div>
       </form>
     </section>
 
     <section>
+      <h2>Current Crawl Messages</h2>
       <div id="message-list" class="message-list">
         <div class="empty">Loading...</div>
       </div>
@@ -165,10 +183,17 @@
 
   <script>
     const form = document.getElementById('message-form');
-    const fromEl = document.getElementById('from');
     const textEl = document.getElementById('text');
     const listEl = document.getElementById('message-list');
     const statusEl = document.getElementById('status');
+    const authStatusEl = document.getElementById('auth-status');
+    const signedInEl = document.getElementById('signed-in');
+    const signOutButton = document.getElementById('sign-out');
+    const messagesPanel = document.getElementById('messages-panel');
+    const signInContainer = document.getElementById('google-signin');
+
+    let googleCredential = '';
+    let signedInEmail = '';
 
     function escapeHtml(value = '') {
       return String(value)
@@ -179,16 +204,52 @@
         .replaceAll("'", '&#39;');
     }
 
+    function decodeJwtPayload(token) {
+      try {
+        const raw = token.split('.')[1] || '';
+        const payload = raw.padEnd(raw.length + ((4 - (raw.length % 4)) % 4), '=');
+        const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+        return JSON.parse(decodeURIComponent(escape(json)));
+      } catch {
+        return {};
+      }
+    }
+
     function setStatus(message, error = false) {
       statusEl.textContent = message;
       statusEl.classList.toggle('error', error);
     }
 
+    function setAuthStatus(message, error = false) {
+      authStatusEl.textContent = message;
+      authStatusEl.classList.toggle('error', error);
+    }
+
+    function setSignedIn(credential) {
+      googleCredential = credential || '';
+      const payload = decodeJwtPayload(googleCredential);
+      signedInEmail = payload.email || '';
+      signedInEl.textContent = signedInEmail ? `Signed in as ${signedInEmail}` : 'Signed in';
+      messagesPanel.classList.remove('hidden');
+      signOutButton.classList.remove('hidden');
+      signInContainer.classList.add('hidden');
+      setAuthStatus('');
+    }
+
+    function setSignedOut(message = '') {
+      googleCredential = '';
+      signedInEmail = '';
+      signedInEl.textContent = '';
+      messagesPanel.classList.add('hidden');
+      signOutButton.classList.add('hidden');
+      signInContainer.classList.remove('hidden');
+      setAuthStatus(message);
+    }
+
     async function jsonFetch(url, options = {}) {
-      const res = await fetch(url, {
-        ...options,
-        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-      });
+      const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+      if (googleCredential) headers.Authorization = `Bearer ${googleCredential}`;
+      const res = await fetch(url, { ...options, headers });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       return data;
@@ -202,7 +263,7 @@
       listEl.innerHTML = messages.map(message => `
         <div class="message-row" data-id="${escapeHtml(message.id)}">
           <div class="message-text">${escapeHtml(message.text)}</div>
-          <button class="delete" type="button" data-id="${escapeHtml(message.id)}">Delete</button>
+          <button class="delete" type="button" data-id="${escapeHtml(message.id)}" ${googleCredential ? '' : 'disabled'}>Delete</button>
         </div>
       `).join('');
     }
@@ -216,13 +277,45 @@
       }
     }
 
+    async function initGoogleSignIn() {
+      const cfg = await jsonFetch('/api/config');
+      if (!cfg.googleClientId) {
+        setSignedOut('Google Sign-In is not configured yet.');
+        return;
+      }
+      const start = () => {
+        if (!window.google?.accounts?.id) {
+          setTimeout(start, 100);
+          return;
+        }
+        google.accounts.id.initialize({
+          client_id: cfg.googleClientId,
+          callback: response => {
+            setSignedIn(response.credential);
+            loadMessages();
+          },
+        });
+        google.accounts.id.renderButton(signInContainer, {
+          theme: 'outline',
+          size: 'large',
+          text: 'signin_with',
+          shape: 'rectangular',
+        });
+      };
+      start();
+    }
+
     form.addEventListener('submit', async event => {
       event.preventDefault();
+      if (!googleCredential) {
+        setStatus('Sign in with Google first.', true);
+        return;
+      }
       setStatus('Saving...');
       try {
         await jsonFetch('/api/messages', {
           method: 'POST',
-          body: JSON.stringify({ from: fromEl.value, text: textEl.value }),
+          body: JSON.stringify({ text: textEl.value }),
         });
         textEl.value = '';
         setStatus('Saved.');
@@ -234,12 +327,11 @@
 
     listEl.addEventListener('click', async event => {
       const button = event.target.closest('button.delete');
-      if (!button) return;
+      if (!button || button.disabled) return;
       setStatus('Deleting...');
       try {
         await jsonFetch(`/api/messages/${encodeURIComponent(button.dataset.id)}`, {
           method: 'DELETE',
-          body: JSON.stringify({ from: fromEl.value }),
         });
         setStatus('Deleted.');
         await loadMessages();
@@ -248,7 +340,14 @@
       }
     });
 
+    signOutButton.addEventListener('click', () => {
+      google.accounts.id.disableAutoSelect();
+      setSignedOut('Signed out.');
+      loadMessages();
+    });
+
     loadMessages();
+    initGoogleSignIn().catch(e => setAuthStatus(e.message, true));
   </script>
 </body>
 </html>

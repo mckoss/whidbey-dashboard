@@ -1,5 +1,17 @@
 {
-  "authorizedMessageEmailUsers": [
+  "port": 3000,
+  "dataDir": "data",
+  "noaaStation": "9445526",
+  "lat": 47.9748,
+  "lon": -122.3534,
+  "timezone": "America/Los_Angeles",
+  "wsfApiKey": "your_wsdot_api_key_here",
+  "wsfDepartingTerminal": 5,
+  "wsfArrivingTerminal": 14,
+  "wsfRouteId": 7,
+  "gaMeasurementId": null,
+  "googleClientId": "your-google-oauth-client-id.apps.googleusercontent.com",
+  "adminUsers": [
     "mike@example.com"
   ]
 }
