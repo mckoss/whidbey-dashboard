@@ -419,7 +419,7 @@
       align-items: center;
       width: max-content;
       min-width: 200%;
-      animation: ferryAlertScroll 42s linear infinite;
+      animation: ferryAlertScroll var(--ticker-duration, 42s) linear infinite;
     }
     .ferry-alert-copy {
       display: inline-flex;
@@ -1536,13 +1536,15 @@ function renderFerryAlerts(alerts = []) {
     .filter(a => a && (a.title || a.text));
   if (!usable.length) return '';
   const danger = usable.some(a => /\b(out of service|cancel|canceled|cancelled|mechanical|shortage|one[- ]boat)\b/i.test(`${a.title || ''} ${a.text || ''}`));
+  const plainText = usable.map(a => `${a.title || ''} ${a.text || ''}`.trim()).join('   ');
+  const tickerDurationSeconds = Math.max(12, Math.round(plainText.length / 15));
   const items = usable.map(a => {
     const title = String(a.title || '').trim();
     const detail = String(a.text || '').trim();
     const showDetail = detail && detail !== title;
     return `<span class="ferry-alert-item"><span class="ferry-alert-title">${escapeHtml(title || detail)}</span>${showDetail ? `<span class="ferry-alert-detail">${escapeHtml(detail)}</span>` : ''}</span>`;
   }).join('');
-  return `<div class="ferry-alert-ticker${danger ? ' danger' : ''}"><div class="ferry-alert-track"><div class="ferry-alert-copy">${items}</div><div class="ferry-alert-copy" aria-hidden="true">${items}</div></div></div>`;
+  return `<div class="ferry-alert-ticker${danger ? ' danger' : ''}" style="--ticker-duration: ${tickerDurationSeconds}s"><div class="ferry-alert-track"><div class="ferry-alert-copy">${items}</div><div class="ferry-alert-copy" aria-hidden="true">${items}</div></div></div>`;
 }
 
 function updateFerryAlerts(alerts = []) {

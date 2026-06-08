@@ -313,6 +313,7 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
   assert.match(ticker, /ferry-alert-title/, 'renders title span');
   assert.match(ticker, /ferry-alert-detail/, 'renders detail span');
   assert.match(ticker, /Good morning\. How are you doing\?/, 'renders general WSF notice text');
+  assert.match(ticker, /--ticker-duration: \d+s/, 'sets content-based ticker speed');
   assert.equal((ticker.match(/ferry-alert-copy/g) || []).length, 2, 'duplicates content so the scroll wraps');
 });
 
