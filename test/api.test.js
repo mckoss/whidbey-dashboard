@@ -300,7 +300,7 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
   vm.createContext(context);
   vm.runInContext(script + `\nthis.__alertTest = { renderFerryAlerts };`, context);
 
-  const ticker = context.__alertTest.renderFerryAlerts([
+  const alerts = [
     {
       title: 'Muk/Clin - Both vessels are 20 minutes behind schedule.',
       text: 'Customers should expect delays through the evening commute.',
@@ -308,12 +308,17 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
     { title: 'Muk/Clin - Low tide warning', text: 'Loading may be restricted.' },
     { title: 'Muk/Clin - Terminal status', text: '2 Hour Wait for Drivers' },
     { title: 'Muk/Clin - General notice', text: 'Good morning. How are you doing?' },
-  ]);
+  ];
+  const ticker = context.__alertTest.renderFerryAlerts(alerts);
+  const visibleText = alerts
+    .map(a => (a.text && a.text !== a.title) ? `${a.title} ${a.text}` : a.title)
+    .join('   ');
+  const expectedTickerDuration = Math.max(4, Math.round(visibleText.length / 15));
   assert.match(ticker, /ferry-alert-ticker/, 'renders one shared ticker container');
   assert.match(ticker, /ferry-alert-title/, 'renders title span');
   assert.match(ticker, /ferry-alert-detail/, 'renders detail span');
   assert.match(ticker, /Good morning\. How are you doing\?/, 'renders general WSF notice text');
-  assert.match(ticker, /--ticker-duration: \d+s/, 'sets content-based ticker speed');
+  assert.match(ticker, new RegExp(`--ticker-duration: ${expectedTickerDuration}s`), 'sets ticker speed from visible text at 15 cps');
   assert.equal((ticker.match(/ferry-alert-copy/g) || []).length, 2, 'duplicates content so the scroll wraps');
 });
 

@@ -1536,21 +1536,53 @@ function renderFerryAlerts(alerts = []) {
     .filter(a => a && (a.title || a.text));
   if (!usable.length) return '';
   const danger = usable.some(a => /\b(out of service|cancel|canceled|cancelled|mechanical|shortage|one[- ]boat)\b/i.test(`${a.title || ''} ${a.text || ''}`));
-  const plainText = usable.map(a => `${a.title || ''} ${a.text || ''}`.trim()).join('   ');
-  const tickerDurationSeconds = Math.max(12, Math.round(plainText.length / 15));
+  const tickerCharsPerSecond = 15;
+  const minTickerDurationSeconds = 4;
+  const displayTextParts = [];
   const items = usable.map(a => {
     const title = String(a.title || '').trim();
     const detail = String(a.text || '').trim();
     const showDetail = detail && detail !== title;
-    return `<span class="ferry-alert-item"><span class="ferry-alert-title">${escapeHtml(title || detail)}</span>${showDetail ? `<span class="ferry-alert-detail">${escapeHtml(detail)}</span>` : ''}</span>`;
+    const displayTitle = title || detail;
+    displayTextParts.push(showDetail ? `${displayTitle} ${detail}` : displayTitle);
+    return `<span class="ferry-alert-item"><span class="ferry-alert-title">${escapeHtml(displayTitle)}</span>${showDetail ? `<span class="ferry-alert-detail">${escapeHtml(detail)}</span>` : ''}</span>`;
   }).join('');
+  const visibleText = displayTextParts.join('   ');
+  const tickerDurationSeconds = Math.max(minTickerDurationSeconds, Math.round(visibleText.length / tickerCharsPerSecond));
   return `<div class="ferry-alert-ticker${danger ? ' danger' : ''}" style="--ticker-duration: ${tickerDurationSeconds}s"><div class="ferry-alert-track"><div class="ferry-alert-copy">${items}</div><div class="ferry-alert-copy" aria-hidden="true">${items}</div></div></div>`;
+}
+
+function adjustFerryAlertTickerSpeed(root) {
+  const ticker = root && root.querySelector ? root.querySelector('.ferry-alert-ticker') : null;
+  if (!ticker) return;
+  const copy = ticker.querySelector('.ferry-alert-copy:not([aria-hidden="true"])');
+  if (!copy) return;
+
+  const textEls = copy.querySelectorAll('.ferry-alert-title, .ferry-alert-detail');
+  let textPixelWidth = 0;
+  let textCharCount = 0;
+  textEls.forEach(el => {
+    const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!text) return;
+    textPixelWidth += el.getBoundingClientRect().width;
+    textCharCount += text.length;
+  });
+  const copyPixelWidth = copy.scrollWidth || copy.getBoundingClientRect().width;
+  if (!textPixelWidth || !textCharCount || !copyPixelWidth) return;
+
+  const targetCharsPerSecond = 15;
+  const minTickerDurationSeconds = 4;
+  const pixelsPerCharacter = textPixelWidth / textCharCount;
+  const pixelsPerSecond = pixelsPerCharacter * targetCharsPerSecond;
+  const durationSeconds = Math.max(minTickerDurationSeconds, copyPixelWidth / pixelsPerSecond);
+  ticker.style.setProperty('--ticker-duration', `${Math.round(durationSeconds)}s`);
 }
 
 function updateFerryAlerts(alerts = []) {
   const el = document.getElementById('ferry-alert-ticker');
   if (!el) return;
   el.innerHTML = renderFerryAlerts(alerts);
+  requestAnimationFrame(() => adjustFerryAlertTickerSpeed(el));
 }
 
 function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spaceMap, schedData, spaceDataMissing = false, vesselMap = {}, fromTerminalId = 5) {
