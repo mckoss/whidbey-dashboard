@@ -2,7 +2,7 @@ import express from 'express';
 import fetch from 'node-fetch';
 import { OAuth2Client } from 'google-auth-library';
 import morgan from 'morgan';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
@@ -25,6 +25,7 @@ const CONFIG = {
   cacheFile: join(dataDir, 'cache.json'),
   messageFile: join(dataDir, 'messages.json'),
   alertContextFile: join(dataDir, 'alert-context.json'),
+  ferryHistoryDir: join(dataDir, 'ferry-history'),
   wsfApiKey: String(configValue('wsfApiKey', '')).trim(),
   gaMeasurementId: configValue('gaMeasurementId', null),
   googleClientId: String(configValue('googleClientId', '')).trim(),
@@ -39,6 +40,8 @@ const CONFIG = {
   wsfArrivingTerminal: Number(configValue('wsfArrivingTerminal', 14)),
   wsfRouteId: Number(configValue('wsfRouteId', 7)),
   timezone: String(configValue('timezone', 'America/Los_Angeles')),
+  ferryHistoryRetentionDays: Number(configValue('ferryHistoryRetentionDays', 30)),
+  ferryHistorySampleMs: Number(configValue('ferryHistorySampleMs', 60 * 1000)),
 };
 
 const ADMIN_SESSION_COOKIE = 'whidbey_admin_session';
@@ -779,6 +782,61 @@ app.get('/api/weather', cachedEndpoint('weather', 60 * 60 * 1000, async () => {
 
 // ── Ferry schedule helper (reusable for either direction) ────────────
 
+async function fetchWsfFerryScheduleData(fromTerminal, toTerminal) {
+  if (!CONFIG.wsfApiKey) return { error: 'WSF API key not configured', sailings: [] };
+  const url = `https://www.wsdot.wa.gov/ferries/api/schedule/rest/scheduletoday` +
+    `/${fromTerminal}/${toTerminal}/false?apiaccesscode=${CONFIG.wsfApiKey}`;
+  const r = await fetchWithRetry(url, { headers: { Accept: 'application/json' } });
+  return r.json();
+}
+
+async function fetchWsfFerrySpaceData(fromTerminal, toTerminal) {
+  if (!CONFIG.wsfApiKey) return { error: 'WSF API key not configured' };
+  const url = `https://www.wsdot.wa.gov/ferries/api/terminals/rest/terminalsailingspace` +
+    `/${fromTerminal}?apiaccesscode=${CONFIG.wsfApiKey}`;
+  const r = await fetchWithRetry(url, { headers: { Accept: 'application/json' } });
+  const data = await r.json();
+  const byDeparture = {};
+  for (const dep of (data.DepartingSpaces || [])) {
+    const ms = dep.Departure?.match(/\/Date\((\d+)/)?.[1];
+    if (!ms) continue;
+    const space = dep.SpaceForArrivalTerminals?.find(t => t.TerminalID === toTerminal);
+    byDeparture[ms] = {
+      vesselName: dep.VesselName,
+      driveUpSpaces: space?.DriveUpSpaceCount ?? null,
+      maxSpaces: dep.MaxSpaceCount,
+      hexColor: space?.DriveUpSpaceHexColor ?? null,
+    };
+  }
+  return byDeparture;
+}
+
+async function fetchFerryVesselsData() {
+  if (!CONFIG.wsfApiKey) return { error: 'WSF API key not configured', vessels: [] };
+  const url = `https://www.wsdot.wa.gov/ferries/api/vessels/rest/vessellocations?apiaccesscode=${CONFIG.wsfApiKey}`;
+  const r = await fetchWithRetry(url, { headers: { Accept: 'application/json' } });
+  const data = await r.json();
+  const routeTerminals = new Set([CONFIG.wsfDepartingTerminal, CONFIG.wsfArrivingTerminal]);
+  const vessels = (Array.isArray(data) ? data : [])
+    .filter(v => routeTerminals.has(v.DepartingTerminalID) || routeTerminals.has(v.ArrivingTerminalID))
+    .map(v => ({
+      vesselId: v.VesselID,
+      vesselName: v.VesselName,
+      atDock: v.AtDock,
+      inService: v.InService,
+      departingTerminalId: v.DepartingTerminalID,
+      arrivingTerminalId: v.ArrivingTerminalID,
+      scheduledDepartureMs: parseWsfMs(v.ScheduledDeparture),
+      leftDockMs: parseWsfMs(v.LeftDock),
+      etaMs: parseWsfMs(v.Eta),
+      etaBasis: v.EtaBasis,
+      speed: v.Speed,
+      latitude: typeof v.Latitude === 'number' ? v.Latitude : null,
+      longitude: typeof v.Longitude === 'number' ? v.Longitude : null,
+    }));
+  return { vessels };
+}
+
 function stripHtml(value = '') {
   return String(value)
     .replace(/<[^>]*>/g, ' ')
@@ -892,11 +950,7 @@ function shouldCarryOverSailing(departureMs, nowMs = Date.now()) {
 
 function ferryScheduleEndpoint(cacheKey, fromTerminal, toTerminal) {
   return cachedEndpoint(cacheKey, 30 * 1000, async () => {
-    if (!CONFIG.wsfApiKey) return { error: 'WSF API key not configured', sailings: [] };
-    const url = `https://www.wsdot.wa.gov/ferries/api/schedule/rest/scheduletoday` +
-      `/${fromTerminal}/${toTerminal}/false?apiaccesscode=${CONFIG.wsfApiKey}`;
-    const r = await fetchWithRetry(url, { headers: { Accept: 'application/json' } });
-    const data = await r.json();
+    const data = await fetchWsfFerryScheduleData(fromTerminal, toTerminal);
 
     // Merge carry-over sailings into the new response
     const combo = data?.TerminalCombos?.[0];
@@ -949,24 +1003,7 @@ function cachedSailingsFor(cacheKey) {
 // ── Ferry space helper (reusable for either terminal) ─────────────────
 function ferrySpaceEndpoint(cacheKey, fromTerminal, toTerminal) {
   return cachedEndpoint(cacheKey, 30 * 1000, async () => {
-    if (!CONFIG.wsfApiKey) return { error: 'WSF API key not configured' };
-    const url = `https://www.wsdot.wa.gov/ferries/api/terminals/rest/terminalsailingspace` +
-      `/${fromTerminal}?apiaccesscode=${CONFIG.wsfApiKey}`;
-    const r = await fetchWithRetry(url, { headers: { Accept: 'application/json' } });
-    const data = await r.json();
-    const byDeparture = {};
-    for (const dep of (data.DepartingSpaces || [])) {
-      const ms = dep.Departure?.match(/\/Date\((\d+)/)?.[1];
-      if (!ms) continue;
-      const space = dep.SpaceForArrivalTerminals?.find(t => t.TerminalID === toTerminal);
-      byDeparture[ms] = {
-        vesselName: dep.VesselName,
-        driveUpSpaces: space?.DriveUpSpaceCount ?? null,
-        maxSpaces: dep.MaxSpaceCount,
-        hexColor: space?.DriveUpSpaceHexColor ?? null,
-      };
-    }
-    return byDeparture;
+    return fetchWsfFerrySpaceData(fromTerminal, toTerminal);
   });
 }
 
@@ -995,29 +1032,257 @@ function parseWsfMs(d) {
   return null;
 }
 
-app.get('/api/ferry/vessels', cachedEndpoint('ferry_vessels', 30 * 1000, async () => {
-  if (!CONFIG.wsfApiKey) return { error: 'WSF API key not configured', vessels: [] };
-  const url = `https://www.wsdot.wa.gov/ferries/api/vessels/rest/vessellocations?apiaccesscode=${CONFIG.wsfApiKey}`;
-  const r = await fetchWithRetry(url, { headers: { Accept: 'application/json' } });
-  const data = await r.json();
-  const routeTerminals = new Set([CONFIG.wsfDepartingTerminal, CONFIG.wsfArrivingTerminal]);
-  const vessels = (Array.isArray(data) ? data : [])
-    .filter(v => routeTerminals.has(v.DepartingTerminalID) || routeTerminals.has(v.ArrivingTerminalID))
-    .map(v => ({
-      vesselId: v.VesselID,
-      vesselName: v.VesselName,
-      atDock: v.AtDock,
-      inService: v.InService,
-      departingTerminalId: v.DepartingTerminalID,
-      arrivingTerminalId: v.ArrivingTerminalID,
-      scheduledDepartureMs: parseWsfMs(v.ScheduledDeparture),
-      leftDockMs: parseWsfMs(v.LeftDock),
-      etaMs: parseWsfMs(v.Eta),
-      etaBasis: v.EtaBasis,
-      speed: v.Speed,
-    }));
-  return { vessels };
-}));
+app.get('/api/ferry/vessels', cachedEndpoint('ferry_vessels', 30 * 1000, fetchFerryVesselsData));
+
+// ── Ferry history persistence ─────────────────────────────────────────
+const FERRY_HISTORY_RETENTION_DAYS = CONFIG.ferryHistoryRetentionDays;
+const FERRY_HISTORY_SAMPLE_INTERVAL_MS = CONFIG.ferryHistorySampleMs;
+const FERRY_CROSSING_ESTIMATE_MS = 20 * 60 * 1000;
+const TERMINAL_NAMES = new Map([
+  [CONFIG.wsfDepartingTerminal, 'Clinton'],
+  [CONFIG.wsfArrivingTerminal, 'Mukilteo'],
+]);
+
+function pacificDateForMs(ms = Date.now()) {
+  return new Date(ms).toLocaleString('sv-SE', { timeZone: CONFIG.timezone }).slice(0, 10);
+}
+
+function isIsoDate(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
+}
+
+function localDateStartMs(date, timeZone = CONFIG.timezone) {
+  if (!isIsoDate(date)) return null;
+  const [year, month, day] = date.split('-').map(Number);
+  const localDayAsUtc = Date.UTC(year, month - 1, day);
+  return localDayAsUtc - timeZoneOffsetMs(localDayAsUtc, timeZone);
+}
+
+function ferryHistoryFile(date) {
+  return join(CONFIG.ferryHistoryDir, `${date}.json`);
+}
+
+function emptyFerryHistoryDay(date) {
+  return {
+    date,
+    generatedAt: null,
+    trips: [],
+    currentVessels: [],
+  };
+}
+
+function readFerryHistoryDay(date) {
+  try {
+    if (!existsSync(ferryHistoryFile(date))) return emptyFerryHistoryDay(date);
+    const parsed = JSON.parse(readFileSync(ferryHistoryFile(date), 'utf8'));
+    return {
+      ...emptyFerryHistoryDay(date),
+      ...(parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}),
+      date,
+      trips: Array.isArray(parsed?.trips) ? parsed.trips : [],
+      currentVessels: Array.isArray(parsed?.currentVessels) ? parsed.currentVessels : [],
+    };
+  } catch (e) {
+    console.warn(`[ferry-history] ignoring ${date}: ${e.message}`);
+    return emptyFerryHistoryDay(date);
+  }
+}
+
+function writeFerryHistoryDay(day) {
+  mkdirSync(CONFIG.ferryHistoryDir, { recursive: true });
+  writeFileSync(ferryHistoryFile(day.date), JSON.stringify(day, null, 2));
+}
+
+function pruneFerryHistory(nowMs = Date.now()) {
+  try {
+    if (!existsSync(CONFIG.ferryHistoryDir)) return;
+    const cutoffMs = startOfLocalDayMs(nowMs, CONFIG.timezone) - (FERRY_HISTORY_RETENTION_DAYS - 1) * 24 * 60 * 60 * 1000;
+    for (const name of readdirSync(CONFIG.ferryHistoryDir)) {
+      const match = name.match(/^(\d{4}-\d{2}-\d{2})\.json$/);
+      if (!match) continue;
+      const dayMs = localDateStartMs(match[1], CONFIG.timezone);
+      if (dayMs !== null && dayMs < cutoffMs) unlinkSync(join(CONFIG.ferryHistoryDir, name));
+    }
+  } catch (e) {
+    console.warn(`[ferry-history] prune failed: ${e.message}`);
+  }
+}
+
+async function ferryScheduleDataForHistory(cacheKey, fromTerminal, toTerminal) {
+  const hit = getCached(cacheKey);
+  if (hit) return hit.data;
+  const data = await fetchWsfFerryScheduleData(fromTerminal, toTerminal);
+  setCache(cacheKey, data, 30 * 1000);
+  return data;
+}
+
+async function ferrySpaceDataForHistory(cacheKey, fromTerminal, toTerminal) {
+  const hit = getCached(cacheKey);
+  if (hit) return hit.data;
+  const data = await fetchWsfFerrySpaceData(fromTerminal, toTerminal);
+  setCache(cacheKey, data, 30 * 1000);
+  return data;
+}
+
+function tripId(date, direction, scheduledDepartureMs) {
+  return `${date}:${direction}:${scheduledDepartureMs}`;
+}
+
+function vesselMatchesTrip(vessel, trip, nowMs) {
+  if (!vessel || !trip) return false;
+  if (vessel.departingTerminalId !== trip.fromTerminalId || vessel.arrivingTerminalId !== trip.toTerminalId) return false;
+  if (vessel.scheduledDepartureMs && Math.abs(vessel.scheduledDepartureMs - trip.scheduledDepartureMs) <= 20 * 60 * 1000) return true;
+  if (vessel.vesselName && trip.vesselName && vessel.vesselName === trip.vesselName) {
+    return Math.abs(nowMs - trip.scheduledDepartureMs) <= 45 * 60 * 1000;
+  }
+  return false;
+}
+
+function mergeTripObservation(existing, next, vessel, nowMs) {
+  const actualDepartureMs = existing.actualDepartureMs || vessel?.leftDockMs || null;
+  const observedArrivalMs = actualDepartureMs &&
+    vessel?.atDock &&
+    vessel?.arrivingTerminalId === next.toTerminalId &&
+    nowMs > actualDepartureMs
+    ? nowMs
+    : null;
+  const arrivalMs = observedArrivalMs ||
+    (existing.arrivalBasis === 'observed-at-dock' ? existing.arrivalMs : null) ||
+    vessel?.etaMs ||
+    existing.arrivalMs ||
+    next.scheduledDepartureMs + FERRY_CROSSING_ESTIMATE_MS;
+  const arrivalBasis = observedArrivalMs
+    ? 'observed-at-dock'
+    : (existing.arrivalBasis === 'observed-at-dock' ? existing.arrivalBasis : (vessel?.etaMs ? 'wsf-eta' : (existing.arrivalBasis || 'scheduled-estimate')));
+  const status = actualDepartureMs
+    ? (vessel?.atDock && vessel?.arrivingTerminalId === next.toTerminalId && nowMs > actualDepartureMs ? 'arrived' : 'in-progress')
+    : (next.scheduledDepartureMs < nowMs ? 'scheduled-past' : 'scheduled');
+  const observation = vessel ? {
+    observedAt: new Date(nowMs).toISOString(),
+    vesselId: vessel.vesselId || null,
+    vesselName: vessel.vesselName || next.vesselName || existing.vesselName || '',
+    atDock: vessel.atDock ?? null,
+    speed: vessel.speed ?? null,
+    etaMs: vessel.etaMs || null,
+    leftDockMs: vessel.leftDockMs || null,
+    latitude: vessel.latitude ?? null,
+    longitude: vessel.longitude ?? null,
+  } : null;
+  return {
+    ...existing,
+    ...next,
+    vesselName: next.vesselName || existing.vesselName || vessel?.vesselName || '',
+    vesselId: existing.vesselId || vessel?.vesselId || null,
+    actualDepartureMs,
+    arrivalMs,
+    arrivalBasis,
+    status,
+    observations: [
+      ...(Array.isArray(existing.observations) ? existing.observations : []),
+      ...(observation ? [observation] : []),
+    ].slice(-24),
+  };
+}
+
+function tripsFromSchedule(date, direction, fromTerminal, toTerminal, schedule, spaceByDeparture = {}) {
+  const times = schedule?.TerminalCombos?.[0]?.Times || [];
+  return times
+    .map(time => {
+      const scheduledDepartureMs = parseDepartureMs(time);
+      if (!scheduledDepartureMs || pacificDateForMs(scheduledDepartureMs) !== date) return null;
+      const space = spaceByDeparture[String(scheduledDepartureMs)] || {};
+      const vesselName = space.vesselName || time.VesselName || time.VesselNameOverride || '';
+      return {
+        id: tripId(date, direction, scheduledDepartureMs),
+        date,
+        direction,
+        fromTerminalId: fromTerminal,
+        toTerminalId: toTerminal,
+        fromTerminalName: TERMINAL_NAMES.get(fromTerminal) || String(fromTerminal),
+        toTerminalName: TERMINAL_NAMES.get(toTerminal) || String(toTerminal),
+        scheduledDepartureMs,
+        actualDepartureMs: null,
+        arrivalMs: scheduledDepartureMs + FERRY_CROSSING_ESTIMATE_MS,
+        arrivalBasis: 'scheduled-estimate',
+        vesselName,
+        vesselId: null,
+        status: 'scheduled',
+        space: {
+          driveUpSpaces: space.driveUpSpaces ?? null,
+          maxSpaces: space.maxSpaces ?? null,
+          hexColor: space.hexColor ?? null,
+        },
+        observations: [],
+      };
+    })
+    .filter(Boolean);
+}
+
+async function recordFerryHistoryDay(date = pacificDateForMs(), nowMs = Date.now()) {
+  if (!isIsoDate(date)) throw new Error('date must be YYYY-MM-DD');
+  const existing = readFerryHistoryDay(date);
+  if (existing.sampledAtMs && nowMs - existing.sampledAtMs < FERRY_HISTORY_SAMPLE_INTERVAL_MS) {
+    return existing;
+  }
+
+  const [clintonSchedule, clintonSpace, mukilteoSchedule, mukilteoSpace, vesselData] = await Promise.all([
+    ferryScheduleDataForHistory('ferry_clinton', CONFIG.wsfDepartingTerminal, CONFIG.wsfArrivingTerminal),
+    ferrySpaceDataForHistory('ferry_clinton_space', CONFIG.wsfDepartingTerminal, CONFIG.wsfArrivingTerminal),
+    ferryScheduleDataForHistory('ferry_mukilteo', CONFIG.wsfArrivingTerminal, CONFIG.wsfDepartingTerminal),
+    ferrySpaceDataForHistory('ferry_mukilteo_space', CONFIG.wsfArrivingTerminal, CONFIG.wsfDepartingTerminal),
+    fetchFerryVesselsData(),
+  ]);
+
+  const scheduledTrips = [
+    ...tripsFromSchedule(date, 'clinton-to-mukilteo', CONFIG.wsfDepartingTerminal, CONFIG.wsfArrivingTerminal, clintonSchedule, clintonSpace),
+    ...tripsFromSchedule(date, 'mukilteo-to-clinton', CONFIG.wsfArrivingTerminal, CONFIG.wsfDepartingTerminal, mukilteoSchedule, mukilteoSpace),
+  ];
+
+  const vessels = Array.isArray(vesselData?.vessels) ? vesselData.vessels : [];
+  const byId = new Map((existing.trips || []).map(trip => [trip.id, trip]));
+  for (const scheduled of scheduledTrips) {
+    const existingTrip = byId.get(scheduled.id) || {};
+    const vessel = vessels.find(v => vesselMatchesTrip(v, { ...existingTrip, ...scheduled }, nowMs));
+    byId.set(scheduled.id, mergeTripObservation(existingTrip, scheduled, vessel, nowMs));
+  }
+
+  const day = {
+    date,
+    generatedAt: new Date(nowMs).toISOString(),
+    sampledAtMs: nowMs,
+    retentionDays: FERRY_HISTORY_RETENTION_DAYS,
+    trips: [...byId.values()]
+      .filter(trip => trip.date === date)
+      .sort((a, b) => a.scheduledDepartureMs - b.scheduledDepartureMs || a.direction.localeCompare(b.direction)),
+    currentVessels: vessels,
+    errors: [clintonSchedule, clintonSpace, mukilteoSchedule, mukilteoSpace, vesselData]
+      .map(value => value?.error)
+      .filter(Boolean),
+  };
+  writeFerryHistoryDay(day);
+  pruneFerryHistory(nowMs);
+  return day;
+}
+
+app.get('/api/ferry/history', async (req, res) => {
+  const date = String(req.query.date || pacificDateForMs()).trim();
+  if (!isIsoDate(date)) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+  try {
+    const today = pacificDateForMs();
+    const day = date === today ? await recordFerryHistoryDay(date) : readFerryHistoryDay(date);
+    res.json(day);
+  } catch (e) {
+    const existing = readFerryHistoryDay(date);
+    res.status(existing.generatedAt ? 200 : 500).json({
+      ...existing,
+      error: e.message,
+    });
+  }
+});
+
+app.get('/ferry-history', (req, res) => {
+  res.sendFile(join(__dirname, 'public', 'ferry-history.html'));
+});
 
 // ── Client config (feature flags, analytics ID) ──────────────────────
 app.get('/api/config', (req, res) => {
@@ -1060,4 +1325,9 @@ function formatDate(d) {
 const listenPort = Number(process.env.PORT || CONFIG.port);
 app.listen(listenPort, () => {
   console.log(`Whidbey Dashboard running at http://localhost:${listenPort}`);
+  const sample = () => {
+    recordFerryHistoryDay().catch(e => console.warn(`[ferry-history] sample failed: ${e.message}`));
+  };
+  setTimeout(sample, 15 * 1000).unref?.();
+  setInterval(sample, FERRY_HISTORY_SAMPLE_INTERVAL_MS).unref?.();
 });

@@ -282,6 +282,20 @@ test('ferry/vessels endpoint — normalized vessel location data', async () => {
   }
 });
 
+test('ferry/history endpoint — returns a dated trip log shell and validates date parameter', async () => {
+  const today = pacificDate();
+  const d = await getJson(`/api/ferry/history?date=${today}`);
+  assert.equal(d.date, today, 'returns requested Pacific date');
+  assert.ok(Array.isArray(d.trips), 'history has trips array');
+  assert.ok(Array.isArray(d.currentVessels), 'history has current vessel array');
+  assert.equal(d.retentionDays, 30, 'uses default 30-day retention');
+
+  const bad = await fetch(`${BASE}/api/ferry/history?date=today`);
+  assert.equal(bad.status, 400, 'rejects non-ISO dates');
+  const badBody = await bad.json();
+  assert.match(badBody.error, /YYYY-MM-DD/, 'explains date format');
+});
+
 test('messages endpoint — Google-authorized admins can add and delete crawl messages', async () => {
   const unauthenticated = await sendJson('/api/messages', 'POST', {
     text: 'Private party at 7',
@@ -528,6 +542,26 @@ test('admin page — serves Google-authenticated admin surface', async () => {
   assert.equal(old.status, 404, 'old /message link is intentionally gone');
 });
 
+test('ferry history page — serves dated table and time-distance diagram UI', async () => {
+  const res = await fetch(`${BASE}/ferry-history?date=2026-06-08`);
+  assert.ok(res.ok, 'ferry history page responds OK');
+  const html = await res.text();
+
+  assert.match(html, /Ferry History/, 'page is named ferry history');
+  assert.match(html, /id="prev-date"/, 'has previous date control');
+  assert.match(html, /id="next-date"/, 'has next date control');
+  assert.match(html, /id="date-input"[^>]+type="date"/, 'has date picker');
+  assert.match(html, /\/api\/ferry\/history\?date=/, 'loads history API by URL date');
+  assert.match(html, /Clinton to Mukilteo/, 'has Clinton to Mukilteo table column');
+  assert.match(html, /Mukilteo to Clinton/, 'has Mukilteo to Clinton table column');
+  assert.match(html, /Time Distance/, 'has diagram section');
+  assert.match(html, /terminalProgress/, 'can plot current vessel position from coordinates');
+
+  const scriptMatch = html.match(/<script[^>]*>([\s\S]*?)<\/script>/);
+  assert.ok(scriptMatch, 'found ferry history script block');
+  assert.doesNotThrow(() => new Function(scriptMatch[1]), 'ferry history inline JS should parse without syntax errors');
+});
+
 test('config example — documents runtime and Google admin auth configuration', async () => {
   const { readFileSync } = await import('fs');
   const { dirname: dn, join: jn } = await import('path');
@@ -545,6 +579,8 @@ test('config example — documents runtime and Google admin auth configuration',
   assert.equal(typeof config.wsfDepartingTerminal, 'number', 'example has departing terminal ID');
   assert.equal(typeof config.wsfArrivingTerminal, 'number', 'example has arriving terminal ID');
   assert.equal(typeof config.wsfRouteId, 'number', 'example has route ID');
+  assert.equal(config.ferryHistoryRetentionDays, 30, 'example documents ferry history retention');
+  assert.equal(config.ferryHistorySampleMs, 60000, 'example documents ferry history sampling interval');
   assert.ok('gaMeasurementId' in config, 'example documents optional Google Analytics ID');
   assert.ok(config.googleClientId, 'example has googleClientId placeholder');
   assert.ok(config.sessionSecret, 'example has sessionSecret placeholder');
