@@ -7,8 +7,8 @@ See `AGENTS.md` for full design history, decisions, and pitfalls — read it bef
 ## Hard rules (from AGENTS.md)
 
 1. `npm test` must be green before every `git commit`.
-2. **Bump the version before every push.** The version string comes from `package.json` via `/api/config` and displays in the page header. Use two-part versions (`1.5`, `1.6`, etc.), not three-part patch versions.
-3. **Every commit message must include the current version** in the format `(vX.Y)` — even commits that don't bump the version (e.g. `README: fix ferry interval (v1.5)`). This is how Mike reverts to a known build.
+2. **Bump the version before every push.** The version string comes from `package.json` via `/api/config` and displays in the page header. Use semantic versioning with judgment: major for incompatible configuration/API changes, minor for new user-visible features, and patch for bug fixes or small improvements.
+3. **Every commit message must include the current version** in the format `(vX.Y.Z)` — even commits that don't bump the version (e.g. `README: fix ferry interval (v1.5.0)`). This is how Mike reverts to a known build.
 4. **Commit at feature completion, not turn-by-turn.** Ask "Shall I commit now?" at clean stopping points and wait for confirmation. Exception: if Mike hasn't responded in 15+ minutes and there are uncommitted changes at a clean checkpoint, commit without asking.
 5. **No bundlers, no build step.** `public/index.html` is a single file with all HTML/CSS/JS. `server.js` is plain Express. Keep it that way.
 6. **No scrolling.** Body is `height: 100vh; overflow: hidden` — everything must fit one TV screen.

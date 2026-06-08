@@ -13,8 +13,8 @@ An ambient TV dashboard for Mike Koss's Whidbey Island beach house. Single-scree
 2. **No bundlers.** Single-file frontend (`public/index.html`), plain Express server (`server.js`). This is intentional.
 3. **No scrolling.** `height: 100vh; overflow: hidden` on body. Everything must fit one TV screen.
 4. **Restart after server changes.** `bash restart.sh` kills the old process and starts fresh.
-5. **Bump the version before every push.** The version string comes from `package.json` via `/api/config` and displays in the page header. Use two-part versions (`1.5`, `1.6`, etc.) rather than patch-level three-part versions. This is how Mike confirms which build is deployed on Railway.
-6. **Every commit message must include the current version number** in the format `(vX.Y)` — even README-only or server-only commits that don't bump the version. Use the current version at time of commit, e.g. `README: fix ferry interval (v1.5)`. This lets Mike find and revert to any point in history by version.
+5. **Bump the version before every push.** The version string comes from `package.json` via `/api/config` and displays in the page header. Use semantic versioning with judgment: bump **major** for incompatible configuration/API changes, **minor** for new user-visible features, and **patch** for bug fixes or small improvements. Most UI work here will be minor or patch; major is rare. This is how Mike confirms which build is deployed on Railway.
+6. **Every commit message must include the current version number** in the format `(vX.Y.Z)` — even README-only or server-only commits that don't bump the version. Use the current version at time of commit, e.g. `README: fix ferry interval (v1.5.0)`. This lets Mike find and revert to any point in history by version.
 
 ## Architecture
 
