@@ -213,6 +213,8 @@ test('ferry/alerts endpoint — returns normalized route alerts', async () => {
     assert.ok(typeof alert.title === 'string', 'alert has normalized title');
     assert.ok(!alert.title.includes('<'), 'alert title is plain text');
     assert.ok(!alert.text.includes('<'), 'alert text is plain text');
+    assert.doesNotMatch(alert.title, /^(?:all routes|(?:[a-z]+\/[a-z]+)(?:\s+[a-z]+\/[a-z]+)*)\s*[-–—:]+/i, 'alert title does not expose WSF route prefix');
+    assert.doesNotMatch(alert.text, /^(?:all routes|(?:[a-z]+\/[a-z]+)(?:\s+[a-z]+\/[a-z]+)*)\s*[-–—:]+/i, 'alert text does not expose WSF route prefix');
     assert.ok(
       alert.allRoutes || alert.affectedRouteIds?.includes(7),
       `alert applies to Mukilteo/Clinton route 7 or all routes: ${alert.title}`
@@ -306,13 +308,13 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
 
   const alerts = [
     {
-      title: 'Muk/Clin - One vessel canceled',
+      title: 'One vessel canceled',
       text: 'The 8:30 PM sailing is canceled due to mechanical issues.',
     },
-    { title: 'All Routes - Pets', text: 'New pet rules effective May 20.' },
-    { title: 'Muk/Clin - Low tide warning', text: 'Loading may be restricted.' },
-    { title: 'Muk/Clin - Terminal status', text: '2 Hour Wait for Drivers' },
-    { title: 'Muk/Clin - General notice', text: 'Good morning. How are you doing?' },
+    { title: 'Pets', text: 'New pet rules effective May 20.' },
+    { title: 'Low tide warning', text: 'Loading may be restricted.' },
+    { title: 'Terminal status', text: '2 Hour Wait for Drivers' },
+    { title: 'General notice', text: 'Good morning. How are you doing?' },
   ];
   const ticker = context.__alertTest.renderFerryAlerts(alerts);
   const visibleText = alerts
@@ -327,7 +329,7 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
   assert.equal((ticker.match(/ferry-alert-copy/g) || []).length, 2, 'duplicates content so the scroll wraps');
   assert.doesNotMatch(ticker, /ferry-alert-ticker danger/, 'mixed ticker does not make every alert red');
   assert.match(ticker, /ferry-alert-item danger[\s\S]*One vessel canceled/, 'disruptive alert item is red');
-  assert.match(ticker, /ferry-alert-item(?! danger)[^>]*><span class="ferry-alert-title">All Routes - Pets/, 'informational all-routes item stays yellow');
+  assert.match(ticker, /ferry-alert-item(?! danger)[^>]*><span class="ferry-alert-title">Pets/, 'informational all-routes item stays yellow');
   assert.match(html, /\.ferry-alert-item\s*\{[\s\S]*?color:\s*inherit;/, 'alert item text inherits ticker severity color');
   assert.match(html, /\.ferry-alert-item\.danger\s*\{[\s\S]*?color:\s*var\(--danger\);/, 'only disruptive alert items use danger red');
   assert.match(html, /\.ferry-alert-title\s*\{[\s\S]*?color:\s*inherit;/, 'alert titles use the ticker severity color');

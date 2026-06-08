@@ -243,6 +243,12 @@ function stripHtml(value = '') {
     .trim();
 }
 
+function stripFerryAlertRoutePrefix(value = '') {
+  return String(value)
+    .replace(/^(?:all routes|(?:[a-z]+\/[a-z]+)(?:\s+[a-z]+\/[a-z]+)*)\s*[-–—:]+\s*/i, '')
+    .trim();
+}
+
 app.get('/api/ferry/alerts', cachedEndpoint('ferry_alerts', 30 * 1000, async () => {
   if (!WSF_API_KEY) return { error: 'WSF_API_KEY not configured', alerts: [] };
   const url = `https://www.wsdot.wa.gov/ferries/api/schedule/rest/alerts?apiaccesscode=${WSF_API_KEY}`;
@@ -253,8 +259,8 @@ app.get('/api/ferry/alerts', cachedEndpoint('ferry_alerts', 30 * 1000, async () 
     .sort((a, b) => (a.SortSeq ?? 9999) - (b.SortSeq ?? 9999))
     .map(a => ({
       id: a.BulletinID,
-      title: stripHtml(a.AlertFullTitle || a.RouteAlertText || a.AlertDescription || ''),
-      text: stripHtml(a.RouteAlertText || a.DisruptionDescription || a.BulletinText || a.AlertFullText || ''),
+      title: stripFerryAlertRoutePrefix(stripHtml(a.AlertFullTitle || a.RouteAlertText || a.AlertDescription || '')),
+      text: stripFerryAlertRoutePrefix(stripHtml(a.RouteAlertText || a.DisruptionDescription || a.BulletinText || a.AlertFullText || '')),
       publishedAt: a.PublishDate || null,
       affectedRouteIds: Array.isArray(a.AffectedRouteIDs) ? a.AffectedRouteIDs : [],
       allRoutes: Boolean(a.AllRoutesFlag),
