@@ -683,6 +683,9 @@ function formatDate(d) {
   return s.slice(0, 10).replace(/-/g, ''); // "YYYYMMDD"
 }
 
-app.listen(CONFIG.port, () => {
-  console.log(`Whidbey Dashboard running at http://localhost:${CONFIG.port}`);
+// Hosting providers such as Railway inject the socket port at runtime.
+// App settings still live in config.json; PORT is deployment plumbing.
+const listenPort = Number(process.env.PORT || CONFIG.port);
+app.listen(listenPort, () => {
+  console.log(`Whidbey Dashboard running at http://localhost:${listenPort}`);
 });
