@@ -323,6 +323,9 @@ function loadUserMessages() {
       .map(m => ({
         id: String(m.id || ''),
         text: stripHtml(m.text).slice(0, 280),
+        startDate: sanitizeMessageDate(m.startDate),
+        endDate: sanitizeMessageDate(m.endDate),
+        color: normalizeCssColor(m.color || ''),
         createdAt: m.createdAt || null,
         updatedAt: m.updatedAt || null,
       }))
@@ -331,6 +334,56 @@ function loadUserMessages() {
     console.warn(`[messages] ignoring persisted messages: ${e.message}`);
     return [];
   }
+}
+
+function sanitizeMessageDate(value) {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (!match) return null;
+  const [, year, month, day] = match;
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+  if (
+    date.getUTCFullYear() !== Number(year) ||
+    date.getUTCMonth() + 1 !== Number(month) ||
+    date.getUTCDate() !== Number(day)
+  ) {
+    return null;
+  }
+  return text;
+}
+
+function messageScheduleFromBody(body = {}) {
+  const startDate = sanitizeMessageDate(body.startDate);
+  const endDate = sanitizeMessageDate(body.endDate);
+  const color = normalizeCssColor(body.color || '');
+  if (body.startDate && !startDate) {
+    const error = new Error('Start date must use YYYY-MM-DD.');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (body.endDate && !endDate) {
+    const error = new Error('End date must use YYYY-MM-DD.');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (startDate && endDate && startDate > endDate) {
+    const error = new Error('Start date must be on or before end date.');
+    error.statusCode = 400;
+    throw error;
+  }
+  return { startDate, endDate, color };
+}
+
+function formatCalendarDate(d) {
+  const s = d.toLocaleString('sv-SE', { timeZone: CONFIG.timezone });
+  return s.slice(0, 10);
+}
+
+function isUserMessageActive(message, today = formatCalendarDate(new Date())) {
+  if (message.startDate && today < message.startDate) return false;
+  if (message.endDate && today > message.endDate) return false;
+  return true;
 }
 
 function writeUserMessages(messages) {
@@ -494,18 +547,32 @@ app.delete('/api/admin/session', (req, res) => {
 });
 
 app.get('/api/messages', (req, res) => {
-  res.json({ messages: loadUserMessages() });
+  const respond = () => {
+    const messages = loadUserMessages();
+    res.json({
+      messages: req.query.includeInactive ? messages : messages.filter(message => isUserMessageActive(message)),
+    });
+  };
+  if (req.query.includeInactive) return requireAdmin(req, res, respond);
+  respond();
 });
 
 app.post('/api/messages', requireAdmin, (req, res) => {
   const text = stripHtml(req.body?.text || '').slice(0, 280);
   if (!text) return res.status(400).json({ error: 'Message text is required.' });
+  let schedule;
+  try {
+    schedule = messageScheduleFromBody(req.body);
+  } catch (e) {
+    return res.status(e.statusCode || 400).json({ error: e.message });
+  }
 
   const messages = loadUserMessages();
   const now = new Date().toISOString();
   const message = {
     id: randomUUID(),
     text,
+    ...schedule,
     createdAt: now,
     updatedAt: now,
   };
@@ -517,6 +584,12 @@ app.post('/api/messages', requireAdmin, (req, res) => {
 app.put('/api/messages/:id', requireAdmin, (req, res) => {
   const text = stripHtml(req.body?.text || '').slice(0, 280);
   if (!text) return res.status(400).json({ error: 'Message text is required.' });
+  let schedule;
+  try {
+    schedule = messageScheduleFromBody(req.body);
+  } catch (e) {
+    return res.status(e.statusCode || 400).json({ error: e.message });
+  }
 
   const messages = loadUserMessages();
   const index = messages.findIndex(m => m.id === req.params.id);
@@ -525,6 +598,7 @@ app.put('/api/messages/:id', requireAdmin, (req, res) => {
   const next = {
     ...messages[index],
     text,
+    ...schedule,
     updatedAt: new Date().toISOString(),
   };
   messages[index] = next;
@@ -978,8 +1052,7 @@ function pacificOffset() {
 
 function formatDate(d) {
   // Always use the Pacific calendar date regardless of server timezone
-  const s = d.toLocaleString('sv-SE', { timeZone: CONFIG.timezone });
-  return s.slice(0, 10).replace(/-/g, ''); // "YYYYMMDD"
+  return formatCalendarDate(d).replace(/-/g, ''); // "YYYYMMDD"
 }
 
 // Hosting providers such as Railway inject the socket port at runtime.

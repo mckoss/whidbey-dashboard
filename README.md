@@ -59,15 +59,27 @@ Weather and tides work without any API keys.
 ## Admin
 
 Visit `/admin` to sign in with Google and manage the dashboard. Admin tools can
-add/edit/delete user-managed messages in the bottom crawl and edit WSF alert
-parenthetical context shown after the first matching query substring, including
-an optional CSS color string for matched alert text.
+add/edit/delete user-managed messages in the bottom crawl, including optional
+scheduling and CSS color text, and edit WSF alert parenthetical context shown
+after the first matching query substring, including an optional CSS color string
+for matched alert text.
 
 User messages are separate from WSF ferry alerts in storage and management, but
 they render in the same single-line marquee: WSF alerts first, then user-added
 messages, then the duplicate wrap copy. User messages use the dashboard heading
 blue (`--accent`) so they are visually distinct from WSF warning yellow and
 disruption red.
+
+User messages can optionally include `startDate` and/or `endDate` as
+`YYYY-MM-DD` Pacific dates, using the configured `timezone`
+(`America/Los_Angeles` by default). The public crawl only includes messages
+active on the current Pacific calendar date: before `startDate` is hidden, after
+`endDate` is hidden, and blank dates are open-ended. Date boundaries switch at
+midnight in that Pacific timezone, so a message with an `endDate` remains active
+through that whole Pacific calendar day. User messages can also include optional
+safe CSS color text such as `orange`, `#38bdf8`, or `var(--accent)`. The admin
+page includes inactive messages so scheduled or expired entries can still be
+edited or deleted.
 
 Ferry alert parentheticals are stored in `alert-context.json` under `dataDir`.
 The server seeds defaults for known WSF alert text when that file does not
@@ -183,9 +195,9 @@ Each card shows an inline age tag after the title. Thresholds are per-source:
 | `GET /api/ferry/clinton/space` | Drive-up space by departure (Clinton) |
 | `GET /api/ferry/mukilteo/space` | Drive-up space by departure (Mukilteo) |
 | `GET /api/ferry` | Legacy alias for `/api/ferry/clinton` |
-| `GET /api/messages` | User-managed crawl messages |
-| `POST /api/messages` | Add a user-managed crawl message (Google admin auth required) |
-| `PUT /api/messages/:id` | Update a user-managed crawl message (Google admin auth required) |
+| `GET /api/messages` | Active user-managed crawl messages; admins may pass `?includeInactive=1` |
+| `POST /api/messages` | Add a user-managed crawl message, with optional `startDate`/`endDate`/`color` (Google admin auth required) |
+| `PUT /api/messages/:id` | Update a user-managed crawl message, including optional `startDate`/`endDate`/`color` (Google admin auth required) |
 | `DELETE /api/messages/:id` | Delete a user-managed crawl message (Google admin auth required) |
 | `GET /api/alert-contexts` | WSF alert query → parenthetical text mappings |
 | `POST /api/alert-contexts` | Add a WSF alert parenthetical (Google admin auth required) |

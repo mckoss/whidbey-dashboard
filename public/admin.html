@@ -127,6 +127,11 @@
     .field {
       margin-bottom: 0.85rem;
     }
+    .date-fields {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+      gap: 0.75rem;
+    }
     .actions, .auth-row {
       display: flex;
       align-items: center;
@@ -162,6 +167,11 @@
       overflow-wrap: anywhere;
       line-height: 1.35;
       min-width: 0;
+    }
+    .message-schedule {
+      color: var(--dim);
+      font-size: 0.85rem;
+      margin-top: 0.25rem;
     }
     .context-query {
       color: var(--accent);
@@ -207,6 +217,20 @@
         <div class="field">
           <label for="text">Message</label>
           <textarea id="text" name="text" maxlength="280" required></textarea>
+        </div>
+        <div class="date-fields">
+          <div class="field">
+            <label for="message-start-date">Start date (Pacific)</label>
+            <input id="message-start-date" name="startDate" type="date">
+          </div>
+          <div class="field">
+            <label for="message-end-date">End date (Pacific)</label>
+            <input id="message-end-date" name="endDate" type="date">
+          </div>
+        </div>
+        <div class="field">
+          <label for="message-color">Color</label>
+          <input id="message-color" name="color" maxlength="80" placeholder="Any CSS color, e.g. var(--accent), #38bdf8, orange">
         </div>
         <div class="actions">
           <button id="save-message" type="submit">OK</button>
@@ -255,6 +279,9 @@
   <script>
     const form = document.getElementById('message-form');
     const textEl = document.getElementById('text');
+    const messageStartDateEl = document.getElementById('message-start-date');
+    const messageEndDateEl = document.getElementById('message-end-date');
+    const messageColorEl = document.getElementById('message-color');
     const listEl = document.getElementById('message-list');
     const statusEl = document.getElementById('status');
     const alertContextForm = document.getElementById('alert-context-form');
@@ -306,6 +333,15 @@
     function hideRowEditor(row, formClass) {
       row.querySelector(`.${formClass}`)?.classList.add('hidden');
       row.querySelector('.item-view')?.classList.remove('hidden');
+    }
+
+    function messageScheduleText(message) {
+      const start = message.startDate || '';
+      const end = message.endDate || '';
+      if (start && end) return `${start} through ${end}`;
+      if (start) return `Starts ${start}`;
+      if (end) return `Ends ${end}`;
+      return '';
     }
 
     function setSignedInEmail(email) {
@@ -368,7 +404,11 @@
       listEl.innerHTML = messages.map(message => `
         <div class="message-row" data-id="${escapeHtml(message.id)}">
           <div class="item-view">
-            <div class="message-text">${escapeHtml(message.text)}</div>
+            <div>
+              <div class="message-text">${escapeHtml(message.text)}</div>
+              ${messageScheduleText(message) ? `<div class="message-schedule">${escapeHtml(messageScheduleText(message))}</div>` : ''}
+              ${message.color ? `<div class="message-schedule">Color: ${escapeHtml(message.color)}</div>` : ''}
+            </div>
             <div class="actions">
               <button class="edit" type="button" ${signedInEmail ? '' : 'disabled'}>Edit</button>
               <button class="delete" type="button" ${signedInEmail ? '' : 'disabled'}>Delete</button>
@@ -378,6 +418,20 @@
             <div class="field">
               <label for="message-edit-${escapeHtml(message.id)}">Message</label>
               <textarea id="message-edit-${escapeHtml(message.id)}" name="text" maxlength="280" ${signedInEmail ? '' : 'disabled'} required>${escapeHtml(message.text)}</textarea>
+            </div>
+            <div class="date-fields">
+              <div class="field">
+                <label for="message-start-${escapeHtml(message.id)}">Start date (Pacific)</label>
+                <input id="message-start-${escapeHtml(message.id)}" name="startDate" type="date" value="${escapeHtml(message.startDate || '')}" ${signedInEmail ? '' : 'disabled'}>
+              </div>
+              <div class="field">
+                <label for="message-end-${escapeHtml(message.id)}">End date (Pacific)</label>
+                <input id="message-end-${escapeHtml(message.id)}" name="endDate" type="date" value="${escapeHtml(message.endDate || '')}" ${signedInEmail ? '' : 'disabled'}>
+              </div>
+            </div>
+            <div class="field">
+              <label for="message-color-${escapeHtml(message.id)}">Color</label>
+              <input id="message-color-${escapeHtml(message.id)}" name="color" maxlength="80" value="${escapeHtml(message.color || '')}" placeholder="Any CSS color" ${signedInEmail ? '' : 'disabled'}>
             </div>
             <div class="actions">
               <button type="submit" ${signedInEmail ? '' : 'disabled'}>Save</button>
@@ -390,7 +444,7 @@
 
     async function loadMessages() {
       try {
-        const data = await jsonFetch('/api/messages');
+        const data = await jsonFetch(signedInEmail ? '/api/messages?includeInactive=1' : '/api/messages');
         renderMessages(data.messages || []);
       } catch (e) {
         listEl.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
@@ -504,9 +558,17 @@
       try {
         await jsonFetch('/api/messages', {
           method: 'POST',
-          body: JSON.stringify({ text: textEl.value }),
+          body: JSON.stringify({
+            text: textEl.value,
+            startDate: messageStartDateEl.value,
+            endDate: messageEndDateEl.value,
+            color: messageColorEl.value,
+          }),
         });
         textEl.value = '';
+        messageStartDateEl.value = '';
+        messageEndDateEl.value = '';
+        messageColorEl.value = '';
         setStatus('Saved.');
         await loadMessages();
       } catch (e) {
@@ -554,7 +616,12 @@
       try {
         await jsonFetch(`/api/messages/${encodeURIComponent(row.dataset.id)}`, {
           method: 'PUT',
-          body: JSON.stringify({ text: formData.get('text') }),
+          body: JSON.stringify({
+            text: formData.get('text'),
+            startDate: formData.get('startDate'),
+            endDate: formData.get('endDate'),
+            color: formData.get('color'),
+          }),
         });
         setStatus('Saved.');
         await loadMessages();

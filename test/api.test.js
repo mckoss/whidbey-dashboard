@@ -81,6 +81,14 @@ async function getJsonAllowError(path) {
   return res.json();
 }
 
+async function getJsonWithToken(path, token = '') {
+  const headers = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`${BASE}${path}`, { headers });
+  const data = await res.json();
+  return { res, data };
+}
+
 async function sendJson(path, method, body, token = '', cookie = '') {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -92,6 +100,10 @@ async function sendJson(path, method, body, token = '', cookie = '') {
   });
   const data = await res.json();
   return { res, data };
+}
+
+function pacificDate(date = new Date()) {
+  return date.toLocaleString('sv-SE', { timeZone: 'America/Los_Angeles' }).slice(0, 10);
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────
@@ -283,23 +295,79 @@ test('messages endpoint — Google-authorized admins can add and delete crawl me
 
   const created = await sendJson('/api/messages', 'POST', {
     text: '<b>Bring firewood</b>',
+    startDate: '2000-01-01',
+    endDate: '2999-12-31',
+    color: 'oklch(80% 0.14 85)',
   }, 'valid-admin-token');
   assert.equal(created.res.status, 201, 'creates message for authorized admin');
   assert.equal(created.data.message.text, 'Bring firewood', 'stores plain text only');
+  assert.equal(created.data.message.startDate, '2000-01-01', 'stores start date');
+  assert.equal(created.data.message.endDate, '2999-12-31', 'stores end date');
+  assert.equal(created.data.message.color, 'oklch(80% 0.14 85)', 'stores safe CSS color text');
   assert.ok(created.data.message.id, 'created message has id');
 
+  const future = await sendJson('/api/messages', 'POST', {
+    text: 'Future crawl message',
+    startDate: '2999-01-01',
+  }, 'valid-admin-token');
+  assert.equal(future.res.status, 201, 'creates future-dated message');
+
+  const expired = await sendJson('/api/messages', 'POST', {
+    text: 'Expired crawl message',
+    endDate: '2000-01-01',
+  }, 'valid-admin-token');
+  assert.equal(expired.res.status, 201, 'creates expired message');
+
+  const today = pacificDate();
+  const todayOnly = await sendJson('/api/messages', 'POST', {
+    text: 'Today-only crawl message',
+    startDate: today,
+    endDate: today,
+  }, 'valid-admin-token');
+  assert.equal(todayOnly.res.status, 201, 'creates today-only message');
+
   const list = await getJson('/api/messages');
-  assert.deepEqual(list.messages.map(m => m.text), ['Bring firewood'], 'lists user crawl messages separately from WSF alerts');
+  assert.deepEqual(
+    list.messages.map(m => m.text),
+    ['Bring firewood', 'Today-only crawl message'],
+    'includes messages through their full Pacific end date'
+  );
+
+  const includeInactive = await getJsonWithToken('/api/messages?includeInactive=1', 'valid-admin-token');
+  assert.equal(includeInactive.res.status, 200, 'admin can include inactive messages');
+  assert.deepEqual(
+    includeInactive.data.messages.map(m => m.text),
+    ['Bring firewood', 'Future crawl message', 'Expired crawl message', 'Today-only crawl message'],
+    'admin includeInactive sees active, future, and expired crawl messages'
+  );
+
+  const publicIncludeInactive = await getJsonWithToken('/api/messages?includeInactive=1');
+  assert.equal(publicIncludeInactive.res.status, 401, 'includeInactive requires admin auth');
+
+  const invalidRange = await sendJson('/api/messages', 'POST', {
+    text: 'Invalid range',
+    startDate: '2026-07-01',
+    endDate: '2026-06-01',
+  }, 'valid-admin-token');
+  assert.equal(invalidRange.res.status, 400, 'rejects start date after end date');
 
   const updated = await sendJson(`/api/messages/${created.data.message.id}`, 'PUT', {
     text: '<i>Bring firewood and kindling</i>',
+    endDate: '2999-11-30',
+    color: 'var(--danger); background:red',
   }, 'valid-admin-token');
   assert.equal(updated.res.status, 200, 'updates message for authorized admin');
   assert.equal(updated.data.message.text, 'Bring firewood and kindling', 'stores updated plain text only');
+  assert.equal(updated.data.message.startDate, null, 'blank omitted start date clears start date');
+  assert.equal(updated.data.message.endDate, '2999-11-30', 'updates end date');
+  assert.equal(updated.data.message.color, '', 'drops unsafe CSS color text');
 
   const deleted = await sendJson(`/api/messages/${created.data.message.id}`, 'DELETE', {}, 'valid-admin-token');
   assert.equal(deleted.res.status, 200, 'deletes message for authorized admin');
-  assert.deepEqual(deleted.data.messages, [], 'returns remaining messages');
+  assert.deepEqual(deleted.data.messages.map(m => m.text), ['Future crawl message', 'Expired crawl message', 'Today-only crawl message'], 'returns remaining messages');
+  await sendJson(`/api/messages/${future.data.message.id}`, 'DELETE', {}, 'valid-admin-token');
+  await sendJson(`/api/messages/${expired.data.message.id}`, 'DELETE', {}, 'valid-admin-token');
+  await sendJson(`/api/messages/${todayOnly.data.message.id}`, 'DELETE', {}, 'valid-admin-token');
 });
 
 test('admin session endpoint — persists Google admin auth in a 30-day HttpOnly cookie', async () => {
@@ -432,6 +500,12 @@ test('admin page — serves Google-authenticated admin surface', async () => {
   assert.match(html, /<h2><button id="sign-in"[^>]*>Sign In<\/button><\/h2>/, 'uses the sign-in title as the compact sign-in control');
   assert.doesNotMatch(html, /renderButton/, 'does not render Google branded sign-in button');
   assert.match(html, /<textarea[^>]+id="text"/, 'has message text field');
+  assert.match(html, /id="message-start-date"[^>]+type="date"/, 'has message start date field');
+  assert.match(html, /id="message-end-date"[^>]+type="date"/, 'has message end date field');
+  assert.match(html, /Start date \(Pacific\)/, 'labels message start date as Pacific');
+  assert.match(html, /End date \(Pacific\)/, 'labels message end date as Pacific');
+  assert.match(html, /id="message-color"/, 'has message color field');
+  assert.match(html, /includeInactive=1/, 'admin message list can include inactive scheduled messages');
   assert.match(html, /Ferry Alert Parentheticals/, 'has ferry alert parenthetical editor');
   assert.match(html, /id="alert-query"/, 'has alert query field');
   assert.match(html, /id="alert-info"/, 'has alert parenthetical field');
@@ -569,7 +643,7 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
     { title: 'Title-only advisory', text: '' },
     { title: 'Terminal status', text: '2 Hour Wait for Drivers' },
     { title: 'General notice', text: 'Good morning. How are you doing?' },
-    { title: '', text: 'Dinner at 6:30.', userMessage: true },
+    { title: '', text: 'Dinner at 6:30.', color: 'orange', userMessage: true },
   ];
   const ticker = context.__alertTest.renderFerryAlerts(alerts);
   const visibleAlertText = (a) => {
@@ -602,7 +676,7 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
   assert.match(ticker, /ferry-alert-item(?! danger)[^>]*><span class="ferry-alert-detail">Pets: New pet rules effective May 20\./, 'informational all-routes item stays yellow');
   assert.match(ticker, /Construction activity at Clinton terminal June 8 - July 3 \(soil testing; operations continue\)/, 'deterministic additional info renders as parenthetical');
   assert.match(ticker, /ferry-alert-item" style="color: var\(--danger\)"/, 'editable alert context color renders as item color');
-  assert.match(ticker, /ferry-alert-item user-message"><span class="ferry-alert-detail">Dinner at 6:30\./, 'user messages use normal ticker styling');
+  assert.match(ticker, /ferry-alert-item user-message" style="color: orange"><span class="ferry-alert-detail">Dinner at 6:30\./, 'user message color renders as item color');
   assert.equal(
     (ticker.match(/Construction activity at Clinton terminal June 8 - July 3/g) || []).length,
     2,

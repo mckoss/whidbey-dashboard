@@ -1553,7 +1553,7 @@ function renderFerryAlerts(alerts = []) {
     const displayText = additionalInfo && !a.userMessage ? `${baseDisplayText} (${additionalInfo})` : baseDisplayText;
     const danger = ferryAlertIsDanger(a);
     const color = String(a.color || '').trim();
-    const styleAttr = color && !a.userMessage ? ` style="color: ${escapeHtml(color)}"` : '';
+    const styleAttr = color ? ` style="color: ${escapeHtml(color)}"` : '';
     displayTextParts.push(displayText);
     const itemClass = `ferry-alert-item${danger ? ' danger' : ''}${a.userMessage ? ' user-message' : ''}`;
     return `<span class="${itemClass}"${styleAttr}>${showDetail || a.userMessage || additionalInfo ? `<span class="ferry-alert-detail">${escapeHtml(displayText)}</span>` : `<span class="ferry-alert-title">${escapeHtml(displayTitle)}</span>`}</span>`;
@@ -1717,7 +1717,7 @@ async function loadFerry() {
   const mukilteoSp   = (mukilteoSpace.status === 'fulfilled' && !mukilteoSpace.value?.error) ? mukilteoSpace.value : {};
   const routeAlerts  = (ferryAlerts.status === 'fulfilled' && Array.isArray(ferryAlerts.value?.alerts)) ? ferryAlerts.value.alerts : [];
   const crawlMessages = (userMessages.status === 'fulfilled' && Array.isArray(userMessages.value?.messages))
-    ? userMessages.value.messages.map(message => ({ id: message.id, title: '', text: message.text, userMessage: true }))
+    ? userMessages.value.messages.map(message => ({ id: message.id, title: '', text: message.text, color: message.color, userMessage: true }))
     : [];
   const clintonSpaceMissing = !hasUsableSpaceData(clintonSp);
   const mukilteoSpaceMissing = !hasUsableSpaceData(mukilteoSp);
