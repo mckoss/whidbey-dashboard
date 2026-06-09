@@ -1156,7 +1156,7 @@ test('late ferry logic — small departure jitter does not propagate to later sa
   }] });
 
   const timings = context.__lateTest.computeSailingTimings(sailings, vesselMap, 5);
-  assert.equal(timings[0].effectiveMs, firstMs, 'minor actual departure jitter keeps the scheduled effective time');
+  assert.equal(timings[0].effectiveMs, firstMs + 3 * 60 * 1000, 'minor actual departure jitter can confirm the just-departed sailing');
   assert.equal(timings[0].lateInfo, null, 'minor actual departure jitter is not marked late');
   assert.equal(timings[1].effectiveMs, secondMs, 'minor actual departure jitter does not move the next sailing');
   assert.equal(timings[1].lateInfo, null, 'next sailing remains normal');
@@ -1170,7 +1170,7 @@ test('late ferry logic — small departure jitter does not propagate to later sa
   assert.doesNotMatch(card, /was 8:00 AM/, 'does not render a false delay parenthetical');
 });
 
-test('late ferry logic — delay propagates through later sailings in schedule order', async () => {
+test('late ferry logic — direct delay does not propagate to later sailings', async () => {
   const { readFileSync } = await import('fs');
   const { dirname: dn, join: jn } = await import('path');
   const { fileURLToPath: fu } = await import('url');
@@ -1217,21 +1217,23 @@ test('late ferry logic — delay propagates through later sailings in schedule o
     atDock: false,
     departingTerminalId: 14,
     arrivingTerminalId: 5,
+    scheduledDepartureMs: firstMs,
     leftDockMs: Date.UTC(2026, 5, 8, 0, 40), // 5:40 PM PDT actual departure
   }] });
 
   const timings = context.__lateTest.computeSailingTimings(sailings, vesselMap, 14);
   assert.equal(timings[0].effectiveMs, Date.UTC(2026, 5, 8, 0, 40), 'first late sailing uses vessel estimate');
-  assert.equal(timings[1].effectiveMs, Date.UTC(2026, 5, 8, 1, 10), 'later sailing inherits the same delay');
-  assert.equal(timings[2].effectiveMs, Date.UTC(2026, 5, 8, 1, 40), 'delay continues through subsequent sailings');
-  assert.ok(timings[0].effectiveMs < timings[1].effectiveMs, 'effective times stay in schedule order');
+  assert.equal(timings[1].effectiveMs, secondMs, 'later sailing keeps its scheduled time');
+  assert.equal(timings[2].effectiveMs, thirdMs, 'subsequent sailing also keeps its scheduled time');
+  assert.equal(timings[1].lateInfo, null, 'later sailing is not marked delayed by the earlier departure');
+  assert.equal(timings[2].lateInfo, null, 'subsequent sailing is not marked delayed by the earlier departure');
 
   const list = context.__lateTest.buildDisplayList(sailings, vesselMap, 14);
   assert.equal(list[0].sailTime.getTime(), firstMs, 'late first sailing remains the next card');
 
   const card = context.__lateTest.sailingCard(sailings[1], sailings, {}, vesselMap, 14);
-  assert.match(card, /1:10 PM|6:10 PM/, 'renders the propagated estimate instead of duplicating 5:40 PM');
-  assert.doesNotMatch(card, /5:40 PM.*was 5:35 PM/s, 'does not apply the same estimate to the next scheduled card');
+  assert.match(card, /<div class="sail-time">5:35 PM<\/div>/, 'renders the later sailing at scheduled time');
+  assert.doesNotMatch(card, /was 5:35 PM/, 'does not render propagated delay text on the later sailing');
 });
 
 test('late ferry logic — departed delayed sailing shows actual and scheduled times muted', async () => {
@@ -1279,6 +1281,7 @@ test('late ferry logic — departed delayed sailing shows actual and scheduled t
     atDock: false,
     departingTerminalId: 14,
     arrivingTerminalId: 5,
+    scheduledDepartureMs: scheduledMs,
     leftDockMs,
   }] });
   const spaceMap = {

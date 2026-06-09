@@ -1257,16 +1257,15 @@ function findVesselForSailing(s, vesselMap, fromTerminalId, parsedSailings = nul
   );
   if (!candidates.length) return null;
 
-  // Prefer a boat already tied to this route's scheduled departure, then an
-  // inbound boat whose ETA makes the requested sailing impossible/on-the-edge,
-  // then a boat already at the departing terminal.
+  // Prefer the most direct/closest vessel signal for this sailing. Delay
+  // display should not go hunting for the most pessimistic ambiguous match.
   return candidates
     .map(v => ({ v, estMs: estimateDepartureFromVessel(v, fromTerminalId, schedMs) }))
     .filter(x => x.estMs != null)
     .sort((a, b) => {
-      const aLate = Math.max(0, a.estMs - schedMs);
-      const bLate = Math.max(0, b.estMs - schedMs);
-      if (aLate !== bLate) return bLate - aLate;
+      const aExact = a.v.scheduledDepartureMs === schedMs ? 0 : 1;
+      const bExact = b.v.scheduledDepartureMs === schedMs ? 0 : 1;
+      if (aExact !== bExact) return aExact - bExact;
       return Math.abs(a.estMs - schedMs) - Math.abs(b.estMs - schedMs);
     })[0]?.v || null;
 }
@@ -1282,7 +1281,10 @@ function nearestSailingMsToEstimate(parsedSailings, estimateMs) {
 function vesselCanMatchSailing(vessel, fromTerminalId, schedMs, parsedSailings = null) {
   const near = ms => ms != null && Math.abs(ms - schedMs) <= VESSEL_SAILING_MATCH_WINDOW_MS;
   if (vessel.scheduledDepartureMs != null) return vessel.scheduledDepartureMs === schedMs;
-  if (near(vessel.leftDockMs)) return true;
+  if (near(vessel.leftDockMs)) {
+    const nearestMs = nearestSailingMsToEstimate(parsedSailings, vessel.leftDockMs);
+    return nearestMs != null ? nearestMs === schedMs : true;
+  }
   if (vessel.arrivingTerminalId === fromTerminalId && vessel.etaMs) {
     const estimatedDepartureMs = vessel.etaMs + MIN_TURNAROUND_MS;
     const nearestMs = nearestSailingMsToEstimate(parsedSailings, estimatedDepartureMs);
@@ -1346,19 +1348,12 @@ function getRawSailingTiming(s, vesselMap, fromTerminalId, parsedSailings = null
 }
 
 function computeSailingTimings(parsedSailings, vesselMap = {}, fromTerminalId = 5) {
-  let carriedDelayMs = 0;
   return parsedSailings.map(s => {
     const raw = getRawSailingTiming(s, vesselMap, fromTerminalId, parsedSailings);
-    const rawDelayMs = Math.max(0, raw.effectiveMs - raw.scheduledMs);
-    const meaningfulRawDelayMs = rawDelayMs > LATE_THRESHOLD_MS ? rawDelayMs : 0;
-    carriedDelayMs = Math.max(carriedDelayMs, meaningfulRawDelayMs);
-    const effectiveMs = raw.scheduledMs + carriedDelayMs;
     return {
       ...raw,
       sailing: s,
-      effectiveMs,
-      lateInfo: buildLateInfo(effectiveMs, raw.scheduledMs, raw.vessel),
-      propagatedDelayMs: carriedDelayMs,
+      propagatedDelayMs: 0,
     };
   });
 }
