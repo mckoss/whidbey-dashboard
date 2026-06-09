@@ -782,6 +782,7 @@ test('server config — accepts canonical CONFIG_JSON for Railway-style deploys'
         if (res.ok) {
           const json = await res.json();
           assert.equal(json.googleClientId, 'config-json-client-id');
+          assert.equal(json.ferryHistorySampleMs, 60000);
           return;
         }
       } catch {}

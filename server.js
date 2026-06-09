@@ -1436,6 +1436,7 @@ app.get('/ferry-history', (req, res) => {
 // ── Client config (feature flags, analytics ID) ──────────────────────
 app.get('/api/config', (req, res) => {
   res.json({
+    ferryHistorySampleMs: FERRY_HISTORY_SAMPLE_INTERVAL_MS,
     gaMeasurementId: CONFIG.gaMeasurementId,
     googleClientId: googleClientId() || null,
     version: pkg.version,
