@@ -540,13 +540,17 @@
         const clipEnd = Math.min(lineEndMs, segment.endMs);
         if (clipEnd <= clipStart) return '';
         const fromX = xForTerminalInSegment(trip.fromTerminalName, segment);
+        const scheduleOnly = isScheduleOnlyTrip(trip);
+        const color = scheduleOnly ? 'rgba(148, 163, 184, 0.75)' : colorFor(trip.vesselName || 'Unknown', vessels);
+        if (!scheduleOnly) {
+          const observedPath = observedTripPolyline(trip, segment, departMs, lineEndMs, lineEndX, clipStart, clipEnd, color, height, pad);
+          if (observedPath) return observedPath;
+        }
         const duration = Math.max(1, lineEndMs - departMs);
         const startPct = (clipStart - departMs) / duration;
         const endPct = (clipEnd - departMs) / duration;
         const x1 = interpolate(fromX, lineEndX, startPct);
         const x2 = interpolate(fromX, lineEndX, endPct);
-        const scheduleOnly = isScheduleOnlyTrip(trip);
-        const color = scheduleOnly ? 'rgba(148, 163, 184, 0.75)' : colorFor(trip.vesselName || 'Unknown', vessels);
         return `<line class="${tripLineClasses(trip)}" x1="${x1}" y1="${yForSegment(segment, clipStart, height, pad)}" x2="${x2}" y2="${yForSegment(segment, clipEnd, height, pad)}" stroke="${color}"></line>`;
       };
       const scheduledLines = trips.filter(isScheduleOnlyTrip).flatMap(trip => segments.map(segment => lineForTrip(trip, segment))).join('');
@@ -586,6 +590,74 @@
       const x1 = axisX + direction * 5;
       const x2 = axisX + direction * 17;
       return `<line class="schedule-departure-tick" x1="${x1}" x2="${x2}" y1="${y}" y2="${y}"><title>${escapeHtml(trip.fromTerminalName)} scheduled departure ${formatTimeMs(ms)}</title></line>`;
+    }
+
+    function observedTripPolyline(trip, segment, departMs, lineEndMs, lineEndX, clipStart, clipEnd, color, height, pad) {
+      const pathPoints = observedTripPathPoints(trip, segment, departMs, lineEndMs, lineEndX);
+      if (pathPoints.length < 3) return '';
+      const clipped = clipTimedPathPoints(pathPoints, clipStart, clipEnd);
+      if (clipped.length < 2) return '';
+      const points = clipped
+        .map(point => `${point.x},${yForSegment(segment, point.ms, height, pad)}`)
+        .join(' ');
+      return `<polyline class="${tripLineClasses(trip)} gps-observed" points="${points}" stroke="${color}"></polyline>`;
+    }
+
+    function observedTripPathPoints(trip, segment, departMs, lineEndMs, lineEndX) {
+      const fromX = xForTerminalInSegment(trip.fromTerminalName, segment);
+      const gpsPoints = (trip.observations || [])
+        .map(observation => {
+          const ms = Date.parse(observation.observedAt || '');
+          if (!Number.isFinite(ms) ||
+              ms <= departMs ||
+              ms >= lineEndMs ||
+              typeof observation.latitude !== 'number' ||
+              typeof observation.longitude !== 'number') {
+            return null;
+          }
+          const pct = terminalProgress(observation.latitude, observation.longitude);
+          return { ms, x: segment.leftX + (segment.rightX - segment.leftX) * pct };
+        })
+        .filter(Boolean);
+      if (!gpsPoints.length) return [];
+      return dedupeTimedPathPoints([
+        { ms: departMs, x: fromX },
+        ...gpsPoints,
+        { ms: lineEndMs, x: lineEndX },
+      ].sort((a, b) => a.ms - b.ms));
+    }
+
+    function clipTimedPathPoints(points, clipStart, clipEnd) {
+      const clipped = [
+        sampleTimedPathPoint(points, clipStart),
+        ...points.filter(point => point.ms > clipStart && point.ms < clipEnd),
+        sampleTimedPathPoint(points, clipEnd),
+      ].filter(Boolean);
+      return dedupeTimedPathPoints(clipped);
+    }
+
+    function sampleTimedPathPoint(points, ms) {
+      if (!points.length) return null;
+      if (ms <= points[0].ms) return { ms, x: points[0].x };
+      const last = points[points.length - 1];
+      if (ms >= last.ms) return { ms, x: last.x };
+      for (let i = 1; i < points.length; i += 1) {
+        const prev = points[i - 1];
+        const next = points[i];
+        if (ms > next.ms) continue;
+        const pct = (ms - prev.ms) / Math.max(1, next.ms - prev.ms);
+        return { ms, x: interpolate(prev.x, next.x, pct) };
+      }
+      return { ms, x: last.x };
+    }
+
+    function dedupeTimedPathPoints(points) {
+      return points.reduce((deduped, point) => {
+        const prev = deduped[deduped.length - 1];
+        if (prev && Math.abs(prev.ms - point.ms) < 1 && Math.abs(prev.x - point.x) < 0.1) return deduped;
+        deduped.push(point);
+        return deduped;
+      }, []);
     }
 
     function currentVesselDots(day, trips, vessels, nowMs, segment, yFor) {

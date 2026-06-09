@@ -643,6 +643,10 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /clipStart = Math\.max\(departMs, segment\.startMs\)/, 'clips trip lines at the start of each half-day segment');
   assert.match(html, /clipEnd = Math\.min\(lineEndMs, segment\.endMs\)/, 'clips trip lines at the end of each half-day segment');
   assert.match(html, /segments\.map\(segment => lineForTrip\(trip, segment\)\)/, 'renders each trip separately inside each time segment');
+  assert.match(html, /function observedTripPolyline/, 'renders observed trip trails from recorded GPS samples when available');
+  assert.match(html, /trip\.observations \|\| \[\]/, 'uses persisted vessel GPS observations for observed route paths');
+  assert.match(html, /sampleTimedPathPoint/, 'clips sampled GPS paths at split timeline boundaries');
+  assert.match(html, /gps-observed/, 'marks GPS-derived observed trails separately from imputed fallback lines');
   assert.match(html, /function terminalXForId/, 'maps docked current vessels by terminal id');
   assert.doesNotMatch(html, /departingTerminalId === 5 \|\| vessel\.arrivingTerminalId === 5/, 'does not place docked vessels by either endpoint');
   assert.match(html, /function currentVesselPoint/, 'shares current vessel placement for dots and underway trail lines');
