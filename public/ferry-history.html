@@ -71,8 +71,7 @@
 
     button,
     input[type="date"],
-    a.button,
-    .toggle {
+    a.button {
       min-height: 2.25rem;
       border: 1px solid var(--border);
       border-radius: 0.35rem;
@@ -82,16 +81,6 @@
       padding: 0.4rem 0.65rem;
       text-decoration: none;
     }
-
-    .toggle {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.42rem;
-      user-select: none;
-      white-space: nowrap;
-    }
-
-    .toggle input { accent-color: var(--accent); }
 
     button,
     a.button { cursor: pointer; }
@@ -211,14 +200,6 @@
     }
     .trip-line.scheduled-past {
       opacity: 0.28;
-    }
-    .trip-line.observed {
-      opacity: 0.95;
-      stroke-width: 4;
-    }
-    .trip-line.in-progress {
-      opacity: 1;
-      stroke-width: 5;
     }
     .gps-track-line {
       fill: none;
@@ -342,10 +323,6 @@
       <button id="prev-date" type="button" title="Previous day">Prev</button>
       <input id="date-input" type="date">
       <button id="next-date" type="button" title="Next day">Next</button>
-      <label class="toggle" title="Draw only recorded GPS vessel tracks">
-        <input id="gps-track-toggle" type="checkbox">
-        <span>GPS track</span>
-      </label>
     </div>
   </header>
 
@@ -391,6 +368,7 @@
     const HOUR_MS = 60 * 60 * 1000;
     const HALF_HOUR_MS = 30 * 60 * 1000;
     const GPS_TRACK_GAP_MS = 20 * 60 * 1000;
+    const GPS_ROUTE_COVERAGE_MIN = 0.15;
     const CLINTON = { name: 'Clinton', lat: 47.9755, lon: -122.3493 };
     const MUKILTEO = { name: 'Mukilteo', lat: 47.9485, lon: -122.3046 };
 
@@ -403,8 +381,6 @@
     const diagramMetaEl = document.getElementById('diagram-meta');
     const tableMetaEl = document.getElementById('table-meta');
     const versionEl = document.getElementById('version');
-    const gpsTrackToggle = document.getElementById('gps-track-toggle');
-    let currentHistoryDay = null;
 
     const params = new URLSearchParams(window.location.search);
     const initialDate = validDate(params.get('date')) || todayPacific();
@@ -413,9 +389,6 @@
     document.getElementById('prev-date').addEventListener('click', () => shiftDate(-1));
     document.getElementById('next-date').addEventListener('click', () => shiftDate(1));
     dateInput.addEventListener('change', () => navigateTo(dateInput.value));
-    gpsTrackToggle.addEventListener('change', () => {
-      if (currentHistoryDay) renderHistory(currentHistoryDay);
-    });
 
     loadConfig();
     loadHistory(initialDate);
@@ -471,11 +444,9 @@
     }
 
     function renderHistory(day) {
-      currentHistoryDay = day;
       const trips = Array.isArray(day.trips) ? day.trips : [];
-      const gpsMode = gpsTrackToggle.checked;
       const gpsTracks = collectGpsTracks(trips);
-      const vessels = gpsMode ? gpsTracks.map(track => track.name) : uniqueVessels(trips);
+      const vessels = gpsTracks.map(track => track.name);
       const completed = trips.filter(t => t.actualDepartureMs).length;
       const generated = day.generatedAt ? formatClock(day.generatedAt) : 'none';
 
@@ -485,20 +456,16 @@
         metric('Actual departures', String(completed)) +
         metric('Updated', escapeHtml(generated));
 
-      const scheduleOnly = trips.length - completed;
-      diagramMetaEl.textContent = trips.length ? `${completed} observed / ${scheduleOnly} schedule-only` : 'No trips logged';
+      const sampleCount = gpsTracks.reduce((sum, track) => sum + track.points.length, 0);
+      const scheduleContextCount = trips.filter(trip => !tripHasUsableGpsCoverage(trip)).length;
+      diagramMetaEl.textContent = sampleCount
+        ? `${gpsTracks.length} GPS tracks / ${sampleCount} samples / ${scheduleContextCount} schedule gaps`
+        : 'No GPS samples';
       tableMetaEl.textContent = vessels.length ? `${vessels.length} vessels` : '';
       errorEl.hidden = !(day.error || (day.errors && day.errors.length));
       errorEl.textContent = day.error || (day.errors || []).join('; ');
 
-      if (gpsMode) {
-        const sampleCount = gpsTracks.reduce((sum, track) => sum + track.points.length, 0);
-        diagramMetaEl.textContent = sampleCount
-          ? `${gpsTracks.length} GPS tracks / ${sampleCount} samples`
-          : 'No GPS samples';
-      }
-
-      renderDiagram(day, trips, vessels, gpsMode ? { gpsTracks } : {});
+      renderDiagram(day, trips, vessels, { gpsTracks });
       renderLegend(vessels);
       renderRows(trips);
     }
@@ -516,11 +483,6 @@
       return `<div class="metric"><div class="metric-label">${label}</div><div class="metric-value">${value}</div></div>`;
     }
 
-    function uniqueVessels(trips) {
-      const names = trips.map(t => t.vesselName || 'Unknown').filter(Boolean);
-      return [...new Set(names)].sort((a, b) => a.localeCompare(b));
-    }
-
     function colorFor(vesselName, vessels) {
       const index = Math.max(0, vessels.indexOf(vesselName || 'Unknown'));
       return COLORS[index % COLORS.length];
@@ -533,13 +495,11 @@
     }
 
     function renderDiagram(day, trips, vessels, options = {}) {
-      const gpsMode = Array.isArray(options.gpsTracks);
       const bounds = timeBounds(day.date, trips);
       const width = 1040;
       const durationMs = bounds.endMs - bounds.startMs;
       const height = Math.max(520, Math.round((durationMs / 2) / (60 * 60 * 1000)) * 52 + 110);
       const pad = { top: 70, right: 54, bottom: 34, left: 92 };
-      const nowMs = Date.now();
       const segments = splitTimeline(bounds, width, pad);
 
       const ticks = [];
@@ -555,52 +515,12 @@
         }
       }
 
-      const currentVesselByName = currentVesselMap(day);
-      const lineForTrip = (trip, segment) => {
-        const departMs = trip.actualDepartureMs || trip.scheduledDepartureMs;
-        const arriveMs = trip.arrivalMs || (departMs + 20 * 60 * 1000);
-        if (!departMs || !arriveMs) return '';
-        let lineEndMs = arriveMs;
-        let lineEndX = xForTerminalInSegment(trip.toTerminalName, segment);
-        if (isUnderwayTrip(trip, nowMs)) {
-          const currentPoint = currentVesselPoint(
-            currentVesselByName.get(trip.vesselName || 'Unknown'),
-            trip,
-            nowMs,
-            segment.leftX,
-            segment.rightX
-          );
-          if (currentPoint) {
-            lineEndMs = nowMs;
-            lineEndX = currentPoint.x;
-          }
-        }
-        const clipStart = Math.max(departMs, segment.startMs);
-        const clipEnd = Math.min(lineEndMs, segment.endMs);
-        if (clipEnd <= clipStart) return '';
-        const fromX = xForTerminalInSegment(trip.fromTerminalName, segment);
-        const scheduleOnly = isScheduleOnlyTrip(trip);
-        const color = scheduleOnly ? 'rgba(148, 163, 184, 0.75)' : colorFor(trip.vesselName || 'Unknown', vessels);
-        if (!scheduleOnly) {
-          const observedPath = observedTripPolyline(trip, segment, departMs, lineEndMs, lineEndX, clipStart, clipEnd, color, height, pad);
-          if (observedPath) return observedPath;
-        }
-        const duration = Math.max(1, lineEndMs - departMs);
-        const startPct = (clipStart - departMs) / duration;
-        const endPct = (clipEnd - departMs) / duration;
-        const x1 = interpolate(fromX, lineEndX, startPct);
-        const x2 = interpolate(fromX, lineEndX, endPct);
-        return `<line class="${tripLineClasses(trip)}" x1="${x1}" y1="${yForSegment(segment, clipStart, height, pad)}" x2="${x2}" y2="${yForSegment(segment, clipEnd, height, pad)}" stroke="${color}"></line>`;
-      };
-      const scheduledLines = gpsMode ? '' : trips.filter(isScheduleOnlyTrip).flatMap(trip => segments.map(segment => lineForTrip(trip, segment))).join('');
-      const observedLines = gpsMode ? '' : trips.filter(trip => !isScheduleOnlyTrip(trip)).flatMap(trip => segments.map(segment => lineForTrip(trip, segment))).join('');
-      const gpsTrackLines = gpsMode ? renderGpsTrackLines(options.gpsTracks, segments, vessels, height, pad) : '';
-      const lines = gpsMode ? gpsTrackLines : scheduledLines + observedLines;
-      const departureTicks = gpsMode ? '' : trips.flatMap(trip => segments.map(segment => scheduledDepartureTick(trip, segment, height, pad))).join('');
-
-      const vesselDots = gpsMode ? '' : segments.map(segment =>
-        currentVesselDots(day, trips, vessels, nowMs, segment, ms => yForSegment(segment, ms, height, pad))
-      ).join('');
+      const scheduleContextLines = trips
+        .filter(trip => !tripHasUsableGpsCoverage(trip))
+        .flatMap(trip => segments.map(segment => scheduleContextLine(trip, segment, height, pad)))
+        .join('');
+      const gpsTrackLines = renderGpsTrackLines(options.gpsTracks || [], segments, vessels, height, pad);
+      const departureTicks = trips.flatMap(trip => segments.map(segment => scheduledDepartureTick(trip, segment, height, pad))).join('');
 
       const axes = segments.map(segment => `
           <line class="axis" x1="${segment.leftX}" y1="${pad.top}" x2="${segment.leftX}" y2="${height - pad.bottom}"></line>
@@ -614,10 +534,27 @@
         <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Ferry time-distance diagram">
           ${ticks.join('')}
           ${axes}
-          ${lines}
+          ${scheduleContextLines}
+          ${gpsTrackLines}
           ${departureTicks}
-          ${vesselDots}
         </svg>`;
+    }
+
+    function scheduleContextLine(trip, segment, height, pad) {
+      const departMs = trip.scheduledDepartureMs;
+      const arriveMs = trip.arrivalMs || trip.actualArrivalMs || (departMs + 20 * 60 * 1000);
+      if (!departMs || !arriveMs) return '';
+      const clipStart = Math.max(departMs, segment.startMs);
+      const clipEnd = Math.min(arriveMs, segment.endMs);
+      if (clipEnd <= clipStart) return '';
+      const duration = Math.max(1, arriveMs - departMs);
+      const startPct = (clipStart - departMs) / duration;
+      const endPct = (clipEnd - departMs) / duration;
+      const fromX = xForTerminalInSegment(trip.fromTerminalName, segment);
+      const toX = xForTerminalInSegment(trip.toTerminalName, segment);
+      const x1 = interpolate(fromX, toX, startPct);
+      const x2 = interpolate(fromX, toX, endPct);
+      return `<line class="trip-line scheduled-estimate" x1="${x1}" y1="${yForSegment(segment, clipStart, height, pad)}" x2="${x2}" y2="${yForSegment(segment, clipEnd, height, pad)}" stroke="rgba(148, 163, 184, 0.75)"><title>${escapeHtml(trip.fromTerminalName)} to ${escapeHtml(trip.toTerminalName)} scheduled ${formatTimeMs(departMs)}</title></line>`;
     }
 
     function collectGpsTracks(trips) {
@@ -665,6 +602,27 @@
       )).join('');
     }
 
+    function tripHasUsableGpsCoverage(trip) {
+      const points = (trip.observations || [])
+        .map(observation => {
+          const ms = Date.parse(observation.observedAt || '');
+          if (!Number.isFinite(ms) ||
+              typeof observation.latitude !== 'number' ||
+              typeof observation.longitude !== 'number') {
+            return null;
+          }
+          return {
+            ms,
+            pct: terminalProgress(observation.latitude, observation.longitude),
+          };
+        })
+        .filter(Boolean);
+      if (points.length < 2) return false;
+      const minPct = Math.min(...points.map(point => point.pct));
+      const maxPct = Math.max(...points.map(point => point.pct));
+      return maxPct - minPct >= GPS_ROUTE_COVERAGE_MIN;
+    }
+
     function gpsTrackPolylines(track, segment, color, height, pad) {
       const inSegment = track.points
         .filter(point => point.ms >= segment.startMs && point.ms <= segment.endMs)
@@ -702,93 +660,6 @@
       return `<line class="schedule-departure-tick" x1="${x1}" x2="${x2}" y1="${y}" y2="${y}"><title>${escapeHtml(trip.fromTerminalName)} scheduled departure ${formatTimeMs(ms)}</title></line>`;
     }
 
-    function observedTripPolyline(trip, segment, departMs, lineEndMs, lineEndX, clipStart, clipEnd, color, height, pad) {
-      const pathPoints = observedTripPathPoints(trip, segment, departMs, lineEndMs, lineEndX);
-      if (pathPoints.length < 3) return '';
-      const clipped = clipTimedPathPoints(pathPoints, clipStart, clipEnd);
-      if (clipped.length < 2) return '';
-      const points = clipped
-        .map(point => `${point.x},${yForSegment(segment, point.ms, height, pad)}`)
-        .join(' ');
-      return `<polyline class="${tripLineClasses(trip)} gps-observed" points="${points}" stroke="${color}"></polyline>`;
-    }
-
-    function observedTripPathPoints(trip, segment, departMs, lineEndMs, lineEndX) {
-      const fromX = xForTerminalInSegment(trip.fromTerminalName, segment);
-      const gpsPoints = (trip.observations || [])
-        .map(observation => {
-          const ms = Date.parse(observation.observedAt || '');
-          if (!Number.isFinite(ms) ||
-              ms <= departMs ||
-              ms >= lineEndMs ||
-              typeof observation.latitude !== 'number' ||
-              typeof observation.longitude !== 'number') {
-            return null;
-          }
-          const pct = terminalProgress(observation.latitude, observation.longitude);
-          return { ms, x: segment.leftX + (segment.rightX - segment.leftX) * pct };
-        })
-        .filter(Boolean);
-      if (!gpsPoints.length) return [];
-      return dedupeTimedPathPoints([
-        { ms: departMs, x: fromX },
-        ...gpsPoints,
-        { ms: lineEndMs, x: lineEndX },
-      ].sort((a, b) => a.ms - b.ms));
-    }
-
-    function clipTimedPathPoints(points, clipStart, clipEnd) {
-      const clipped = [
-        sampleTimedPathPoint(points, clipStart),
-        ...points.filter(point => point.ms > clipStart && point.ms < clipEnd),
-        sampleTimedPathPoint(points, clipEnd),
-      ].filter(Boolean);
-      return dedupeTimedPathPoints(clipped);
-    }
-
-    function sampleTimedPathPoint(points, ms) {
-      if (!points.length) return null;
-      if (ms <= points[0].ms) return { ms, x: points[0].x };
-      const last = points[points.length - 1];
-      if (ms >= last.ms) return { ms, x: last.x };
-      for (let i = 1; i < points.length; i += 1) {
-        const prev = points[i - 1];
-        const next = points[i];
-        if (ms > next.ms) continue;
-        const pct = (ms - prev.ms) / Math.max(1, next.ms - prev.ms);
-        return { ms, x: interpolate(prev.x, next.x, pct) };
-      }
-      return { ms, x: last.x };
-    }
-
-    function dedupeTimedPathPoints(points) {
-      return points.reduce((deduped, point) => {
-        const prev = deduped[deduped.length - 1];
-        if (prev && Math.abs(prev.ms - point.ms) < 1 && Math.abs(prev.x - point.x) < 0.1) return deduped;
-        deduped.push(point);
-        return deduped;
-      }, []);
-    }
-
-    function currentVesselDots(day, trips, vessels, nowMs, segment, yFor) {
-      if ((day.date || '') !== todayPacific() || nowMs < segment.startMs || nowMs > segment.endMs) return '';
-      const latestByVessel = new Map();
-      for (const trip of trips) {
-        const name = trip.vesselName || 'Unknown';
-        const depart = trip.actualDepartureMs || trip.scheduledDepartureMs;
-        const arrive = trip.arrivalMs || depart + 20 * 60 * 1000;
-        if (depart <= nowMs && arrive >= nowMs) latestByVessel.set(name, trip);
-      }
-      return (day.currentVessels || []).map(vessel => {
-        const name = vessel.vesselName || 'Unknown';
-        const trip = latestByVessel.get(name);
-        const color = colorFor(name, vessels);
-        const point = currentVesselPoint(vessel, trip, nowMs, segment.leftX, segment.rightX);
-        if (!point) return '';
-        return `<circle class="vessel-dot" cx="${point.x}" cy="${yFor(nowMs)}" r="6" fill="${color}"><title>${escapeHtml(name)}</title></circle>`;
-      }).join('');
-    }
-
     function splitTimeline(bounds, width, pad) {
       const gap = 58;
       const panelWidth = (width - pad.left - pad.right - gap) / 2;
@@ -814,55 +685,6 @@
 
     function xForTerminalInSegment(name, segment) {
       return name === 'Clinton' ? segment.leftX : segment.rightX;
-    }
-
-    function currentVesselMap(day) {
-      return new Map((day.currentVessels || []).map(vessel => [vessel.vesselName || 'Unknown', vessel]));
-    }
-
-    function currentVesselPoint(vessel, trip, nowMs, leftX, rightX) {
-      if (vessel && vessel.atDock) {
-        const x = terminalXForId(vessel.departingTerminalId, leftX, rightX) ||
-          terminalXForId(vessel.arrivingTerminalId, leftX, rightX);
-        return x === null ? null : { x };
-      }
-      if (vessel && typeof vessel.latitude === 'number' && typeof vessel.longitude === 'number') {
-        const pct = terminalProgress(vessel.latitude, vessel.longitude);
-        return { x: leftX + (rightX - leftX) * pct };
-      }
-      if (trip) {
-        const depart = trip.actualDepartureMs || trip.scheduledDepartureMs;
-        const arrive = trip.arrivalMs || depart + 20 * 60 * 1000;
-        const pct = clamp((nowMs - depart) / Math.max(1, arrive - depart), 0, 1);
-        const fromX = trip.fromTerminalName === 'Clinton' ? leftX : rightX;
-        const toX = trip.toTerminalName === 'Clinton' ? leftX : rightX;
-        return { x: fromX + (toX - fromX) * pct };
-      }
-      return null;
-    }
-
-    function terminalXForId(terminalId, leftX, rightX) {
-      if (terminalId === 5) return leftX;
-      if (terminalId === 14) return rightX;
-      return null;
-    }
-
-    function isScheduleOnlyTrip(trip) {
-      return !trip.actualDepartureMs;
-    }
-
-    function isUnderwayTrip(trip, nowMs) {
-      const departMs = trip.actualDepartureMs || trip.scheduledDepartureMs;
-      const arriveMs = trip.arrivalMs || (departMs + 20 * 60 * 1000);
-      return !isScheduleOnlyTrip(trip) && trip.status === 'in-progress' && departMs <= nowMs && nowMs < arriveMs;
-    }
-
-    function tripLineClasses(trip) {
-      const classes = ['trip-line'];
-      if (isScheduleOnlyTrip(trip)) classes.push('scheduled-estimate');
-      else classes.push('observed');
-      if (trip.status) classes.push(trip.status);
-      return classes.map(escapeHtml).join(' ');
     }
 
     function terminalProgress(lat, lon) {
