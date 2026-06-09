@@ -681,7 +681,11 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.doesNotMatch(html, /<th>Status<\/th>/, 'does not render a status column');
   assert.doesNotMatch(html, /function statusText/, 'does not render status chip text');
   assert.match(html, /function formatMinutes/, 'formats durations as fractional minutes');
-  assert.match(html, /Time Distance/, 'has diagram section');
+  assert.match(html, /GPS Tracks/, 'labels the diagram as GPS tracks');
+  assert.doesNotMatch(html, /Time Distance/, 'does not use the old time-distance label');
+  assert.match(html, /style="aspect-ratio:\$\{width\} \/ \$\{height\}"/, 'uses the SVG viewBox ratio instead of fixed vertical whitespace');
+  assert.match(html, /top:\s*48/, 'keeps graph top padding tight');
+  assert.match(html, /bottom:\s*18/, 'keeps graph bottom padding tight');
   assert.match(html, /const DAY_START_HOUR = 2/, 'graph day starts at 2 AM');
   assert.match(html, /formatGraphTimeMs/, 'formats graph times with operational-day labels');
   assert.match(html, /\$\{timeText\}\+1/, 'appends +1 to graph labels after midnight');

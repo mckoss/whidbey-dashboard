@@ -151,12 +151,11 @@
     .diagram-wrap {
       padding: 0.75rem;
       background: var(--panel2);
-      min-height: 520px;
     }
 
     svg {
       width: 100%;
-      min-height: 520px;
+      height: auto;
       display: block;
     }
 
@@ -167,14 +166,12 @@
     .tick-label,
     .terminal-label {
       fill: var(--dim);
-      font-size: 13px;
+      font-size: 14px;
       font-variant-numeric: tabular-nums;
     }
     .terminal-label {
       fill: var(--text);
       font-weight: 600;
-      letter-spacing: 0.05em;
-      text-transform: uppercase;
     }
     .trip-line {
       fill: none;
@@ -309,8 +306,7 @@
       }
       input[type="date"] { width: 7.8rem; }
       .text-link { font-size: 0.76rem; }
-      .diagram-wrap { min-height: 420px; padding: 0.5rem; }
-      svg { min-height: 420px; }
+      .diagram-wrap { padding: 0.5rem; }
       th,
       td { padding: 0.42rem 0.28rem; }
       table { font-size: 0.76rem; }
@@ -342,7 +338,7 @@
 
     <section>
       <div class="section-head">
-        <h2>Time Distance</h2>
+        <h2>GPS Tracks</h2>
         <div class="meta" id="diagram-meta"></div>
       </div>
       <div class="diagram-wrap" id="diagram"></div>
@@ -502,7 +498,7 @@
       const width = 1040;
       const durationMs = bounds.endMs - bounds.startMs;
       const height = Math.max(520, Math.round((durationMs / 2) / (60 * 60 * 1000)) * 52 + 110);
-      const pad = { top: 70, right: 54, bottom: 34, left: 92 };
+      const pad = { top: 48, right: 54, bottom: 18, left: 92 };
       const segments = splitTimeline(bounds, width, pad);
 
       const ticks = [];
@@ -528,13 +524,13 @@
       const axes = segments.map(segment => `
           <line class="axis" x1="${segment.leftX}" y1="${pad.top}" x2="${segment.leftX}" y2="${height - pad.bottom}"></line>
           <line class="axis" x1="${segment.rightX}" y1="${pad.top}" x2="${segment.rightX}" y2="${height - pad.bottom}"></line>
-          <text class="terminal-label" x="${segment.leftX}" y="28" text-anchor="middle">Clinton</text>
-          <text class="terminal-label" x="${segment.rightX}" y="28" text-anchor="middle">Mukilteo</text>
-          <text class="tick-label" x="${(segment.panelLeft + segment.panelRight) / 2}" y="52" text-anchor="middle">${formatGraphTimeMs(segment.startMs, day.date)} - ${formatGraphTimeMs(segment.endMs, day.date)}</text>
+          <text class="terminal-label" x="${segment.leftX}" y="22" text-anchor="middle">Clinton</text>
+          <text class="terminal-label" x="${segment.rightX}" y="22" text-anchor="middle">Mukilteo</text>
+          <text class="tick-label" x="${(segment.panelLeft + segment.panelRight) / 2}" y="40" text-anchor="middle">${formatGraphTimeMs(segment.startMs, day.date)} - ${formatGraphTimeMs(segment.endMs, day.date)}</text>
         `).join('');
 
       diagramEl.innerHTML = `
-        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Ferry time-distance diagram">
+        <svg viewBox="0 0 ${width} ${height}" style="aspect-ratio:${width} / ${height}" role="img" aria-label="Ferry GPS tracks">
           ${ticks.join('')}
           ${axes}
           ${scheduleContextLines}
