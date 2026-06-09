@@ -173,6 +173,8 @@
 
     .axis { stroke: var(--line); stroke-width: 2; }
     .grid { stroke: rgba(148, 163, 184, 0.23); stroke-width: 1; }
+    .grid.hour-grid { stroke: rgba(148, 163, 184, 0.42); stroke-width: 1.4; }
+    .grid.half-hour-grid { stroke: rgba(148, 163, 184, 0.24); stroke-width: 1; }
     .tick-label,
     .terminal-label {
       fill: var(--dim);
@@ -498,9 +500,10 @@
 
       const ticks = [];
       for (const segment of segments) {
-        for (let ms = firstHalfHourMark(segment.startMs); ms <= segment.endMs; ms += HOUR_MS) {
+        for (let ms = ceilToHalfHour(segment.startMs); ms <= segment.endMs; ms += HALF_HOUR_MS) {
           const y = yForSegment(segment, ms, height, pad);
-          ticks.push(`<line class="grid" x1="${segment.panelLeft}" x2="${segment.panelRight}" y1="${y}" y2="${y}" opacity="0.65"></line>`);
+          const isHour = isHourMark(ms);
+          ticks.push(`<line class="grid ${isHour ? 'hour-grid' : 'half-hour-grid'}" x1="${segment.panelLeft}" x2="${segment.panelRight}" y1="${y}" y2="${y}"></line>`);
         }
         for (let ms = ceilToHour(segment.startMs); ms <= segment.endMs; ms += HOUR_MS) {
           const y = yForSegment(segment, ms, height, pad);
@@ -815,9 +818,12 @@
       return Math.ceil(ms / HOUR_MS) * HOUR_MS;
     }
 
-    function firstHalfHourMark(ms) {
-      const halfHour = floorToHour(ms) + HALF_HOUR_MS;
-      return halfHour < ms ? halfHour + HOUR_MS : halfHour;
+    function ceilToHalfHour(ms) {
+      return Math.ceil(ms / HALF_HOUR_MS) * HALF_HOUR_MS;
+    }
+
+    function isHourMark(ms) {
+      return ms % HOUR_MS === 0;
     }
 
     function escapeHtml(value) {
