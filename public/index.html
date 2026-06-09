@@ -46,6 +46,13 @@
       justify-content: space-between;
     }
 
+    .title-block {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.1rem;
+    }
+
     h1 { font-size: 1.4rem; color: var(--accent); font-weight: 300; letter-spacing: 0.1em; text-transform: uppercase; }
     #version {
       font-size: 0.6rem;
@@ -53,6 +60,17 @@
       font-weight: 300;
       letter-spacing: 0.05em;
       vertical-align: middle;
+    }
+
+    .text-link {
+      color: var(--dim);
+      font-size: 0.82rem;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .text-link:hover {
+      color: var(--accent);
     }
 
     .header-meta {
@@ -642,6 +660,8 @@
 
       h1 { font-size: 1.2rem; }
 
+      .text-link { font-size: 0.76rem; }
+
       .header-meta {
         display: flex;
         align-items: center;
@@ -667,7 +687,10 @@
 <body>
 
 <header>
-  <h1>🌊 South Whidbey Island <span id="version"></span></h1>
+  <div class="title-block">
+    <h1>🌊 South Whidbey Island <span id="version"></span></h1>
+    <a class="text-link" id="history-link" href="/ferry-history">History</a>
+  </div>
   <div class="header-meta">
     <div class="sun-times" id="sun-times"></div>
     <div id="moon-phase"></div>

@@ -608,6 +608,7 @@ test('static HTML — index.html contains required elements', async () => {
   assert.ok(html.includes('id="ferry-mukilteo"'), 'has #ferry-mukilteo panel');
   assert.ok(html.includes('(space API N/A)'), 'has ferry space warning text');
   assert.ok(html.includes('ferry-alert'), 'has ferry route alert styling');
+  assert.match(html, /<a class="text-link" id="history-link" href="\/ferry-history">History<\/a>/, 'links to ferry history from the dashboard header');
   assert.match(html, /#ferry-alert-ticker\s*\{[\s\S]*?min-width:\s*0;/, 'ticker grid item cannot widen the dashboard');
   assert.match(html, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s*minmax\(0,\s*1fr\)/, 'main grid columns can shrink to viewport');
   assert.ok(html.includes('Whidbey'), 'mentions Whidbey');
