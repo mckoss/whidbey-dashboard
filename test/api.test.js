@@ -671,7 +671,9 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /id="prev-date"/, 'has previous date control');
   assert.match(html, /id="next-date"/, 'has next date control');
   assert.match(html, /id="date-input"[^>]+type="date"/, 'has date picker');
-  assert.match(html, /<a class="text-link" id="main-link" href="\/">Dashboard<\/a>/, 'dashboard navigation is a compact text link');
+  assert.match(html, /<div class="title-row">[\s\S]*?<a class="text-link" id="main-link" href="\/">Dashboard<\/a>[\s\S]*?<\/div>/, 'dashboard navigation is tucked under the history title');
+  assert.match(html, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s*auto\s*minmax\(0,\s*1fr\)/, 'header centers date controls between title and clock');
+  assert.match(html, /\.nav\s*\{[\s\S]*?justify-content:\s*center;/, 'date controls are centered in the header');
   assert.match(html, /<p class="summary" id="summary"><\/p>/, 'summary renders as a compact paragraph');
   assert.doesNotMatch(html, /function metric/, 'summary no longer renders large metric chips');
   assert.doesNotMatch(html, /metric\('Date'/, 'summary does not duplicate the selected date');
