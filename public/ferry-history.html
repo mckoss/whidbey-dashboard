@@ -47,6 +47,9 @@
     .title-row { grid-area: title; min-width: 0; }
 
     h1 {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
       margin: 0;
       color: var(--accent);
       font-weight: 300;
@@ -54,6 +57,13 @@
       letter-spacing: 0.04em;
       text-transform: uppercase;
       white-space: nowrap;
+    }
+
+    .page-logo {
+      width: 1.25em;
+      height: 1.25em;
+      flex: 0 0 auto;
+      color: var(--accent);
     }
 
     #version {
@@ -354,7 +364,16 @@
 <body>
   <header>
     <div class="title-row">
-      <h1>Ferry History <span id="version"></span></h1>
+      <h1>
+        <svg class="page-logo" viewBox="0 0 64 64" role="img" aria-label="Washington state ferry in profile">
+          <path d="M4 42h56l-5 8H12l-8-8Z" fill="currentColor" opacity="0.95"/>
+          <path d="M14 25h33l8 11H10l4-11Z" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/>
+          <path d="M20 18h18l5 7H16l4-7Z" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/>
+          <path d="M18 32h6M29 32h6M40 32h6" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+          <path d="M6 54c5 3 10 3 15 0s10-3 15 0 10 3 15 0" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+        </svg>
+        Ferry History <span id="version"></span>
+      </h1>
     </div>
     <div class="nav">
       <a class="text-link" id="main-link" href="/">Dashboard</a>

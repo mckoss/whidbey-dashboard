@@ -660,6 +660,8 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   const html = await res.text();
 
   assert.match(html, /Ferry History/, 'page is named ferry history');
+  assert.match(html, /class="page-logo"/, 'shows a compact ferry logo in the history page title');
+  assert.match(html, /aria-label="Washington state ferry in profile"/, 'ferry logo has an accessible description');
   assert.match(html, /id="version"/, 'shows app version in the header');
   assert.match(html, /id="clock"/, 'shows the shared dashboard clock in the header');
   assert.match(html, /id="date-display"/, 'shows the shared dashboard date in the header');
