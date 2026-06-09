@@ -1350,7 +1350,8 @@ function computeSailingTimings(parsedSailings, vesselMap = {}, fromTerminalId = 
   return parsedSailings.map(s => {
     const raw = getRawSailingTiming(s, vesselMap, fromTerminalId, parsedSailings);
     const rawDelayMs = Math.max(0, raw.effectiveMs - raw.scheduledMs);
-    carriedDelayMs = Math.max(carriedDelayMs, rawDelayMs);
+    const meaningfulRawDelayMs = rawDelayMs > LATE_THRESHOLD_MS ? rawDelayMs : 0;
+    carriedDelayMs = Math.max(carriedDelayMs, meaningfulRawDelayMs);
     const effectiveMs = raw.scheduledMs + carriedDelayMs;
     return {
       ...raw,

@@ -1105,6 +1105,71 @@ test('late ferry logic — vessel scheduled departure does not delay nearby earl
   assert.equal(timings[1].effectiveMs, nextMs, 'exact scheduled sailing still matches normally');
 });
 
+test('late ferry logic — small departure jitter does not propagate to later sailings', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
+  const script = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+
+  const fixedNow = Date.UTC(2026, 5, 9, 14, 41); // 7:41 AM PDT
+  class FakeDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [fixedNow])); }
+    static now() { return fixedNow; }
+  }
+  Object.assign(FakeDate, Date);
+
+  const nullEl = { style: {}, className: '', textContent: '', innerHTML: '', querySelector: () => null };
+  const context = {
+    console,
+    Date: FakeDate,
+    setInterval: () => 0,
+    setTimeout: () => 0,
+    clearInterval: () => {},
+    fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
+    document: {
+      getElementById: () => nullEl,
+      querySelector: () => nullEl,
+      createElement: () => ({}),
+      head: { appendChild: () => {} },
+    },
+    window: {},
+  };
+  vm.createContext(context);
+  vm.runInContext(script + `\nthis.__lateTest = { buildVesselMap, computeSailingTimings, buildDisplayList, sailingCard };`, context);
+
+  const firstMs = Date.UTC(2026, 5, 9, 14, 30);  // 7:30 AM PDT
+  const secondMs = Date.UTC(2026, 5, 9, 15, 0);  // 8:00 AM PDT
+  const thirdMs = Date.UTC(2026, 5, 9, 15, 30);  // 8:30 AM PDT
+  const sailings = [firstMs, secondMs, thirdMs].map(ms => ({
+    sailTime: new Date(ms),
+    DepartingTime: `/Date(${ms})/`,
+  }));
+  const vesselMap = context.__lateTest.buildVesselMap({ vessels: [{
+    vesselName: 'Suquamish',
+    inService: true,
+    atDock: false,
+    departingTerminalId: 5,
+    arrivingTerminalId: 14,
+    leftDockMs: firstMs + 3 * 60 * 1000,
+  }] });
+
+  const timings = context.__lateTest.computeSailingTimings(sailings, vesselMap, 5);
+  assert.equal(timings[0].effectiveMs, firstMs, 'minor actual departure jitter keeps the scheduled effective time');
+  assert.equal(timings[0].lateInfo, null, 'minor actual departure jitter is not marked late');
+  assert.equal(timings[1].effectiveMs, secondMs, 'minor actual departure jitter does not move the next sailing');
+  assert.equal(timings[1].lateInfo, null, 'next sailing remains normal');
+
+  const list = context.__lateTest.buildDisplayList(sailings, vesselMap, 5);
+  assert.equal(list[0].sailTime.getTime(), firstMs, 'last departed card remains the 7:30 sailing');
+  assert.equal(list[1].sailTime.getTime(), secondMs, 'next card remains the scheduled 8:00 sailing');
+
+  const card = context.__lateTest.sailingCard(sailings[1], sailings, {}, vesselMap, 5);
+  assert.match(card, /<div class="sail-time">8:00 AM<\/div>/, 'renders the next sailing at scheduled time');
+  assert.doesNotMatch(card, /was 8:00 AM/, 'does not render a false delay parenthetical');
+});
+
 test('late ferry logic — delay propagates through later sailings in schedule order', async () => {
   const { readFileSync } = await import('fs');
   const { dirname: dn, join: jn } = await import('path');
