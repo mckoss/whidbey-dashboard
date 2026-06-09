@@ -625,6 +625,9 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /hour-grid/, 'styles hourly grid lines more strongly than half-hour lines');
   assert.match(html, /ms \+= HOUR_MS\)[\s\S]*?formatTimeMs\(ms\)/, 'labels every hour on each time segment');
   assert.match(html, /const HALF_HOUR_MS = 30 \* 60 \* 1000/, 'defines half-hour grid interval');
+  assert.match(html, /schedule-departure-tick/, 'draws yellow scheduled departure ticks outside the terminal axes');
+  assert.match(html, /scheduledDepartureTick\(trip, segment, height, pad\)/, 'renders scheduled departure ticks per split timeline segment');
+  assert.match(html, /trip\.fromTerminalName === 'Clinton'/, 'places Clinton and Mukilteo departure ticks on opposite outside edges');
   assert.match(html, /midpointMs = bounds\.startMs \+ \(bounds\.endMs - bounds\.startMs\) \/ 2/, 'splits at the timeline midpoint rather than hard-coded noon');
   assert.match(html, /clipStart = Math\.max\(departMs, segment\.startMs\)/, 'clips trip lines at the start of each half-day segment');
   assert.match(html, /clipEnd = Math\.min\(lineEndMs, segment\.endMs\)/, 'clips trip lines at the end of each half-day segment');

@@ -209,6 +209,11 @@
       opacity: 1;
       stroke-width: 5;
     }
+    .schedule-departure-tick {
+      stroke: #facc15;
+      stroke-linecap: round;
+      stroke-width: 2.5;
+    }
     .vessel-dot {
       stroke: var(--bg);
       stroke-width: 2;
@@ -547,6 +552,7 @@
       const scheduledLines = trips.filter(isScheduleOnlyTrip).flatMap(trip => segments.map(segment => lineForTrip(trip, segment))).join('');
       const observedLines = trips.filter(trip => !isScheduleOnlyTrip(trip)).flatMap(trip => segments.map(segment => lineForTrip(trip, segment))).join('');
       const lines = scheduledLines + observedLines;
+      const departureTicks = trips.flatMap(trip => segments.map(segment => scheduledDepartureTick(trip, segment, height, pad))).join('');
 
       const vesselDots = segments.map(segment =>
         currentVesselDots(day, trips, vessels, nowMs, segment, ms => yForSegment(segment, ms, height, pad))
@@ -565,8 +571,21 @@
           ${ticks.join('')}
           ${axes}
           ${lines}
+          ${departureTicks}
           ${vesselDots}
         </svg>`;
+    }
+
+    function scheduledDepartureTick(trip, segment, height, pad) {
+      const ms = trip.scheduledDepartureMs;
+      if (!ms || ms < segment.startMs || ms > segment.endMs) return '';
+      const y = yForSegment(segment, ms, height, pad);
+      const isClintonDeparture = trip.fromTerminalName === 'Clinton';
+      const axisX = isClintonDeparture ? segment.leftX : segment.rightX;
+      const direction = isClintonDeparture ? -1 : 1;
+      const x1 = axisX + direction * 5;
+      const x2 = axisX + direction * 17;
+      return `<line class="schedule-departure-tick" x1="${x1}" x2="${x2}" y1="${y}" y2="${y}"><title>${escapeHtml(trip.fromTerminalName)} scheduled departure ${formatTimeMs(ms)}</title></line>`;
     }
 
     function currentVesselDots(day, trips, vessels, nowMs, segment, yFor) {
