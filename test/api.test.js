@@ -706,8 +706,12 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /scheduled trips/, 'labels trip count as scheduled trips');
   assert.match(html, /\$\{sampleCount\} GPS samples/, 'summarizes GPS data as a sample count');
   assert.doesNotMatch(html, /schedule gaps/, 'does not expose schedule fallback gaps in summary text');
-  assert.match(html, /function splitTimeline/, 'splits the time-distance chart into two equal timeline columns');
-  assert.match(html, /left:\s*92/, 'leaves enough left gutter for unclipped first-column time labels');
+  assert.match(html, /const TIMELINE_COLUMN_COUNT = 4/, 'splits the time-distance chart into four timeline columns');
+  assert.match(html, /const TIMELINE_COLUMN_HOURS = 6/, 'uses 6-hour timeline columns');
+  assert.match(html, /left:\s*54/, 'keeps the left time-label gutter compact');
+  assert.match(html, /const GRID_TICK_EXTENT = 8/, 'limits grid lines to short ticks outside terminal axes');
+  assert.match(html, /segment\.leftX - GRID_TICK_EXTENT/, 'starts grid lines near the left terminal axis');
+  assert.match(html, /segment\.rightX \+ GRID_TICK_EXTENT/, 'ends grid lines near the right terminal axis');
   assert.match(html, /ceilToHalfHour\(segment\.startMs\)/, 'starts grid lines on the next half-hour boundary');
   assert.match(html, /ms \+= HALF_HOUR_MS/, 'draws grid lines every half hour, including hourly lines');
   assert.match(html, /hour-grid/, 'styles hourly grid lines more strongly than half-hour lines');
@@ -716,7 +720,8 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /schedule-departure-tick/, 'draws yellow scheduled departure ticks outside the terminal axes');
   assert.match(html, /scheduledDepartureTick\(trip, segment, height, pad\)/, 'renders scheduled departure ticks per split timeline segment');
   assert.match(html, /trip\.fromTerminalName === 'Clinton'/, 'places Clinton and Mukilteo departure ticks on opposite outside edges');
-  assert.match(html, /midpointMs = bounds\.startMs \+ 12 \* HOUR_MS/, 'splits graph columns into fixed 12-hour periods');
+  assert.match(html, /Array\.from\(\{ length: TIMELINE_COLUMN_COUNT \}/, 'builds timeline columns from the configured count');
+  assert.match(html, /index \* TIMELINE_COLUMN_HOURS \* HOUR_MS/, 'splits graph columns into fixed 6-hour periods');
   assert.match(html, /endMs: start \+ 24 \* HOUR_MS/, 'uses a fixed 24-hour 2 AM to 2 AM graph day');
   assert.match(html, /clipStart = Math\.max\(departMs, segment\.startMs\)/, 'clips schedule fallback lines at the start of each half-day segment');
   assert.match(html, /clipEnd = Math\.min\(arriveMs, segment\.endMs\)/, 'clips schedule fallback lines at the end of each half-day segment');

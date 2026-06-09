@@ -437,6 +437,9 @@
     const DAY_START_HOUR = 2;
     const HOUR_MS = 60 * 60 * 1000;
     const HALF_HOUR_MS = 30 * 60 * 1000;
+    const TIMELINE_COLUMN_COUNT = 4;
+    const TIMELINE_COLUMN_HOURS = 6;
+    const GRID_TICK_EXTENT = 8;
     const GPS_TRACK_GAP_MS = 20 * 60 * 1000;
     const GPS_ROUTE_COVERAGE_MIN = 0.15;
     const TZ = 'America/Los_Angeles';
@@ -596,8 +599,9 @@
       const bounds = timeBounds(day.date, trips);
       const width = 1040;
       const durationMs = bounds.endMs - bounds.startMs;
-      const height = Math.max(520, Math.round((durationMs / 2) / (60 * 60 * 1000)) * 52 + 110);
-      const pad = { top: 48, right: 54, bottom: 18, left: 92 };
+      const hoursPerColumn = durationMs / TIMELINE_COLUMN_COUNT / HOUR_MS;
+      const height = Math.max(360, Math.round(hoursPerColumn) * 52 + 86);
+      const pad = { top: 48, right: 30, bottom: 18, left: 54 };
       const segments = splitTimeline(bounds, width, pad);
 
       const ticks = [];
@@ -605,11 +609,11 @@
         for (let ms = ceilToHalfHour(segment.startMs); ms <= segment.endMs; ms += HALF_HOUR_MS) {
           const y = yForSegment(segment, ms, height, pad);
           const isHour = isHourMark(ms);
-          ticks.push(`<line class="grid ${isHour ? 'hour-grid' : 'half-hour-grid'}" x1="${segment.panelLeft}" x2="${segment.panelRight}" y1="${y}" y2="${y}"></line>`);
+          ticks.push(`<line class="grid ${isHour ? 'hour-grid' : 'half-hour-grid'}" x1="${segment.leftX - GRID_TICK_EXTENT}" x2="${segment.rightX + GRID_TICK_EXTENT}" y1="${y}" y2="${y}"></line>`);
         }
         for (let ms = ceilToHour(segment.startMs); ms <= segment.endMs; ms += HOUR_MS) {
           const y = yForSegment(segment, ms, height, pad);
-          ticks.push(`<text class="tick-label" x="${segment.panelLeft - 12}" y="${y + 4}" text-anchor="end">${formatGraphTimeMs(ms, day.date)}</text>`);
+          ticks.push(`<text class="tick-label" x="${segment.leftX - GRID_TICK_EXTENT - 4}" y="${y + 4}" text-anchor="end">${formatGraphTimeMs(ms, day.date)}</text>`);
         }
       }
 
@@ -759,16 +763,16 @@
     }
 
     function splitTimeline(bounds, width, pad) {
-      const gap = 58;
-      const panelWidth = (width - pad.left - pad.right - gap) / 2;
-      const midpointMs = bounds.startMs + 12 * HOUR_MS;
-      return [0, 1].map(index => {
+      const gap = 30;
+      const panelWidth = (width - pad.left - pad.right - gap * (TIMELINE_COLUMN_COUNT - 1)) / TIMELINE_COLUMN_COUNT;
+      return Array.from({ length: TIMELINE_COLUMN_COUNT }, (_, index) => {
         const panelLeft = pad.left + index * (panelWidth + gap);
         const panelRight = panelLeft + panelWidth;
-        const terminalInset = Math.min(76, panelWidth * 0.18);
+        const terminalInset = Math.min(32, panelWidth * 0.15);
+        const startMs = bounds.startMs + index * TIMELINE_COLUMN_HOURS * HOUR_MS;
         return {
-          startMs: index === 0 ? bounds.startMs : midpointMs,
-          endMs: index === 0 ? midpointMs : bounds.endMs,
+          startMs,
+          endMs: index === TIMELINE_COLUMN_COUNT - 1 ? bounds.endMs : startMs + TIMELINE_COLUMN_HOURS * HOUR_MS,
           panelLeft,
           panelRight,
           leftX: panelLeft + terminalInset,
