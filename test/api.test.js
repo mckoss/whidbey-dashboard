@@ -352,8 +352,10 @@ test('ferry/history recorder — matches swapped underway vessels with blank WSF
   assert.match(source, /function vesselDirectionMatchesTrip/, 'centralizes trip direction matching');
   assert.match(source, /!vessel\.atDock &&[\s\S]*?vessel\.leftDockMs &&[\s\S]*?!vessel\.arrivingTerminalId/,
     'allows underway vessels with blank arriving terminal to match by departure terminal and left-dock time');
-  assert.match(source, /observedVesselName \|\| next\.vesselName/,
-    'uses the observed vessel name after actual departure so live dots can attach to trail lines');
+  assert.match(source, /vesselProvidedDeparture && vessel\?\.vesselName/,
+    'uses live left-dock telemetry to replace stale schedule-assigned vessel names');
+  assert.match(source, /observedVesselName \|\| persistedObservedVesselName \|\| next\.vesselName/,
+    'keeps the observed vessel name on later samples so live dots can attach to trail lines');
 });
 
 test('messages endpoint — Google-authorized admins can add and delete crawl messages', async () => {

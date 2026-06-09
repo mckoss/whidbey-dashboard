@@ -1224,8 +1224,11 @@ function ferryHistoryTripStatus(trip, vessel, nowMs) {
 
 function mergeTripObservation(existing, next, vessel, nowMs) {
   const actualDepartureMs = existing.actualDepartureMs || vessel?.leftDockMs || null;
-  const observedVesselName = actualDepartureMs && vessel?.vesselName ? vessel.vesselName : null;
-  const observedVesselId = actualDepartureMs && vessel?.vesselId ? vessel.vesselId : null;
+  const vesselProvidedDeparture = vessel?.leftDockMs && vessel.leftDockMs === actualDepartureMs;
+  const observedVesselName = vesselProvidedDeparture && vessel?.vesselName ? vessel.vesselName : null;
+  const observedVesselId = vesselProvidedDeparture && vessel?.vesselId ? vessel.vesselId : null;
+  const persistedObservedVesselName = actualDepartureMs ? existing.vesselName : '';
+  const persistedObservedVesselId = actualDepartureMs ? existing.vesselId : null;
   const observedArrivalMs = actualDepartureMs &&
     vessel?.atDock &&
     vessel?.arrivingTerminalId === next.toTerminalId &&
@@ -1255,8 +1258,8 @@ function mergeTripObservation(existing, next, vessel, nowMs) {
   return {
     ...existing,
     ...next,
-    vesselName: observedVesselName || next.vesselName || existing.vesselName || vessel?.vesselName || '',
-    vesselId: observedVesselId || existing.vesselId || vessel?.vesselId || null,
+    vesselName: observedVesselName || persistedObservedVesselName || next.vesselName || vessel?.vesselName || '',
+    vesselId: observedVesselId || persistedObservedVesselId || vessel?.vesselId || null,
     actualDepartureMs,
     arrivalMs,
     arrivalBasis,
