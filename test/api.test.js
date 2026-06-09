@@ -804,6 +804,7 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
   assert.match(html, /\.ferry-alert-item\.user-message\s*\{[\s\S]*?color:\s*var\(--accent\);/, 'user-added crawl messages use dashboard heading blue');
   assert.match(html, /\.ferry-alert-title\s*\{[\s\S]*?color:\s*inherit;/, 'alert titles use the ticker severity color');
   assert.match(html, /\.ferry-alert-detail\s*\{[\s\S]*?color:\s*inherit;/, 'alert details use the same severity color as titles');
+  assert.match(html, /@media \(min-width:\s*1000px\) and \(min-height:\s*600px\)[\s\S]*?\.ferry-alert-item\s*\{[\s\S]*?font-size:\s*1\.56rem;/, 'large displays double the ferry crawl font size');
 });
 
 test('static HTML — ferry ticker scrolls by measured copy width', async () => {
