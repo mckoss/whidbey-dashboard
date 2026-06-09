@@ -1096,9 +1096,15 @@ function normalizeFerryHistoryDay(day) {
     trips: (day.trips || []).map(trip => {
       if (!trip.actualDepartureMs ||
           trip.actualDepartureMs >= trip.scheduledDepartureMs - FERRY_HISTORY_DEPARTURE_MATCH_MS) {
-        return {
+        const observedVessel = observedVesselForTrip(trip, trip.actualDepartureMs);
+        const normalized = observedVessel ? {
           ...trip,
-          status: ferryHistoryTripStatus(trip, null, reportMs),
+          vesselName: observedVessel.vesselName,
+          vesselId: observedVessel.vesselId,
+        } : trip;
+        return {
+          ...normalized,
+          status: ferryHistoryTripStatus(normalized, null, reportMs),
         };
       }
       const normalized = {
@@ -1113,6 +1119,42 @@ function normalizeFerryHistoryDay(day) {
       };
     }),
   };
+}
+
+function observedVesselForTrip(trip, actualDepartureMs) {
+  if (!actualDepartureMs || !Array.isArray(trip?.observations)) return null;
+  const observations = trip.observations
+    .filter(observation => observation?.vesselName && observation?.vesselId)
+    .map(observation => ({
+      vesselName: observation.vesselName,
+      vesselId: observation.vesselId,
+      leftDockMs: observation.leftDockMs || null,
+      observedMs: Date.parse(observation.observedAt || ''),
+    }));
+  if (!observations.length) return null;
+  const departureMatch = observations.find(observation =>
+    observation.leftDockMs &&
+    Math.abs(observation.leftDockMs - actualDepartureMs) <= FERRY_HISTORY_DEPARTURE_MATCH_MS
+  );
+  if (departureMatch) return {
+    vesselName: departureMatch.vesselName,
+    vesselId: departureMatch.vesselId,
+  };
+  const counts = new Map();
+  for (const observation of observations) {
+    const key = `${observation.vesselId}:${observation.vesselName}`;
+    const count = counts.get(key) || {
+      vesselName: observation.vesselName,
+      vesselId: observation.vesselId,
+      count: 0,
+      latestMs: 0,
+    };
+    count.count += 1;
+    count.latestMs = Math.max(count.latestMs, Number.isFinite(observation.observedMs) ? observation.observedMs : 0);
+    counts.set(key, count);
+  }
+  return [...counts.values()]
+    .sort((a, b) => b.count - a.count || b.latestMs - a.latestMs)[0] || null;
 }
 
 function writeFerryHistoryDay(day) {
@@ -1227,8 +1269,9 @@ function mergeTripObservation(existing, next, vessel, nowMs) {
   const vesselProvidedDeparture = vessel?.leftDockMs && vessel.leftDockMs === actualDepartureMs;
   const observedVesselName = vesselProvidedDeparture && vessel?.vesselName ? vessel.vesselName : null;
   const observedVesselId = vesselProvidedDeparture && vessel?.vesselId ? vessel.vesselId : null;
-  const persistedObservedVesselName = actualDepartureMs ? existing.vesselName : '';
-  const persistedObservedVesselId = actualDepartureMs ? existing.vesselId : null;
+  const persistedObservedVessel = observedVesselForTrip(existing, actualDepartureMs);
+  const persistedObservedVesselName = persistedObservedVessel?.vesselName || (actualDepartureMs ? existing.vesselName : '');
+  const persistedObservedVesselId = persistedObservedVessel?.vesselId || (actualDepartureMs ? existing.vesselId : null);
   const observedArrivalMs = actualDepartureMs &&
     vessel?.atDock &&
     vessel?.arrivingTerminalId === next.toTerminalId &&

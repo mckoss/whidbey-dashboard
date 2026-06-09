@@ -354,8 +354,51 @@ test('ferry/history recorder — matches swapped underway vessels with blank WSF
     'allows underway vessels with blank arriving terminal to match by departure terminal and left-dock time');
   assert.match(source, /vesselProvidedDeparture && vessel\?\.vesselName/,
     'uses live left-dock telemetry to replace stale schedule-assigned vessel names');
-  assert.match(source, /observedVesselName \|\| persistedObservedVesselName \|\| next\.vesselName/,
+  assert.match(source, /observedVesselForTrip\(existing, actualDepartureMs\)/,
     'keeps the observed vessel name on later samples so live dots can attach to trail lines');
+});
+
+test('ferry/history endpoint — normalizes stale scheduled vessel names from observations', async () => {
+  const historyDate = '2026-06-07';
+  const scheduledDepartureMs = Date.UTC(2026, 5, 8, 4, 0); // Jun 7 9:00 PM PDT
+  const actualDepartureMs = scheduledDepartureMs + 23 * 1000;
+  const historyDir = join(dataDir, 'ferry-history');
+  await mkdir(historyDir, { recursive: true });
+  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+    date: historyDate,
+    generatedAt: '2026-06-08T04:20:00.000Z',
+    trips: [{
+      id: `${historyDate}:mukilteo-to-clinton:${scheduledDepartureMs}`,
+      date: historyDate,
+      direction: 'mukilteo-to-clinton',
+      fromTerminalId: 14,
+      toTerminalId: 5,
+      fromTerminalName: 'Mukilteo',
+      toTerminalName: 'Clinton',
+      scheduledDepartureMs,
+      actualDepartureMs,
+      arrivalMs: scheduledDepartureMs + 16 * 60 * 1000,
+      arrivalBasis: 'wsf-eta',
+      vesselName: 'Tokitae',
+      vesselId: 75,
+      status: 'completed',
+      observations: [{
+        observedAt: '2026-06-08T04:15:00.000Z',
+        vesselId: 75,
+        vesselName: 'Suquamish',
+        atDock: false,
+        speed: 6.7,
+        leftDockMs: actualDepartureMs,
+        latitude: 47.96,
+        longitude: -122.33,
+      }],
+    }],
+    currentVessels: [],
+  }, null, 2));
+
+  const d = await getJson(`/api/ferry/history?date=${historyDate}`);
+  assert.equal(d.trips[0].vesselName, 'Suquamish', 'uses observed vessel name instead of stale schedule name');
+  assert.equal(d.trips[0].vesselId, 75, 'keeps the observed vessel id');
 });
 
 test('messages endpoint — Google-authorized admins can add and delete crawl messages', async () => {
