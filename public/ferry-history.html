@@ -530,11 +530,10 @@
       const generated = day.generatedAt ? formatClock(day.generatedAt) : 'none';
 
       const sampleCount = gpsTracks.reduce((sum, track) => sum + track.points.length, 0);
-      const scheduleContextCount = trips.filter(trip => !tripHasUsableGpsCoverage(trip)).length;
       const gpsSummary = sampleCount
-        ? `${gpsTracks.length} GPS tracks, ${sampleCount} samples, ${scheduleContextCount} schedule gaps`
+        ? `${sampleCount} GPS samples`
         : 'no GPS samples';
-      summaryEl.innerHTML = `<strong>${trips.length}</strong> trips logged · <strong>${completed}</strong> actual departures · updated <strong>${escapeHtml(generated)}</strong> · ${escapeHtml(gpsSummary)}`;
+      summaryEl.innerHTML = `<strong>${trips.length}</strong> scheduled trips · <strong>${completed}</strong> actual departures · updated <strong>${escapeHtml(generated)}</strong> · ${escapeHtml(gpsSummary)}`;
       diagramMetaEl.textContent = '';
       tableMetaEl.textContent = vessels.length ? `${vessels.length} vessels` : '';
       errorEl.hidden = !(day.error || (day.errors && day.errors.length));

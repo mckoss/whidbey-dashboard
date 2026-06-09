@@ -699,7 +699,9 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /\.trip-line\.scheduled-estimate\s*\{[\s\S]*?stroke-width:\s*1\.8;/, 'schedule context trips are thinner than GPS tracks');
   assert.match(html, /\.trip-line\.scheduled-estimate\s*\{[\s\S]*?opacity:\s*0\.44;/, 'schedule context remains visible dashed context');
   assert.match(html, /rgba\(148, 163, 184, 0\.75\)/, 'renders schedule-only trips in neutral gray instead of vessel colors');
-  assert.match(html, /GPS tracks, \$\{sampleCount\} samples, \$\{scheduleContextCount\} schedule gaps/, 'summarizes GPS tracks and schedule fallback gaps');
+  assert.match(html, /scheduled trips/, 'labels trip count as scheduled trips');
+  assert.match(html, /\$\{sampleCount\} GPS samples/, 'summarizes GPS data as a sample count');
+  assert.doesNotMatch(html, /schedule gaps/, 'does not expose schedule fallback gaps in summary text');
   assert.match(html, /function splitTimeline/, 'splits the time-distance chart into two equal timeline columns');
   assert.match(html, /left:\s*92/, 'leaves enough left gutter for unclipped first-column time labels');
   assert.match(html, /ceilToHalfHour\(segment\.startMs\)/, 'starts grid lines on the next half-hour boundary');
