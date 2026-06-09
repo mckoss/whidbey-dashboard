@@ -407,6 +407,43 @@ test('ferry/history endpoint — normalizes stale scheduled vessel names from ob
   assert.equal(d.trips[0].vesselId, 75, 'keeps the observed vessel id');
 });
 
+test('ferry/departures endpoint — exposes server-confirmed actual departures by schedule key', async () => {
+  const historyDate = '2026-06-06';
+  const scheduledDepartureMs = Date.UTC(2026, 5, 6, 15, 0);
+  const actualDepartureMs = scheduledDepartureMs + 4 * 60 * 1000;
+  const historyDir = join(dataDir, 'ferry-history');
+  await mkdir(historyDir, { recursive: true });
+  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+    date: historyDate,
+    generatedAt: '2026-06-06T15:10:00.000Z',
+    sampledAtMs: Date.UTC(2026, 5, 6, 15, 10),
+    trips: [{
+      id: `${historyDate}:clinton-to-mukilteo:${scheduledDepartureMs}`,
+      date: historyDate,
+      direction: 'clinton-to-mukilteo',
+      fromTerminalId: 5,
+      toTerminalId: 14,
+      fromTerminalName: 'Clinton',
+      toTerminalName: 'Mukilteo',
+      scheduledDepartureMs,
+      actualDepartureMs,
+      arrivalMs: actualDepartureMs + 20 * 60 * 1000,
+      arrivalBasis: 'scheduled-estimate',
+      vesselName: 'Suquamish',
+      vesselId: 123,
+      observations: [],
+    }],
+    currentVessels: [],
+  }, null, 2));
+
+  const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
+  const key = `5:${scheduledDepartureMs}`;
+  assert.equal(d.departures[key].departed, true, 'marks the scheduled sailing departed');
+  assert.equal(d.departures[key].actualDepartureMs, actualDepartureMs, 'exposes server-confirmed departure time');
+  assert.equal(d.departures[key].delayMs, 4 * 60 * 1000, 'exposes schedule-relative delay');
+  assert.equal(d.departures[key].vesselName, 'Suquamish', 'carries vessel identity from history');
+});
+
 test('messages endpoint — Google-authorized admins can add and delete crawl messages', async () => {
   const unauthenticated = await sendJson('/api/messages', 'POST', {
     text: 'Private party at 7',
@@ -1168,6 +1205,75 @@ test('late ferry logic — small departure jitter does not propagate to later sa
   const card = context.__lateTest.sailingCard(sailings[1], sailings, {}, vesselMap, 5);
   assert.match(card, /<div class="sail-time">8:00 AM<\/div>/, 'renders the next sailing at scheduled time');
   assert.doesNotMatch(card, /was 8:00 AM/, 'does not render a false delay parenthetical');
+});
+
+test('late ferry logic — server-confirmed departure overrides raw client inference', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
+  const script = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+
+  const fixedNow = Date.UTC(2026, 5, 9, 14, 41); // 7:41 AM PDT
+  class FakeDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [fixedNow])); }
+    static now() { return fixedNow; }
+  }
+  Object.assign(FakeDate, Date);
+
+  const nullEl = { style: {}, className: '', textContent: '', innerHTML: '', querySelector: () => null };
+  const context = {
+    console,
+    Date: FakeDate,
+    setInterval: () => 0,
+    setTimeout: () => 0,
+    clearInterval: () => {},
+    fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
+    document: {
+      getElementById: () => nullEl,
+      querySelector: () => nullEl,
+      createElement: () => ({}),
+      head: { appendChild: () => {} },
+    },
+    window: {},
+  };
+  vm.createContext(context);
+  vm.runInContext(script + `\nthis.__lateTest = { buildVesselMap, computeSailingTimings, buildDisplayList, sailingCard };`, context);
+
+  const firstMs = Date.UTC(2026, 5, 9, 14, 30);  // 7:30 AM PDT
+  const secondMs = Date.UTC(2026, 5, 9, 15, 0);  // 8:00 AM PDT
+  const actualDepartureMs = firstMs + 3 * 60 * 1000;
+  const sailings = [firstMs, secondMs].map(ms => ({
+    sailTime: new Date(ms),
+    DepartingTime: `/Date(${ms})/`,
+  }));
+  const vesselMap = context.__lateTest.buildVesselMap({ vessels: [] }, {
+    departures: {
+      [`5:${firstMs}`]: {
+        departed: true,
+        fromTerminalId: 5,
+        toTerminalId: 14,
+        scheduledDepartureMs: firstMs,
+        actualDepartureMs,
+        vesselName: 'Suquamish',
+        vesselId: 123,
+      },
+    },
+  });
+
+  const timings = context.__lateTest.computeSailingTimings(sailings, vesselMap, 5);
+  assert.equal(timings[0].effectiveMs, actualDepartureMs, 'uses the server-confirmed actual departure');
+  assert.equal(timings[0].vessel.vesselName, 'Suquamish', 'uses vessel identity from the server departure signal');
+  assert.equal(timings[1].effectiveMs, secondMs, 'server-confirmed prior departure does not move the next sailing');
+
+  const list = context.__lateTest.buildDisplayList(sailings, vesselMap, 5);
+  assert.equal(list[0].sailTime.getTime(), firstMs, 'server-confirmed departed sailing is the history card');
+  assert.equal(list[1].sailTime.getTime(), secondMs, 'next sailing remains scheduled');
+
+  const card = context.__lateTest.sailingCard(sailings[0], sailings, {}, vesselMap, 5);
+  assert.match(card, /departed-confirmed/, 'server-confirmed departure marks the card departed');
+  assert.match(card, /sail-vessel">Suquamish<\/div>/, 'renders server-confirmed vessel name');
 });
 
 test('late ferry logic — direct delay does not propagate to later sailings', async () => {

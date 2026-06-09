@@ -1131,6 +1131,30 @@ function normalizeFerryHistoryDay(day) {
   };
 }
 
+function ferryDepartureKey(fromTerminalId, scheduledDepartureMs) {
+  return `${fromTerminalId}:${scheduledDepartureMs}`;
+}
+
+function ferryDepartureSummary(day) {
+  const departures = {};
+  for (const trip of day?.trips || []) {
+    if (!trip?.actualDepartureMs) continue;
+    departures[ferryDepartureKey(trip.fromTerminalId, trip.scheduledDepartureMs)] = {
+      departed: true,
+      direction: trip.direction,
+      fromTerminalId: trip.fromTerminalId,
+      toTerminalId: trip.toTerminalId,
+      scheduledDepartureMs: trip.scheduledDepartureMs,
+      actualDepartureMs: trip.actualDepartureMs,
+      delayMs: Math.max(0, trip.actualDepartureMs - trip.scheduledDepartureMs),
+      vesselName: trip.vesselName || '',
+      vesselId: trip.vesselId || null,
+      status: trip.status || null,
+    };
+  }
+  return departures;
+}
+
 function observedVesselForTrip(trip, actualDepartureMs) {
   if (!actualDepartureMs || !Array.isArray(trip?.observations)) return null;
   const observations = trip.observations
@@ -1424,6 +1448,30 @@ app.get('/api/ferry/history', async (req, res) => {
     const existing = readFerryHistoryDay(date);
     res.status(existing.generatedAt ? 200 : 500).json({
       ...existing,
+      error: e.message,
+    });
+  }
+});
+
+app.get('/api/ferry/departures', async (req, res) => {
+  const date = String(req.query.date || ferryHistoryDateForMs()).trim();
+  if (!isIsoDate(date)) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+  try {
+    const today = ferryHistoryDateForMs();
+    const day = date === today ? await recordFerryHistoryDay(date) : readFerryHistoryDay(date);
+    res.json({
+      date: day.date,
+      generatedAt: day.generatedAt,
+      sampledAtMs: day.sampledAtMs || null,
+      departures: ferryDepartureSummary(day),
+    });
+  } catch (e) {
+    const existing = readFerryHistoryDay(date);
+    res.status(existing.generatedAt ? 200 : 500).json({
+      date: existing.date,
+      generatedAt: existing.generatedAt,
+      sampledAtMs: existing.sampledAtMs || null,
+      departures: ferryDepartureSummary(existing),
       error: e.message,
     });
   }

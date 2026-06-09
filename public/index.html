@@ -1236,13 +1236,18 @@ const LATE_THRESHOLD_MS = 5 * 60 * 1000;
 const VESSEL_SAILING_MATCH_WINDOW_MS = 45 * 60 * 1000;
 
 // Build indexed vessel data from /api/ferry/vessels.
-function buildVesselMap(vesselData) {
+function buildVesselMap(vesselData, departureData = null) {
   const vessels = (vesselData?.vessels || []).filter(v => v?.inService);
   const byScheduled = {};
   for (const v of vessels) {
     if (v.scheduledDepartureMs != null) byScheduled[v.scheduledDepartureMs] = v;
   }
-  return { vessels, byScheduled };
+  return { vessels, byScheduled, departures: departureData?.departures || {} };
+}
+
+function serverDepartureForSailing(s, vesselMap, fromTerminalId) {
+  const scheduledMs = s.sailTime.getTime();
+  return vesselMap?.departures?.[`${fromTerminalId}:${scheduledMs}`] || null;
 }
 
 function findVesselForSailing(s, vesselMap, fromTerminalId, parsedSailings = null) {
@@ -1336,14 +1341,25 @@ function buildLateInfo(effectiveMs, scheduledMs, vessel = null) {
 
 function getRawSailingTiming(s, vesselMap, fromTerminalId, parsedSailings = null) {
   const scheduledMs = s.sailTime.getTime();
+  const serverDeparture = serverDepartureForSailing(s, vesselMap, fromTerminalId);
   const vessel = findVesselForSailing(s, vesselMap, fromTerminalId, parsedSailings);
+  const departureVessel = serverDeparture ? {
+    ...(vessel || {}),
+    vesselId: serverDeparture.vesselId || vessel?.vesselId || null,
+    vesselName: serverDeparture.vesselName || vessel?.vesselName || '',
+    departingTerminalId: serverDeparture.fromTerminalId,
+    arrivingTerminalId: serverDeparture.toTerminalId,
+    leftDockMs: serverDeparture.actualDepartureMs,
+  } : vessel;
   const estimateMs = estimateDepartureFromVessel(vessel, fromTerminalId, scheduledMs);
-  const effectiveMs = estimateMs == null ? scheduledMs : Math.max(scheduledMs, estimateMs);
+  const effectiveMs = serverDeparture?.actualDepartureMs ||
+    (estimateMs == null ? scheduledMs : Math.max(scheduledMs, estimateMs));
   return {
     scheduledMs,
     effectiveMs,
-    vessel,
-    lateInfo: buildLateInfo(effectiveMs, scheduledMs, vessel),
+    vessel: departureVessel,
+    serverDeparture: serverDeparture || null,
+    lateInfo: buildLateInfo(effectiveMs, scheduledMs, departureVessel),
   };
 }
 
@@ -1421,6 +1437,9 @@ function isDepartureConfirmed(s, parsedSailings, spaceMap, vesselMap = {}, fromT
   // Signal 4: vessel location data shows it left the dock
   const vessel = timing.vessel;
   if (vessel && vessel.departingTerminalId === fromTerminalId && !vessel.atDock && vessel.leftDockMs) return true;
+
+  // Signal 5: the server-side ferry history recorder matched GPS/LeftDock to this schedule.
+  if (timing.serverDeparture?.actualDepartureMs) return true;
 
   return false;
 }
@@ -1734,7 +1753,7 @@ function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spac
 
 // ── Ferry loader ───────────────────────────────────────────────────────
 async function loadFerry() {
-  const [clintonSched, clintonSpace, mukilteoSched, mukilteoSpace, ferryAlerts, userMessages, vesselRes] = await Promise.allSettled([
+  const [clintonSched, clintonSpace, mukilteoSched, mukilteoSpace, ferryAlerts, userMessages, vesselRes, departureRes] = await Promise.allSettled([
     fetch('/api/ferry/clinton').then(r => r.json()),
     fetch('/api/ferry/clinton/space').then(r => r.json()),
     fetch('/api/ferry/mukilteo').then(r => r.json()),
@@ -1742,6 +1761,7 @@ async function loadFerry() {
     fetch('/api/ferry/alerts').then(r => r.json()),
     fetch('/api/messages').then(r => r.json()),
     fetch('/api/ferry/vessels').then(r => r.json()),
+    fetch('/api/ferry/departures', { cache: 'no-store' }).then(r => r.json()),
   ]);
 
   const clintonData  = clintonSched.status  === 'fulfilled' ? clintonSched.value  : null;
@@ -1755,8 +1775,9 @@ async function loadFerry() {
   const clintonSpaceMissing = !hasUsableSpaceData(clintonSp);
   const mukilteoSpaceMissing = !hasUsableSpaceData(mukilteoSp);
   const vesselData   = vesselRes.status === 'fulfilled' ? vesselRes.value : null;
-  // Build vessel map (scheduledDepartureMs → vessel); safe to pass empty map on API failure
-  const vesselMap    = buildVesselMap(vesselData);
+  const departureData = departureRes.status === 'fulfilled' ? departureRes.value : null;
+  // Build vessel/departure map; safe to pass empty maps on API failure.
+  const vesselMap    = buildVesselMap(vesselData, departureData);
   updateFerryAlerts([...routeAlerts, ...crawlMessages]);
 
   if (clintonData?.error === 'WSF_API_KEY not configured') {
