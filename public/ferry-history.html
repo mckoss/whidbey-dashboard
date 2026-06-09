@@ -35,9 +35,9 @@
       z-index: 2;
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
-      gap: 1rem;
+      gap: 0.6rem;
       align-items: center;
-      padding: 0.9rem 1rem;
+      padding: 0.5rem 0.75rem;
       background: rgba(10, 14, 26, 0.96);
       border-bottom: 1px solid var(--border);
       backdrop-filter: blur(12px);
@@ -47,9 +47,10 @@
       margin: 0;
       color: var(--accent);
       font-weight: 300;
-      font-size: clamp(1.2rem, 2vw, 1.8rem);
-      letter-spacing: 0.06em;
+      font-size: clamp(1rem, 2vw, 1.45rem);
+      letter-spacing: 0.04em;
       text-transform: uppercase;
+      white-space: nowrap;
     }
 
     #version {
@@ -64,36 +65,42 @@
     .nav {
       display: flex;
       align-items: center;
-      gap: 0.45rem;
-      flex-wrap: wrap;
+      gap: 0.35rem;
+      flex-wrap: nowrap;
       justify-content: flex-end;
     }
 
     button,
-    input[type="date"],
-    a.button {
-      min-height: 2.25rem;
+    input[type="date"] {
+      min-height: 1.9rem;
       border: 1px solid var(--border);
       border-radius: 0.35rem;
       background: var(--panel);
       color: var(--text);
       font: inherit;
-      padding: 0.4rem 0.65rem;
-      text-decoration: none;
+      padding: 0.25rem 0.45rem;
     }
 
-    button,
-    a.button { cursor: pointer; }
+    .text-link {
+      color: var(--dim);
+      font-size: 0.82rem;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    button { cursor: pointer; }
 
     button:hover,
-    a.button:hover { border-color: var(--accent); }
+    .text-link:hover {
+      color: var(--accent);
+    }
 
     main {
       width: min(1180px, calc(100vw - 1.5rem));
       margin: 0 auto;
-      padding: 0.85rem 0 1.5rem;
+      padding: 0.55rem 0 1.5rem;
       display: grid;
-      gap: 0.85rem;
+      gap: 0.55rem;
     }
 
     section {
@@ -129,34 +136,16 @@
     }
 
     .summary {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 0.65rem;
-    }
-
-    .metric {
-      background: var(--panel2);
-      border: 1px solid var(--border);
-      border-radius: 0.45rem;
-      padding: 0.7rem;
-      min-width: 0;
-    }
-
-    .metric-label {
+      margin: 0;
       color: var(--dim);
-      font-size: 0.7rem;
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      font-size: 0.86rem;
+      font-variant-numeric: tabular-nums;
+      line-height: 1.35;
     }
 
-    .metric-value {
-      margin-top: 0.25rem;
-      font-size: 1.45rem;
-      font-weight: 300;
-      font-variant-numeric: tabular-nums;
+    .summary strong {
+      color: var(--text);
+      font-weight: 600;
     }
 
     .diagram-wrap {
@@ -302,9 +291,24 @@
     }
 
     @media (max-width: 760px) {
-      header { grid-template-columns: 1fr; }
-      .nav { justify-content: flex-start; }
-      .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      header {
+        grid-template-columns: minmax(0, 1fr) auto;
+        padding: 0.45rem 0.6rem;
+      }
+      h1 { font-size: 0.95rem; }
+      #version { font-size: 0.42em; }
+      .nav {
+        gap: 0.25rem;
+        justify-content: flex-end;
+      }
+      button,
+      input[type="date"] {
+        min-height: 1.75rem;
+        padding: 0.2rem 0.35rem;
+        font-size: 0.76rem;
+      }
+      input[type="date"] { width: 7.8rem; }
+      .text-link { font-size: 0.76rem; }
       .diagram-wrap { min-height: 420px; padding: 0.5rem; }
       svg { min-height: 420px; }
       th,
@@ -326,7 +330,7 @@
   <header>
     <h1>Ferry History <span id="version"></span></h1>
     <div class="nav">
-      <a class="button" id="main-link" href="/">Dashboard</a>
+      <a class="text-link" id="main-link" href="/">Dashboard</a>
       <button id="prev-date" type="button" title="Previous day">Prev</button>
       <input id="date-input" type="date">
       <button id="next-date" type="button" title="Next day">Next</button>
@@ -334,7 +338,7 @@
   </header>
 
   <main>
-    <div class="summary" id="summary"></div>
+    <p class="summary" id="summary"></p>
 
     <section>
       <div class="section-head">
@@ -443,7 +447,7 @@
     }
 
     function renderLoading(date) {
-      summaryEl.innerHTML = metric('Date', escapeHtml(date)) + metric('Trips', '...') + metric('Vessels', '...') + metric('Updated', '...');
+      summaryEl.textContent = 'Loading ferry history...';
       diagramEl.innerHTML = '';
       legendEl.innerHTML = '';
       rowsEl.innerHTML = '<tr><td colspan="6" class="empty">Loading ferry history...</td></tr>';
@@ -457,17 +461,13 @@
       const completed = trips.filter(t => t.actualDepartureMs).length;
       const generated = day.generatedAt ? formatClock(day.generatedAt) : 'none';
 
-      summaryEl.innerHTML =
-        metric('Date', escapeHtml(day.date || dateInput.value)) +
-        metric('Trips logged', String(trips.length)) +
-        metric('Actual departures', String(completed)) +
-        metric('Updated', escapeHtml(generated));
-
       const sampleCount = gpsTracks.reduce((sum, track) => sum + track.points.length, 0);
       const scheduleContextCount = trips.filter(trip => !tripHasUsableGpsCoverage(trip)).length;
-      diagramMetaEl.textContent = sampleCount
-        ? `${gpsTracks.length} GPS tracks / ${sampleCount} samples / ${scheduleContextCount} schedule gaps`
-        : 'No GPS samples';
+      const gpsSummary = sampleCount
+        ? `${gpsTracks.length} GPS tracks, ${sampleCount} samples, ${scheduleContextCount} schedule gaps`
+        : 'no GPS samples';
+      summaryEl.innerHTML = `<strong>${trips.length}</strong> trips logged · <strong>${completed}</strong> actual departures · updated <strong>${escapeHtml(generated)}</strong> · ${escapeHtml(gpsSummary)}`;
+      diagramMetaEl.textContent = '';
       tableMetaEl.textContent = vessels.length ? `${vessels.length} vessels` : '';
       errorEl.hidden = !(day.error || (day.errors && day.errors.length));
       errorEl.textContent = day.error || (day.errors || []).join('; ');
@@ -478,16 +478,12 @@
     }
 
     function renderError(message) {
-      summaryEl.innerHTML = metric('Error', escapeHtml(message));
+      summaryEl.textContent = `Error: ${message}`;
       diagramEl.innerHTML = '';
       legendEl.innerHTML = '';
       rowsEl.innerHTML = '<tr><td colspan="6" class="empty">No ferry history is available.</td></tr>';
       errorEl.hidden = false;
       errorEl.textContent = message;
-    }
-
-    function metric(label, value) {
-      return `<div class="metric"><div class="metric-label">${label}</div><div class="metric-value">${value}</div></div>`;
     }
 
     function colorFor(vesselName, vessels) {

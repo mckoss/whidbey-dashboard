@@ -664,6 +664,10 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /id="prev-date"/, 'has previous date control');
   assert.match(html, /id="next-date"/, 'has next date control');
   assert.match(html, /id="date-input"[^>]+type="date"/, 'has date picker');
+  assert.match(html, /<a class="text-link" id="main-link" href="\/">Dashboard<\/a>/, 'dashboard navigation is a compact text link');
+  assert.match(html, /<p class="summary" id="summary"><\/p>/, 'summary renders as a compact paragraph');
+  assert.doesNotMatch(html, /function metric/, 'summary no longer renders large metric chips');
+  assert.doesNotMatch(html, /metric\('Date'/, 'summary does not duplicate the selected date');
   assert.doesNotMatch(html, /id="gps-track-toggle"/, 'GPS track is the only chart mode now');
   assert.match(html, /\/api\/ferry\/history\?date=/, 'loads history API by URL date');
   assert.match(html, /<th aria-label="Direction"><\/th>/, 'has compact direction arrow column');
@@ -686,7 +690,7 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /\.trip-line\.scheduled-estimate\s*\{[\s\S]*?stroke-width:\s*1\.8;/, 'schedule context trips are thinner than GPS tracks');
   assert.match(html, /\.trip-line\.scheduled-estimate\s*\{[\s\S]*?opacity:\s*0\.44;/, 'schedule context remains visible dashed context');
   assert.match(html, /rgba\(148, 163, 184, 0\.75\)/, 'renders schedule-only trips in neutral gray instead of vessel colors');
-  assert.match(html, /GPS tracks .* samples .* schedule gaps/, 'summarizes GPS tracks and schedule fallback gaps');
+  assert.match(html, /GPS tracks, \$\{sampleCount\} samples, \$\{scheduleContextCount\} schedule gaps/, 'summarizes GPS tracks and schedule fallback gaps');
   assert.match(html, /function splitTimeline/, 'splits the time-distance chart into two equal timeline columns');
   assert.match(html, /left:\s*92/, 'leaves enough left gutter for unclipped first-column time labels');
   assert.match(html, /ceilToHalfHour\(segment\.startMs\)/, 'starts grid lines on the next half-hour boundary');
