@@ -1155,9 +1155,18 @@ function tripId(date, direction, scheduledDepartureMs) {
   return `${date}:${direction}:${scheduledDepartureMs}`;
 }
 
+function vesselDirectionMatchesTrip(vessel, trip) {
+  if (!vessel || !trip) return false;
+  if (vessel.departingTerminalId !== trip.fromTerminalId) return false;
+  if (vessel.arrivingTerminalId === trip.toTerminalId) return true;
+  return !vessel.atDock &&
+    vessel.leftDockMs &&
+    !vessel.arrivingTerminalId;
+}
+
 function vesselMatchesTrip(vessel, trip, nowMs) {
   if (!vessel || !trip) return false;
-  if (vessel.departingTerminalId !== trip.fromTerminalId || vessel.arrivingTerminalId !== trip.toTerminalId) return false;
+  if (!vesselDirectionMatchesTrip(vessel, trip)) return false;
   if (vessel.scheduledDepartureMs && Math.abs(vessel.scheduledDepartureMs - trip.scheduledDepartureMs) <= FERRY_HISTORY_DEPARTURE_MATCH_MS) return true;
   if (vessel.leftDockMs && Math.abs(vessel.leftDockMs - trip.scheduledDepartureMs) <= FERRY_HISTORY_DEPARTURE_MATCH_MS) return true;
   if (vessel.vesselName && trip.vesselName && vessel.vesselName === trip.vesselName) {
@@ -1215,6 +1224,8 @@ function ferryHistoryTripStatus(trip, vessel, nowMs) {
 
 function mergeTripObservation(existing, next, vessel, nowMs) {
   const actualDepartureMs = existing.actualDepartureMs || vessel?.leftDockMs || null;
+  const observedVesselName = actualDepartureMs && vessel?.vesselName ? vessel.vesselName : null;
+  const observedVesselId = actualDepartureMs && vessel?.vesselId ? vessel.vesselId : null;
   const observedArrivalMs = actualDepartureMs &&
     vessel?.atDock &&
     vessel?.arrivingTerminalId === next.toTerminalId &&
@@ -1244,8 +1255,8 @@ function mergeTripObservation(existing, next, vessel, nowMs) {
   return {
     ...existing,
     ...next,
-    vesselName: next.vesselName || existing.vesselName || vessel?.vesselName || '',
-    vesselId: existing.vesselId || vessel?.vesselId || null,
+    vesselName: observedVesselName || next.vesselName || existing.vesselName || vessel?.vesselName || '',
+    vesselId: observedVesselId || existing.vesselId || vessel?.vesselId || null,
     actualDepartureMs,
     arrivalMs,
     arrivalBasis,

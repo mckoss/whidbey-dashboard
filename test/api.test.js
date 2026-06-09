@@ -9,7 +9,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
 import vm from 'node:vm';
@@ -345,6 +345,15 @@ test('ferry/history endpoint — ignores impossible early actual departures from
   assert.equal(d.trips[0].arrivalMs, scheduledDepartureMs + 20 * 60 * 1000, 'restores normal crossing estimate');
   assert.equal(d.trips[0].status, 'scheduled-past', 'stale match is no longer labeled underway or arrived');
   assert.equal(d.trips[1].status, 'completed', 'finished observed trip is not left labeled underway');
+});
+
+test('ferry/history recorder — matches swapped underway vessels with blank WSF arrival terminal', async () => {
+  const source = await readFile(join(__dirname, '../server.js'), 'utf8');
+  assert.match(source, /function vesselDirectionMatchesTrip/, 'centralizes trip direction matching');
+  assert.match(source, /!vessel\.atDock &&[\s\S]*?vessel\.leftDockMs &&[\s\S]*?!vessel\.arrivingTerminalId/,
+    'allows underway vessels with blank arriving terminal to match by departure terminal and left-dock time');
+  assert.match(source, /observedVesselName \|\| next\.vesselName/,
+    'uses the observed vessel name after actual departure so live dots can attach to trail lines');
 });
 
 test('messages endpoint — Google-authorized admins can add and delete crawl messages', async () => {
