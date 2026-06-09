@@ -658,6 +658,8 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /id="prev-date"/, 'has previous date control');
   assert.match(html, /id="next-date"/, 'has next date control');
   assert.match(html, /id="date-input"[^>]+type="date"/, 'has date picker');
+  assert.match(html, /id="gps-track-toggle"[^>]+type="checkbox"/, 'has GPS track mode checkbox');
+  assert.match(html, />GPS track</, 'labels the GPS-only track mode');
   assert.match(html, /\/api\/ferry\/history\?date=/, 'loads history API by URL date');
   assert.match(html, /Clinton to Mukilteo/, 'has Clinton to Mukilteo table column');
   assert.match(html, /Mukilteo to Clinton/, 'has Mukilteo to Clinton table column');
@@ -690,6 +692,12 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /trip\.observations \|\| \[\]/, 'uses persisted vessel GPS observations for observed route paths');
   assert.match(html, /sampleTimedPathPoint/, 'clips sampled GPS paths at split timeline boundaries');
   assert.match(html, /gps-observed/, 'marks GPS-derived observed trails separately from imputed fallback lines');
+  assert.match(html, /function collectGpsTracks/, 'can collect GPS-only vessel tracks from observations');
+  assert.match(html, /function renderGpsTrackLines/, 'can render GPS-only polylines without schedule trips');
+  assert.match(html, /gps-track-line/, 'marks pure GPS tracks separately from trip-derived trails');
+  assert.match(html, /GPS_TRACK_GAP_MS/, 'breaks GPS tracks across large sampling gaps');
+  assert.match(html, /gpsMode \? '' : trips\.filter\(isScheduleOnlyTrip\)/, 'GPS track mode suppresses schedule-only trip lines');
+  assert.match(html, /const departureTicks = gpsMode \? '' :/, 'GPS track mode suppresses scheduled departure ticks');
   assert.match(html, /function terminalXForId/, 'maps docked current vessels by terminal id');
   assert.doesNotMatch(html, /departingTerminalId === 5 \|\| vessel\.arrivingTerminalId === 5/, 'does not place docked vessels by either endpoint');
   assert.match(html, /function currentVesselPoint/, 'shares current vessel placement for dots and underway trail lines');

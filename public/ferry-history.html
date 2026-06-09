@@ -71,7 +71,8 @@
 
     button,
     input[type="date"],
-    a.button {
+    a.button,
+    .toggle {
       min-height: 2.25rem;
       border: 1px solid var(--border);
       border-radius: 0.35rem;
@@ -81,6 +82,16 @@
       padding: 0.4rem 0.65rem;
       text-decoration: none;
     }
+
+    .toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.42rem;
+      user-select: none;
+      white-space: nowrap;
+    }
+
+    .toggle input { accent-color: var(--accent); }
 
     button,
     a.button { cursor: pointer; }
@@ -209,6 +220,13 @@
       opacity: 1;
       stroke-width: 5;
     }
+    .gps-track-line {
+      fill: none;
+      opacity: 0.92;
+      stroke-width: 3.2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
     .schedule-departure-tick {
       stroke: #facc15;
       stroke-linecap: round;
@@ -324,6 +342,10 @@
       <button id="prev-date" type="button" title="Previous day">Prev</button>
       <input id="date-input" type="date">
       <button id="next-date" type="button" title="Next day">Next</button>
+      <label class="toggle" title="Draw only recorded GPS vessel tracks">
+        <input id="gps-track-toggle" type="checkbox">
+        <span>GPS track</span>
+      </label>
     </div>
   </header>
 
@@ -368,6 +390,7 @@
     const DAY_START_HOUR = 5;
     const HOUR_MS = 60 * 60 * 1000;
     const HALF_HOUR_MS = 30 * 60 * 1000;
+    const GPS_TRACK_GAP_MS = 20 * 60 * 1000;
     const CLINTON = { name: 'Clinton', lat: 47.9755, lon: -122.3493 };
     const MUKILTEO = { name: 'Mukilteo', lat: 47.9485, lon: -122.3046 };
 
@@ -380,6 +403,8 @@
     const diagramMetaEl = document.getElementById('diagram-meta');
     const tableMetaEl = document.getElementById('table-meta');
     const versionEl = document.getElementById('version');
+    const gpsTrackToggle = document.getElementById('gps-track-toggle');
+    let currentHistoryDay = null;
 
     const params = new URLSearchParams(window.location.search);
     const initialDate = validDate(params.get('date')) || todayPacific();
@@ -388,6 +413,9 @@
     document.getElementById('prev-date').addEventListener('click', () => shiftDate(-1));
     document.getElementById('next-date').addEventListener('click', () => shiftDate(1));
     dateInput.addEventListener('change', () => navigateTo(dateInput.value));
+    gpsTrackToggle.addEventListener('change', () => {
+      if (currentHistoryDay) renderHistory(currentHistoryDay);
+    });
 
     loadConfig();
     loadHistory(initialDate);
@@ -443,8 +471,11 @@
     }
 
     function renderHistory(day) {
+      currentHistoryDay = day;
       const trips = Array.isArray(day.trips) ? day.trips : [];
-      const vessels = uniqueVessels(trips);
+      const gpsMode = gpsTrackToggle.checked;
+      const gpsTracks = collectGpsTracks(trips);
+      const vessels = gpsMode ? gpsTracks.map(track => track.name) : uniqueVessels(trips);
       const completed = trips.filter(t => t.actualDepartureMs).length;
       const generated = day.generatedAt ? formatClock(day.generatedAt) : 'none';
 
@@ -460,7 +491,14 @@
       errorEl.hidden = !(day.error || (day.errors && day.errors.length));
       errorEl.textContent = day.error || (day.errors || []).join('; ');
 
-      renderDiagram(day, trips, vessels);
+      if (gpsMode) {
+        const sampleCount = gpsTracks.reduce((sum, track) => sum + track.points.length, 0);
+        diagramMetaEl.textContent = sampleCount
+          ? `${gpsTracks.length} GPS tracks / ${sampleCount} samples`
+          : 'No GPS samples';
+      }
+
+      renderDiagram(day, trips, vessels, gpsMode ? { gpsTracks } : {});
       renderLegend(vessels);
       renderRows(trips);
     }
@@ -494,7 +532,8 @@
         : '<span class="empty">Vessel colors appear once history has vessel names.</span>';
     }
 
-    function renderDiagram(day, trips, vessels) {
+    function renderDiagram(day, trips, vessels, options = {}) {
+      const gpsMode = Array.isArray(options.gpsTracks);
       const bounds = timeBounds(day.date, trips);
       const width = 1040;
       const durationMs = bounds.endMs - bounds.startMs;
@@ -553,12 +592,13 @@
         const x2 = interpolate(fromX, lineEndX, endPct);
         return `<line class="${tripLineClasses(trip)}" x1="${x1}" y1="${yForSegment(segment, clipStart, height, pad)}" x2="${x2}" y2="${yForSegment(segment, clipEnd, height, pad)}" stroke="${color}"></line>`;
       };
-      const scheduledLines = trips.filter(isScheduleOnlyTrip).flatMap(trip => segments.map(segment => lineForTrip(trip, segment))).join('');
-      const observedLines = trips.filter(trip => !isScheduleOnlyTrip(trip)).flatMap(trip => segments.map(segment => lineForTrip(trip, segment))).join('');
-      const lines = scheduledLines + observedLines;
-      const departureTicks = trips.flatMap(trip => segments.map(segment => scheduledDepartureTick(trip, segment, height, pad))).join('');
+      const scheduledLines = gpsMode ? '' : trips.filter(isScheduleOnlyTrip).flatMap(trip => segments.map(segment => lineForTrip(trip, segment))).join('');
+      const observedLines = gpsMode ? '' : trips.filter(trip => !isScheduleOnlyTrip(trip)).flatMap(trip => segments.map(segment => lineForTrip(trip, segment))).join('');
+      const gpsTrackLines = gpsMode ? renderGpsTrackLines(options.gpsTracks, segments, vessels, height, pad) : '';
+      const lines = gpsMode ? gpsTrackLines : scheduledLines + observedLines;
+      const departureTicks = gpsMode ? '' : trips.flatMap(trip => segments.map(segment => scheduledDepartureTick(trip, segment, height, pad))).join('');
 
-      const vesselDots = segments.map(segment =>
+      const vesselDots = gpsMode ? '' : segments.map(segment =>
         currentVesselDots(day, trips, vessels, nowMs, segment, ms => yForSegment(segment, ms, height, pad))
       ).join('');
 
@@ -578,6 +618,76 @@
           ${departureTicks}
           ${vesselDots}
         </svg>`;
+    }
+
+    function collectGpsTracks(trips) {
+      const byVessel = new Map();
+      for (const trip of trips) {
+        for (const observation of trip.observations || []) {
+          const ms = Date.parse(observation.observedAt || '');
+          if (!Number.isFinite(ms) ||
+              typeof observation.latitude !== 'number' ||
+              typeof observation.longitude !== 'number') {
+            continue;
+          }
+          const name = observation.vesselName || trip.vesselName || 'Unknown';
+          const id = observation.vesselId || trip.vesselId || name;
+          const key = `${id}:${name}`;
+          const track = byVessel.get(key) || { key, name, points: [], seen: new Set() };
+          const sampleKey = [
+            ms,
+            observation.latitude.toFixed(5),
+            observation.longitude.toFixed(5),
+          ].join(':');
+          if (!track.seen.has(sampleKey)) {
+            track.seen.add(sampleKey);
+            track.points.push({
+              ms,
+              pct: terminalProgress(observation.latitude, observation.longitude),
+            });
+          }
+          byVessel.set(key, track);
+        }
+      }
+      return [...byVessel.values()]
+        .map(track => ({
+          key: track.key,
+          name: track.name,
+          points: track.points.sort((a, b) => a.ms - b.ms),
+        }))
+        .filter(track => track.points.length > 1)
+        .sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    function renderGpsTrackLines(tracks, segments, vessels, height, pad) {
+      return tracks.flatMap(track => segments.flatMap(segment =>
+        gpsTrackPolylines(track, segment, colorFor(track.name, vessels), height, pad)
+      )).join('');
+    }
+
+    function gpsTrackPolylines(track, segment, color, height, pad) {
+      const inSegment = track.points
+        .filter(point => point.ms >= segment.startMs && point.ms <= segment.endMs)
+        .map(point => ({
+          ms: point.ms,
+          x: segment.leftX + (segment.rightX - segment.leftX) * point.pct,
+        }));
+      if (inSegment.length < 2) return [];
+      const parts = [];
+      let current = [];
+      for (const point of inSegment) {
+        const prev = current[current.length - 1];
+        if (prev && point.ms - prev.ms > GPS_TRACK_GAP_MS) {
+          if (current.length > 1) parts.push(current);
+          current = [];
+        }
+        current.push(point);
+      }
+      if (current.length > 1) parts.push(current);
+      return parts.map(points => {
+        const pointText = points.map(point => `${point.x},${yForSegment(segment, point.ms, height, pad)}`).join(' ');
+        return `<polyline class="gps-track-line" points="${pointText}" stroke="${color}"><title>${escapeHtml(track.name)} GPS track</title></polyline>`;
+      });
     }
 
     function scheduledDepartureTick(trip, segment, height, pad) {
