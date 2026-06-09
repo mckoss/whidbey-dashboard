@@ -359,6 +359,8 @@
   <script>
     const COLORS = ['#f87171', '#34d399', '#38bdf8', '#fbbf24', '#a78bfa', '#fb923c', '#22d3ee', '#f472b6'];
     const DAY_START_HOUR = 5;
+    const HOUR_MS = 60 * 60 * 1000;
+    const HALF_HOUR_MS = 30 * 60 * 1000;
     const CLINTON = { name: 'Clinton', lat: 47.9755, lon: -122.3493 };
     const MUKILTEO = { name: 'Mukilteo', lat: 47.9485, lon: -122.3046 };
 
@@ -496,18 +498,13 @@
 
       const ticks = [];
       for (const segment of segments) {
-        for (let ms = ceilToHour(segment.startMs); ms <= segment.endMs; ms += 60 * 60 * 1000) {
+        for (let ms = firstHalfHourMark(segment.startMs); ms <= segment.endMs; ms += HOUR_MS) {
           const y = yForSegment(segment, ms, height, pad);
-          const hour = Number(new Intl.DateTimeFormat('en-US', {
-            timeZone: 'America/Los_Angeles',
-            hour: 'numeric',
-            hourCycle: 'h23',
-          }).format(new Date(ms)));
-          const strong = hour % 6 === 0;
-          ticks.push(`<line class="grid" x1="${segment.panelLeft}" x2="${segment.panelRight}" y1="${y}" y2="${y}" opacity="${strong ? 1 : 0.55}"></line>`);
-          if (strong || ms === ceilToHour(segment.startMs)) {
-            ticks.push(`<text class="tick-label" x="${segment.panelLeft - 12}" y="${y + 4}" text-anchor="end">${formatTimeMs(ms)}</text>`);
-          }
+          ticks.push(`<line class="grid" x1="${segment.panelLeft}" x2="${segment.panelRight}" y1="${y}" y2="${y}" opacity="0.65"></line>`);
+        }
+        for (let ms = ceilToHour(segment.startMs); ms <= segment.endMs; ms += HOUR_MS) {
+          const y = yForSegment(segment, ms, height, pad);
+          ticks.push(`<text class="tick-label" x="${segment.panelLeft - 12}" y="${y + 4}" text-anchor="end">${formatTimeMs(ms)}</text>`);
         }
       }
 
@@ -815,7 +812,12 @@
     }
 
     function ceilToHour(ms) {
-      return Math.ceil(ms / (60 * 60 * 1000)) * 60 * 60 * 1000;
+      return Math.ceil(ms / HOUR_MS) * HOUR_MS;
+    }
+
+    function firstHalfHourMark(ms) {
+      const halfHour = floorToHour(ms) + HALF_HOUR_MS;
+      return halfHour < ms ? halfHour + HOUR_MS : halfHour;
     }
 
     function escapeHtml(value) {

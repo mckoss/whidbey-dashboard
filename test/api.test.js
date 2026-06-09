@@ -620,6 +620,9 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /observed \/.*schedule-only/, 'summarizes observed trips separately from schedule-only context');
   assert.match(html, /function splitTimeline/, 'splits the time-distance chart into two equal timeline columns');
   assert.match(html, /left:\s*92/, 'leaves enough left gutter for unclipped first-column time labels');
+  assert.match(html, /firstHalfHourMark\(segment\.startMs\)/, 'places grid lines at half-hour marks between hourly labels');
+  assert.match(html, /ms \+= HOUR_MS\)[\s\S]*?formatTimeMs\(ms\)/, 'labels every hour on each time segment');
+  assert.match(html, /const HALF_HOUR_MS = 30 \* 60 \* 1000/, 'defines half-hour grid interval');
   assert.match(html, /midpointMs = bounds\.startMs \+ \(bounds\.endMs - bounds\.startMs\) \/ 2/, 'splits at the timeline midpoint rather than hard-coded noon');
   assert.match(html, /clipStart = Math\.max\(departMs, segment\.startMs\)/, 'clips trip lines at the start of each half-day segment');
   assert.match(html, /clipEnd = Math\.min\(lineEndMs, segment\.endMs\)/, 'clips trip lines at the end of each half-day segment');
