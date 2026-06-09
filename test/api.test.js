@@ -661,7 +661,11 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
 
   assert.match(html, /Ferry History/, 'page is named ferry history');
   assert.match(html, /id="version"/, 'shows app version in the header');
+  assert.match(html, /id="clock"/, 'shows the shared dashboard clock in the header');
+  assert.match(html, /id="date-display"/, 'shows the shared dashboard date in the header');
   assert.match(html, /\/api\/config/, 'loads app version from config API');
+  assert.match(html, /setInterval\(refreshHistory,\s*historyRefreshMs\)/, 'refreshes history data without reloading the page');
+  assert.match(html, /cache:\s*'no-store'/, 'history refresh bypasses browser cache');
   assert.match(html, /id="prev-date"/, 'has previous date control');
   assert.match(html, /id="next-date"/, 'has next date control');
   assert.match(html, /id="date-input"[^>]+type="date"/, 'has date picker');

@@ -34,7 +34,8 @@
       top: 0;
       z-index: 2;
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      grid-template-areas: "title nav clock";
       gap: 0.6rem;
       align-items: center;
       padding: 0.5rem 0.75rem;
@@ -42,6 +43,8 @@
       border-bottom: 1px solid var(--border);
       backdrop-filter: blur(12px);
     }
+
+    .title-row { grid-area: title; min-width: 0; }
 
     h1 {
       margin: 0;
@@ -63,11 +66,33 @@
     }
 
     .nav {
+      grid-area: nav;
       display: flex;
       align-items: center;
       gap: 0.35rem;
       flex-wrap: nowrap;
       justify-content: flex-end;
+    }
+
+    .clock-block {
+      grid-area: clock;
+      text-align: right;
+      min-width: max-content;
+    }
+
+    #clock {
+      font-size: 2.5rem;
+      font-weight: 200;
+      letter-spacing: 0.05em;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+      line-height: 1;
+    }
+
+    #date-display {
+      color: var(--dim);
+      font-size: 0.8rem;
+      margin-top: 0.1rem;
     }
 
     button,
@@ -290,10 +315,14 @@
     @media (max-width: 760px) {
       header {
         grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas:
+          "title clock"
+          "nav nav";
         padding: 0.45rem 0.6rem;
       }
       h1 { font-size: 0.95rem; }
       #version { font-size: 0.42em; }
+      #clock { font-size: 2rem; }
       .nav {
         gap: 0.25rem;
         justify-content: flex-end;
@@ -324,12 +353,18 @@
 </head>
 <body>
   <header>
-    <h1>Ferry History <span id="version"></span></h1>
+    <div class="title-row">
+      <h1>Ferry History <span id="version"></span></h1>
+    </div>
     <div class="nav">
       <a class="text-link" id="main-link" href="/">Dashboard</a>
       <button id="prev-date" type="button" title="Previous day">Prev</button>
       <input id="date-input" type="date">
       <button id="next-date" type="button" title="Next day">Next</button>
+    </div>
+    <div class="clock-block">
+      <div id="clock">--:--:--</div>
+      <div id="date-display">Loading...</div>
     </div>
   </header>
 
@@ -376,6 +411,7 @@
     const HALF_HOUR_MS = 30 * 60 * 1000;
     const GPS_TRACK_GAP_MS = 20 * 60 * 1000;
     const GPS_ROUTE_COVERAGE_MIN = 0.15;
+    const TZ = 'America/Los_Angeles';
     const CLINTON = { name: 'Clinton', lat: 47.9755, lon: -122.3493 };
     const MUKILTEO = { name: 'Mukilteo', lat: 47.9485, lon: -122.3046 };
 
@@ -388,6 +424,11 @@
     const diagramMetaEl = document.getElementById('diagram-meta');
     const tableMetaEl = document.getElementById('table-meta');
     const versionEl = document.getElementById('version');
+    const clockEl = document.getElementById('clock');
+    const dateEl = document.getElementById('date-display');
+    let historyRefreshMs = 60 * 1000;
+    let historyRefreshTimer = null;
+    let historyRequestId = 0;
 
     const params = new URLSearchParams(window.location.search);
     const initialDate = validDate(params.get('date')) || todayPacific();
@@ -397,16 +438,44 @@
     document.getElementById('next-date').addEventListener('click', () => shiftDate(1));
     dateInput.addEventListener('change', () => navigateTo(dateInput.value));
 
-    loadConfig();
-    loadHistory(initialDate);
+    updateClock();
+    setInterval(updateClock, 1000);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) refreshHistory();
+    });
+
+    loadConfig().then(() => {
+      loadHistory(initialDate, { showLoading: true });
+      startHistoryRefresh();
+    });
 
     async function loadConfig() {
       try {
         const cfg = await fetch('/api/config').then(r => r.json());
         if (cfg.version) versionEl.textContent = 'v ' + cfg.version;
+        if (Number.isFinite(cfg.ferryHistorySampleMs) && cfg.ferryHistorySampleMs >= 10000) {
+          historyRefreshMs = cfg.ferryHistorySampleMs;
+        }
       } catch (e) {
         versionEl.textContent = '';
       }
+    }
+
+    function updateClock() {
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+      clockEl.textContent = timeStr.replace(' AM', ' am').replace(' PM', ' pm');
+      dateEl.textContent = now.toLocaleDateString('en-US', { timeZone: TZ, weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+    }
+
+    function startHistoryRefresh() {
+      if (historyRefreshTimer) clearInterval(historyRefreshTimer);
+      historyRefreshTimer = setInterval(refreshHistory, historyRefreshMs);
+    }
+
+    function refreshHistory() {
+      if (document.hidden) return;
+      loadHistory(dateInput.value, { showLoading: false });
     }
 
     function validDate(value) {
@@ -414,7 +483,7 @@
     }
 
     function todayPacific() {
-      return new Date(Date.now() - DAY_START_HOUR * HOUR_MS).toLocaleString('sv-SE', { timeZone: 'America/Los_Angeles' }).slice(0, 10);
+      return new Date(Date.now() - DAY_START_HOUR * HOUR_MS).toLocaleString('sv-SE', { timeZone: TZ }).slice(0, 10);
     }
 
     function shiftDate(deltaDays) {
@@ -430,14 +499,17 @@
       window.location.href = url.toString();
     }
 
-    async function loadHistory(date) {
-      renderLoading(date);
+    async function loadHistory(date, options = {}) {
+      const requestId = ++historyRequestId;
+      if (options.showLoading) renderLoading(date);
       try {
-        const res = await fetch(`/api/ferry/history?date=${encodeURIComponent(date)}`);
+        const res = await fetch(`/api/ferry/history?date=${encodeURIComponent(date)}`, { cache: 'no-store' });
         const data = await res.json();
+        if (requestId !== historyRequestId) return;
         if (!res.ok && !data.generatedAt) throw new Error(data.error || `HTTP ${res.status}`);
         renderHistory(data);
       } catch (e) {
+        if (requestId !== historyRequestId) return;
         renderError(e.message);
       }
     }
@@ -776,17 +848,17 @@
     }
 
     function formatClock(value) {
-      return new Intl.DateTimeFormat([], { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' }).format(new Date(value));
+      return new Intl.DateTimeFormat([], { timeZone: TZ, hour: 'numeric', minute: '2-digit' }).format(new Date(value));
     }
 
     function formatTimeMs(ms) {
       if (!ms) return '--';
-      return new Intl.DateTimeFormat([], { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' }).format(new Date(ms));
+      return new Intl.DateTimeFormat([], { timeZone: TZ, hour: 'numeric', minute: '2-digit' }).format(new Date(ms));
     }
 
     function formatTableTimeMs(ms) {
       if (!ms) return '--';
-      return new Intl.DateTimeFormat([], { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit', hour12: false }).format(new Date(ms));
+      return new Intl.DateTimeFormat([], { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: false }).format(new Date(ms));
     }
 
     function formatGraphTimeMs(ms, dayDate) {
@@ -814,7 +886,7 @@
 
     function timeZoneOffsetMs(ms) {
       const parts = new Intl.DateTimeFormat('en-US', {
-        timeZone: 'America/Los_Angeles',
+        timeZone: TZ,
         year: 'numeric',
         month: '2-digit',
         day: '2-digit',
@@ -848,7 +920,7 @@
     }
 
     function localDateText(ms) {
-      return new Date(ms).toLocaleString('sv-SE', { timeZone: 'America/Los_Angeles' }).slice(0, 10);
+      return new Date(ms).toLocaleString('sv-SE', { timeZone: TZ }).slice(0, 10);
     }
 
     function escapeHtml(value) {
