@@ -250,6 +250,7 @@
       width: 100%;
       border-collapse: collapse;
       font-variant-numeric: tabular-nums;
+      white-space: nowrap;
     }
 
     th,
@@ -270,11 +271,22 @@
     }
 
     tr:last-child td { border-bottom: 0; }
+    tbody tr.actual-sailing { background: rgba(52, 211, 153, 0.08); }
+    tbody tr.actual-sailing:hover { background: rgba(52, 211, 153, 0.13); }
+    tbody tr.scheduled-sailing { background: rgba(251, 191, 36, 0.07); }
+    tbody tr.scheduled-sailing:hover { background: rgba(251, 191, 36, 0.12); }
+    .direction {
+      width: 2.4rem;
+      color: var(--accent);
+      font-size: 1.15rem;
+      line-height: 1;
+      text-align: center;
+    }
     .vessel { font-weight: 600; }
-    .duration { text-align: right; white-space: nowrap; }
+    .sched,
+    .duration { text-align: right; }
     .empty { color: var(--dim); }
     .actual { color: var(--text); }
-    .scheduled,
     .basis {
       color: var(--dim);
       font-size: 0.78rem;
@@ -282,21 +294,6 @@
     }
     .late { color: var(--danger); }
     .ok { color: var(--accent2); }
-
-    .state {
-      display: inline-flex;
-      align-items: center;
-      min-height: 1.3rem;
-      padding: 0.1rem 0.4rem;
-      border-radius: 0.3rem;
-      background: rgba(56, 189, 248, 0.12);
-      color: var(--accent);
-      font-size: 0.78rem;
-      white-space: nowrap;
-    }
-    .state.arrived { color: var(--accent2); background: rgba(52, 211, 153, 0.12); }
-    .state.completed { color: var(--accent2); background: rgba(52, 211, 153, 0.12); }
-    .state.scheduled-past { color: var(--warn); background: rgba(251, 191, 36, 0.12); }
 
     .error {
       color: var(--danger);
@@ -311,7 +308,17 @@
       .diagram-wrap { min-height: 420px; padding: 0.5rem; }
       svg { min-height: 420px; }
       th,
-      td { padding: 0.48rem 0.5rem; }
+      td { padding: 0.42rem 0.28rem; }
+      table { font-size: 0.76rem; }
+      th {
+        font-size: 0.58rem;
+        letter-spacing: 0;
+      }
+      .direction {
+        width: 1.35rem;
+        font-size: 1rem;
+      }
+      .table-wrap { overflow-x: hidden; }
     }
   </style>
 </head>
@@ -348,12 +355,12 @@
         <table>
           <thead>
             <tr>
+              <th aria-label="Direction"></th>
               <th>Vessel</th>
-              <th>Clinton to Mukilteo</th>
-              <th>Mukilteo to Clinton</th>
-              <th>Trip min</th>
-              <th>Dock min</th>
-              <th>Status</th>
+              <th>Sched</th>
+              <th>Actual</th>
+              <th>Travel</th>
+              <th>Docked</th>
             </tr>
           </thead>
           <tbody id="trip-rows"></tbody>
@@ -715,16 +722,16 @@
         return;
       }
       rowsEl.innerHTML = trips.map(trip => {
-        const isClinton = trip.direction === 'clinton-to-mukilteo';
-        const cell = tripCell(trip);
+        const actual = Boolean(trip.actualDepartureMs);
+        const direction = directionGlyph(trip);
         const dockMs = dockDurationMs(trip, trips);
-        return `<tr>
+        return `<tr class="${actual ? 'actual-sailing' : 'scheduled-sailing'}">
+          <td class="direction" title="${escapeHtml(trip.fromTerminalName)} to ${escapeHtml(trip.toTerminalName)}">${direction}</td>
           <td class="vessel">${escapeHtml(trip.vesselName || 'Unknown')}</td>
-          <td>${isClinton ? cell : '<span class="empty">-</span>'}</td>
-          <td>${!isClinton ? cell : '<span class="empty">-</span>'}</td>
-          <td class="duration">${formatMinutes(tripDurationMs(trip))}</td>
+          <td class="sched" title="${formatTimeMs(trip.scheduledDepartureMs)}">${formatTableTimeMs(trip.scheduledDepartureMs)}</td>
+          <td>${tripCell(trip)}</td>
+          <td class="duration" title="${escapeHtml(travelBasisText(trip))}">${formatMinutes(tripDurationMs(trip))}</td>
           <td class="duration">${formatMinutes(dockMs)}</td>
-          <td><span class="state ${escapeHtml(trip.status || '')}">${escapeHtml(statusText(trip.status))}</span></td>
         </tr>`;
       }).join('');
     }
@@ -733,9 +740,11 @@
       const departed = trip.actualDepartureMs || trip.scheduledDepartureMs;
       const arrived = trip.arrivalMs || departed + 20 * 60 * 1000;
       const late = trip.actualDepartureMs && trip.actualDepartureMs - trip.scheduledDepartureMs > 5 * 60 * 1000;
-      return `<div class="actual ${late ? 'late' : 'ok'}">${formatTimeMs(departed)} - ${formatTimeMs(arrived)}</div>
-        <div class="scheduled">scheduled ${formatTimeMs(trip.scheduledDepartureMs)}</div>
-        <div class="basis">${escapeHtml(arrivalBasisText(trip.arrivalBasis))}</div>`;
+      return `<span class="actual ${late ? 'late' : 'ok'}" title="${formatTimeMs(departed)}-${formatTimeMs(arrived)}; ${escapeHtml(arrivalBasisText(trip.arrivalBasis))}">${formatTableTimeMs(departed)}-${formatTableTimeMs(arrived)}</span>`;
+    }
+
+    function directionGlyph(trip) {
+      return trip.direction === 'mukilteo-to-clinton' ? '&larr;' : '&rarr;';
     }
 
     function tripStartMs(trip) {
@@ -767,22 +776,17 @@
       return tripStartMs(next) - arrived;
     }
 
-    function statusText(status) {
-      return ({
-        'arrived': 'arrived',
-        'completed': 'completed',
-        'in-progress': 'underway',
-        'scheduled-past': 'past',
-        'scheduled': 'scheduled',
-      })[status] || status || 'scheduled';
-    }
-
     function arrivalBasisText(basis) {
       return ({
         'observed-at-dock': 'arrival observed at dock',
         'wsf-eta': 'arrival from WSF ETA',
         'scheduled-estimate': 'arrival estimated',
       })[basis] || 'arrival estimated';
+    }
+
+    function travelBasisText(trip) {
+      const departure = trip.actualDepartureMs ? 'actual departure' : 'scheduled departure';
+      return `${departure}, ${arrivalBasisText(trip.arrivalBasis)}`;
     }
 
     function formatClock(value) {
@@ -792,6 +796,11 @@
     function formatTimeMs(ms) {
       if (!ms) return '--';
       return new Intl.DateTimeFormat([], { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' }).format(new Date(ms));
+    }
+
+    function formatTableTimeMs(ms) {
+      if (!ms) return '--';
+      return new Intl.DateTimeFormat([], { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit', hour12: false }).format(new Date(ms));
     }
 
     function formatMinutes(ms) {
