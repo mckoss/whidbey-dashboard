@@ -294,6 +294,12 @@ test('ferry/history endpoint — returns a dated trip log shell and validates da
   assert.equal(bad.status, 400, 'rejects non-ISO dates');
   const badBody = await bad.json();
   assert.match(badBody.error, /YYYY-MM-DD/, 'explains date format');
+
+  const source = await readFile(join(__dirname, '../server.js'), 'utf8');
+  assert.match(source, /const FERRY_HISTORY_DAY_START_HOUR = 2/, 'defines ferry history day at 2 AM');
+  assert.match(source, /function ferryHistoryDateForMs/, 'uses an operational history date instead of raw calendar date');
+  assert.match(source, /tripBelongsToFerryHistoryDate\(scheduledDepartureMs, date\)/, 'assigns trips by 2 AM history-day window');
+  assert.match(source, /req\.query\.date \|\| ferryHistoryDateForMs\(\)/, 'history API default date follows the 2 AM boundary');
 });
 
 test('ferry/history endpoint — ignores impossible early actual departures from stale vessel matches', async () => {
@@ -672,6 +678,9 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.doesNotMatch(html, /function statusText/, 'does not render status chip text');
   assert.match(html, /function formatMinutes/, 'formats durations as fractional minutes');
   assert.match(html, /Time Distance/, 'has diagram section');
+  assert.match(html, /const DAY_START_HOUR = 2/, 'graph day starts at 2 AM');
+  assert.match(html, /formatGraphTimeMs/, 'formats graph times with operational-day labels');
+  assert.match(html, /\$\{timeText\}\+1/, 'appends +1 to graph labels after midnight');
   assert.match(html, /terminalProgress/, 'can plot current vessel position from coordinates');
   assert.match(html, /scheduled-estimate/, 'renders missing GPS coverage as subdued schedule context lines');
   assert.match(html, /\.trip-line\.scheduled-estimate\s*\{[\s\S]*?stroke-width:\s*1\.8;/, 'schedule context trips are thinner than GPS tracks');
@@ -683,12 +692,13 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /ceilToHalfHour\(segment\.startMs\)/, 'starts grid lines on the next half-hour boundary');
   assert.match(html, /ms \+= HALF_HOUR_MS/, 'draws grid lines every half hour, including hourly lines');
   assert.match(html, /hour-grid/, 'styles hourly grid lines more strongly than half-hour lines');
-  assert.match(html, /ms \+= HOUR_MS\)[\s\S]*?formatTimeMs\(ms\)/, 'labels every hour on each time segment');
+  assert.match(html, /ms \+= HOUR_MS\)[\s\S]*?formatGraphTimeMs\(ms, day\.date\)/, 'labels every hour with 24-hour operational-day labels');
   assert.match(html, /const HALF_HOUR_MS = 30 \* 60 \* 1000/, 'defines half-hour grid interval');
   assert.match(html, /schedule-departure-tick/, 'draws yellow scheduled departure ticks outside the terminal axes');
   assert.match(html, /scheduledDepartureTick\(trip, segment, height, pad\)/, 'renders scheduled departure ticks per split timeline segment');
   assert.match(html, /trip\.fromTerminalName === 'Clinton'/, 'places Clinton and Mukilteo departure ticks on opposite outside edges');
-  assert.match(html, /midpointMs = bounds\.startMs \+ \(bounds\.endMs - bounds\.startMs\) \/ 2/, 'splits at the timeline midpoint rather than hard-coded noon');
+  assert.match(html, /midpointMs = bounds\.startMs \+ 12 \* HOUR_MS/, 'splits graph columns into fixed 12-hour periods');
+  assert.match(html, /endMs: start \+ 24 \* HOUR_MS/, 'uses a fixed 24-hour 2 AM to 2 AM graph day');
   assert.match(html, /clipStart = Math\.max\(departMs, segment\.startMs\)/, 'clips schedule fallback lines at the start of each half-day segment');
   assert.match(html, /clipEnd = Math\.min\(arriveMs, segment\.endMs\)/, 'clips schedule fallback lines at the end of each half-day segment');
   assert.match(html, /trip\.observations \|\| \[\]/, 'uses persisted vessel GPS observations for observed route paths');

@@ -1039,6 +1039,7 @@ const FERRY_HISTORY_RETENTION_DAYS = CONFIG.ferryHistoryRetentionDays;
 const FERRY_HISTORY_SAMPLE_INTERVAL_MS = CONFIG.ferryHistorySampleMs;
 const FERRY_CROSSING_ESTIMATE_MS = 20 * 60 * 1000;
 const FERRY_HISTORY_DEPARTURE_MATCH_MS = 20 * 60 * 1000;
+const FERRY_HISTORY_DAY_START_HOUR = 2;
 const TERMINAL_NAMES = new Map([
   [CONFIG.wsfDepartingTerminal, 'Clinton'],
   [CONFIG.wsfArrivingTerminal, 'Mukilteo'],
@@ -1046,6 +1047,10 @@ const TERMINAL_NAMES = new Map([
 
 function pacificDateForMs(ms = Date.now()) {
   return new Date(ms).toLocaleString('sv-SE', { timeZone: CONFIG.timezone }).slice(0, 10);
+}
+
+function ferryHistoryDateForMs(ms = Date.now()) {
+  return pacificDateForMs(ms - FERRY_HISTORY_DAY_START_HOUR * 60 * 60 * 1000);
 }
 
 function isIsoDate(value) {
@@ -1057,6 +1062,11 @@ function localDateStartMs(date, timeZone = CONFIG.timezone) {
   const [year, month, day] = date.split('-').map(Number);
   const localDayAsUtc = Date.UTC(year, month - 1, day);
   return localDayAsUtc - timeZoneOffsetMs(localDayAsUtc, timeZone);
+}
+
+function ferryHistoryDayStartMs(date) {
+  const startMs = localDateStartMs(date, CONFIG.timezone);
+  return startMs === null ? null : startMs + FERRY_HISTORY_DAY_START_HOUR * 60 * 60 * 1000;
 }
 
 function ferryHistoryFile(date) {
@@ -1197,6 +1207,13 @@ function tripId(date, direction, scheduledDepartureMs) {
   return `${date}:${direction}:${scheduledDepartureMs}`;
 }
 
+function tripBelongsToFerryHistoryDate(scheduledDepartureMs, date) {
+  const startMs = ferryHistoryDayStartMs(date);
+  if (startMs === null) return false;
+  const endMs = startMs + 24 * 60 * 60 * 1000;
+  return scheduledDepartureMs >= startMs && scheduledDepartureMs < endMs;
+}
+
 function vesselDirectionMatchesTrip(vessel, trip) {
   if (!vessel || !trip) return false;
   if (vessel.departingTerminalId !== trip.fromTerminalId) return false;
@@ -1319,7 +1336,7 @@ function tripsFromSchedule(date, direction, fromTerminal, toTerminal, schedule, 
   return times
     .map(time => {
       const scheduledDepartureMs = parseDepartureMs(time);
-      if (!scheduledDepartureMs || pacificDateForMs(scheduledDepartureMs) !== date) return null;
+      if (!scheduledDepartureMs || !tripBelongsToFerryHistoryDate(scheduledDepartureMs, date)) return null;
       const space = spaceByDeparture[String(scheduledDepartureMs)] || {};
       const vesselName = space.vesselName || time.VesselName || time.VesselNameOverride || '';
       return {
@@ -1348,7 +1365,7 @@ function tripsFromSchedule(date, direction, fromTerminal, toTerminal, schedule, 
     .filter(Boolean);
 }
 
-async function recordFerryHistoryDay(date = pacificDateForMs(), nowMs = Date.now()) {
+async function recordFerryHistoryDay(date = ferryHistoryDateForMs(), nowMs = Date.now()) {
   if (!isIsoDate(date)) throw new Error('date must be YYYY-MM-DD');
   const existing = readFerryHistoryDay(date);
   if (existing.sampledAtMs && nowMs - existing.sampledAtMs < FERRY_HISTORY_SAMPLE_INTERVAL_MS) {
@@ -1397,10 +1414,10 @@ async function recordFerryHistoryDay(date = pacificDateForMs(), nowMs = Date.now
 }
 
 app.get('/api/ferry/history', async (req, res) => {
-  const date = String(req.query.date || pacificDateForMs()).trim();
+  const date = String(req.query.date || ferryHistoryDateForMs()).trim();
   if (!isIsoDate(date)) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
   try {
-    const today = pacificDateForMs();
+    const today = ferryHistoryDateForMs();
     const day = date === today ? await recordFerryHistoryDay(date) : readFerryHistoryDay(date);
     res.json(day);
   } catch (e) {

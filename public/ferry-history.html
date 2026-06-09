@@ -371,7 +371,7 @@
 
   <script>
     const COLORS = ['#f87171', '#34d399', '#38bdf8', '#fbbf24', '#a78bfa', '#fb923c', '#22d3ee', '#f472b6'];
-    const DAY_START_HOUR = 5;
+    const DAY_START_HOUR = 2;
     const HOUR_MS = 60 * 60 * 1000;
     const HALF_HOUR_MS = 30 * 60 * 1000;
     const GPS_TRACK_GAP_MS = 20 * 60 * 1000;
@@ -414,7 +414,7 @@
     }
 
     function todayPacific() {
-      return new Date().toLocaleString('sv-SE', { timeZone: 'America/Los_Angeles' }).slice(0, 10);
+      return new Date(Date.now() - DAY_START_HOUR * HOUR_MS).toLocaleString('sv-SE', { timeZone: 'America/Los_Angeles' }).slice(0, 10);
     }
 
     function shiftDate(deltaDays) {
@@ -518,7 +518,7 @@
         }
         for (let ms = ceilToHour(segment.startMs); ms <= segment.endMs; ms += HOUR_MS) {
           const y = yForSegment(segment, ms, height, pad);
-          ticks.push(`<text class="tick-label" x="${segment.panelLeft - 12}" y="${y + 4}" text-anchor="end">${formatTimeMs(ms)}</text>`);
+          ticks.push(`<text class="tick-label" x="${segment.panelLeft - 12}" y="${y + 4}" text-anchor="end">${formatGraphTimeMs(ms, day.date)}</text>`);
         }
       }
 
@@ -534,7 +534,7 @@
           <line class="axis" x1="${segment.rightX}" y1="${pad.top}" x2="${segment.rightX}" y2="${height - pad.bottom}"></line>
           <text class="terminal-label" x="${segment.leftX}" y="28" text-anchor="middle">Clinton</text>
           <text class="terminal-label" x="${segment.rightX}" y="28" text-anchor="middle">Mukilteo</text>
-          <text class="tick-label" x="${(segment.panelLeft + segment.panelRight) / 2}" y="52" text-anchor="middle">${formatTimeMs(segment.startMs)} - ${formatTimeMs(segment.endMs)}</text>
+          <text class="tick-label" x="${(segment.panelLeft + segment.panelRight) / 2}" y="52" text-anchor="middle">${formatGraphTimeMs(segment.startMs, day.date)} - ${formatGraphTimeMs(segment.endMs, day.date)}</text>
         `).join('');
 
       diagramEl.innerHTML = `
@@ -561,7 +561,7 @@
       const toX = xForTerminalInSegment(trip.toTerminalName, segment);
       const x1 = interpolate(fromX, toX, startPct);
       const x2 = interpolate(fromX, toX, endPct);
-      return `<line class="trip-line scheduled-estimate" x1="${x1}" y1="${yForSegment(segment, clipStart, height, pad)}" x2="${x2}" y2="${yForSegment(segment, clipEnd, height, pad)}" stroke="rgba(148, 163, 184, 0.75)"><title>${escapeHtml(trip.fromTerminalName)} to ${escapeHtml(trip.toTerminalName)} scheduled ${formatTimeMs(departMs)}</title></line>`;
+      return `<line class="trip-line scheduled-estimate" x1="${x1}" y1="${yForSegment(segment, clipStart, height, pad)}" x2="${x2}" y2="${yForSegment(segment, clipEnd, height, pad)}" stroke="rgba(148, 163, 184, 0.75)"><title>${escapeHtml(trip.fromTerminalName)} to ${escapeHtml(trip.toTerminalName)} scheduled ${formatGraphTimeMs(departMs, trip.date)}</title></line>`;
     }
 
     function collectGpsTracks(trips) {
@@ -664,13 +664,13 @@
       const direction = isClintonDeparture ? -1 : 1;
       const x1 = axisX + direction * 5;
       const x2 = axisX + direction * 17;
-      return `<line class="schedule-departure-tick" x1="${x1}" x2="${x2}" y1="${y}" y2="${y}"><title>${escapeHtml(trip.fromTerminalName)} scheduled departure ${formatTimeMs(ms)}</title></line>`;
+      return `<line class="schedule-departure-tick" x1="${x1}" x2="${x2}" y1="${y}" y2="${y}"><title>${escapeHtml(trip.fromTerminalName)} scheduled departure ${formatGraphTimeMs(ms, trip.date)}</title></line>`;
     }
 
     function splitTimeline(bounds, width, pad) {
       const gap = 58;
       const panelWidth = (width - pad.left - pad.right - gap) / 2;
-      const midpointMs = bounds.startMs + (bounds.endMs - bounds.startMs) / 2;
+      const midpointMs = bounds.startMs + 12 * HOUR_MS;
       return [0, 1].map(index => {
         const panelLeft = pad.left + index * (panelWidth + gap);
         const panelRight = panelLeft + panelWidth;
@@ -707,13 +707,7 @@
     function timeBounds(date, trips) {
       const dateText = date || todayPacific();
       const start = zonedDateTimeMs(dateText, DAY_START_HOUR, 0);
-      const end = zonedDateTimeMs(addDays(dateText, 1), 1, 0);
-      const values = trips.flatMap(t => [t.scheduledDepartureMs, t.actualDepartureMs, t.arrivalMs]).filter(Boolean);
-      if (!values.length) return { startMs: start, endMs: end };
-      return {
-        startMs: Math.min(start, floorToHour(Math.min(...values))),
-        endMs: Math.max(end, Math.max(...values) + 30 * 60 * 1000),
-      };
+      return { startMs: start, endMs: start + 24 * HOUR_MS };
     }
 
     function renderRows(trips) {
@@ -803,6 +797,13 @@
       return new Intl.DateTimeFormat([], { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit', hour12: false }).format(new Date(ms));
     }
 
+    function formatGraphTimeMs(ms, dayDate) {
+      if (!ms) return '--';
+      const dateText = localDateText(ms);
+      const timeText = formatTableTimeMs(ms);
+      return dateText && dayDate && dateText > dayDate ? `${timeText}+1` : timeText;
+    }
+
     function formatMinutes(ms) {
       return ms == null ? '--' : (ms / 60000).toFixed(1);
     }
@@ -842,10 +843,6 @@
       return localAsUtc - ms;
     }
 
-    function floorToHour(ms) {
-      return Math.floor(ms / (60 * 60 * 1000)) * 60 * 60 * 1000;
-    }
-
     function ceilToHour(ms) {
       return Math.ceil(ms / HOUR_MS) * HOUR_MS;
     }
@@ -856,6 +853,10 @@
 
     function isHourMark(ms) {
       return ms % HOUR_MS === 0;
+    }
+
+    function localDateText(ms) {
+      return new Date(ms).toLocaleString('sv-SE', { timeZone: 'America/Los_Angeles' }).slice(0, 10);
     }
 
     function escapeHtml(value) {
