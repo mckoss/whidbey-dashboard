@@ -789,7 +789,8 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /clipStart = Math\.max\(departMs, segment\.startMs\)/, 'clips schedule fallback lines at the start of each half-day segment');
   assert.match(html, /clipEnd = Math\.min\(arriveMs, segment\.endMs\)/, 'clips schedule fallback lines at the end of each half-day segment');
   assert.match(html, /day\?\.vesselSamples/, 'uses raw persisted vessel GPS samples for observed route paths');
-  assert.match(html, /rawSamples\.length \? rawSamples : legacyGpsSamples\(day\)/, 'falls back to legacy observation GPS only when raw vessel samples are absent');
+  assert.match(html, /compatibleGpsSamples\(day, rawSamples\)/, 'combines raw vessel samples with pre-migration legacy GPS backfill');
+  assert.match(html, /ms < firstRawMs/, 'uses legacy observations only before the first raw sample on mixed-format days');
   assert.match(html, /addGpsSample\(byVessel, sample/, 'collects GPS vessel tracks independent of scheduled trips');
   assert.match(html, /function legacyGpsSamples/, 'can render older history files that predate vesselSamples');
   assert.match(html, /function renderGpsTrackLines/, 'renders GPS polylines from raw vessel samples');

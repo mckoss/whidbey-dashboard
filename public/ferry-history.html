@@ -662,7 +662,7 @@
     function collectGpsTracks(day) {
       const byVessel = new Map();
       const rawSamples = Array.isArray(day?.vesselSamples) ? day.vesselSamples : [];
-      const sourceSamples = rawSamples.length ? rawSamples : legacyGpsSamples(day);
+      const sourceSamples = compatibleGpsSamples(day, rawSamples);
       for (const sample of sourceSamples) {
         addGpsSample(byVessel, sample, sample.vesselName || 'Unknown', sample.vesselId || sample.vesselName || 'Unknown');
       }
@@ -675,6 +675,20 @@
         }))
         .filter(track => track.points.length > 1)
         .sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    function compatibleGpsSamples(day, rawSamples) {
+      if (!rawSamples.length) return legacyGpsSamples(day);
+      const firstRawMs = Math.min(...rawSamples
+        .map(sample => Date.parse(sample?.observedAt || ''))
+        .filter(Number.isFinite));
+      if (!Number.isFinite(firstRawMs)) return rawSamples;
+      const legacyBackfill = legacyGpsSamples(day)
+        .filter(sample => {
+          const ms = Date.parse(sample?.observedAt || '');
+          return Number.isFinite(ms) && ms < firstRawMs;
+        });
+      return [...legacyBackfill, ...rawSamples];
     }
 
     function legacyGpsSamples(day) {
