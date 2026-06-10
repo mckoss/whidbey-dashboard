@@ -418,12 +418,13 @@ test('ferry/departures endpoint — exposes server-confirmed actual departures b
   const historyDate = '2026-06-06';
   const scheduledDepartureMs = Date.UTC(2026, 5, 6, 15, 0);
   const actualDepartureMs = scheduledDepartureMs + 4 * 60 * 1000;
+  const futureDepartureMs = Date.UTC(2026, 5, 6, 15, 35);
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
   await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
     date: historyDate,
     generatedAt: '2026-06-06T15:10:00.000Z',
-    sampledAtMs: Date.UTC(2026, 5, 6, 15, 10),
+    sampledAtMs: Date.UTC(2026, 5, 6, 15, 20),
     trips: [{
       id: `${historyDate}:clinton-to-mukilteo:${scheduledDepartureMs}`,
       date: historyDate,
@@ -439,6 +440,21 @@ test('ferry/departures endpoint — exposes server-confirmed actual departures b
       vesselName: 'Suquamish',
       vesselId: 123,
       observations: [],
+    }, {
+      id: `${historyDate}:mukilteo-to-clinton:${futureDepartureMs}`,
+      date: historyDate,
+      direction: 'mukilteo-to-clinton',
+      fromTerminalId: 14,
+      toTerminalId: 5,
+      fromTerminalName: 'Mukilteo',
+      toTerminalName: 'Clinton',
+      scheduledDepartureMs: futureDepartureMs,
+      actualDepartureMs: null,
+      arrivalMs: futureDepartureMs + 20 * 60 * 1000,
+      arrivalBasis: 'scheduled-estimate',
+      vesselName: 'Scheduled Boat',
+      vesselId: null,
+      observations: [],
     }],
     currentVessels: [],
   }, null, 2));
@@ -449,6 +465,9 @@ test('ferry/departures endpoint — exposes server-confirmed actual departures b
   assert.equal(d.departures[key].actualDepartureMs, actualDepartureMs, 'exposes server-confirmed departure time');
   assert.equal(d.departures[key].delayMs, 4 * 60 * 1000, 'exposes schedule-relative delay');
   assert.equal(d.departures[key].vesselName, 'Suquamish', 'carries vessel identity from history');
+  const correctionKey = `14:${futureDepartureMs}`;
+  assert.equal(d.vesselCorrections[correctionKey].vesselName, 'Suquamish', 'feeds recent GPS-confirmed vessel identity forward to the next schedule row');
+  assert.equal(d.vesselCorrections[correctionKey].basis, 'recent-gps-chain', 'labels vessel corrections separately from departed sailings');
 });
 
 test('messages endpoint — Google-authorized admins can add and delete crawl messages', async () => {
@@ -1357,6 +1376,64 @@ test('late ferry logic — moving substituted vessel outranks scheduled docked v
   const card = context.__lateTest.sailingCard(sailings[0], sailings, {}, vesselMap, 5);
   assert.match(card, /sail-vessel">Tokitae<\/div>/, 'renders the moving substituted vessel on the card');
   assert.doesNotMatch(card, /sail-vessel">Suquamish<\/div>/, 'does not keep the stale scheduled vessel label');
+});
+
+test('late ferry logic — GPS vessel correction overrides stale scheduled vessel label', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
+  const script = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+
+  const fixedNow = Date.UTC(2026, 5, 10, 6, 16); // 11:16 PM PDT
+  class FakeDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [fixedNow])); }
+    static now() { return fixedNow; }
+  }
+  Object.assign(FakeDate, Date);
+
+  const nullEl = { style: {}, className: '', textContent: '', innerHTML: '', querySelector: () => null };
+  const context = {
+    console,
+    Date: FakeDate,
+    setInterval: () => 0,
+    setTimeout: () => 0,
+    clearInterval: () => {},
+    fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
+    document: {
+      getElementById: () => nullEl,
+      querySelector: () => nullEl,
+      createElement: () => ({}),
+      head: { appendChild: () => {} },
+    },
+    window: {},
+  };
+  vm.createContext(context);
+  vm.runInContext(script + `\nthis.__lateTest = { buildVesselMap, sailingCard };`, context);
+
+  const sailingMs = Date.UTC(2026, 5, 10, 6, 30); // 11:30 PM PDT
+  const sailing = {
+    sailTime: new Date(sailingMs),
+    DepartingTime: `/Date(${sailingMs})/`,
+    VesselName: 'Suquamish',
+  };
+  const vesselMap = context.__lateTest.buildVesselMap({ vessels: [] }, {
+    vesselCorrections: {
+      [`5:${sailingMs}`]: {
+        vesselName: 'Tokitae',
+        vesselId: 68,
+        basis: 'recent-gps-chain',
+      },
+    },
+  });
+  const spaceMap = {
+    [String(sailingMs)]: { vesselName: 'Suquamish', maxSpaces: 124, driveUpSpaces: 80 },
+  };
+
+  const card = context.__lateTest.sailingCard(sailing, [sailing], spaceMap, vesselMap, 5);
+  assert.match(card, /sail-vessel">Tokitae<\/div>/, 'renders GPS-corrected vessel name on future schedule row');
+  assert.doesNotMatch(card, /sail-vessel">Suquamish<\/div>/, 'does not show stale scheduled or space vessel name');
 });
 
 test('late ferry logic — direct delay does not propagate to later sailings', async () => {

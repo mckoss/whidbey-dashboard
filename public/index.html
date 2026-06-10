@@ -1242,12 +1242,22 @@ function buildVesselMap(vesselData, departureData = null) {
   for (const v of vessels) {
     if (v.scheduledDepartureMs != null) byScheduled[v.scheduledDepartureMs] = v;
   }
-  return { vessels, byScheduled, departures: departureData?.departures || {} };
+  return {
+    vessels,
+    byScheduled,
+    departures: departureData?.departures || {},
+    vesselCorrections: departureData?.vesselCorrections || {},
+  };
 }
 
 function serverDepartureForSailing(s, vesselMap, fromTerminalId) {
   const scheduledMs = s.sailTime.getTime();
   return vesselMap?.departures?.[`${fromTerminalId}:${scheduledMs}`] || null;
+}
+
+function vesselCorrectionForSailing(s, vesselMap, fromTerminalId) {
+  const scheduledMs = s.sailTime.getTime();
+  return vesselMap?.vesselCorrections?.[`${fromTerminalId}:${scheduledMs}`] || null;
 }
 
 function findVesselForSailing(s, vesselMap, fromTerminalId, parsedSailings = null) {
@@ -1512,7 +1522,8 @@ function sailingCard(s, parsedSailings, spaceMap, vesselMap = {}, fromTerminalId
       : `<div class="sail-fill-label" style="color:var(--accent2)">${spaceLabel}</div>`;
     fillHtml = `<div class="sail-fill-wrap">${label}</div>`;
   }
-  const vesselName = timing.vessel?.vesselName || space?.vesselName || s.VesselName || '';
+  const vesselCorrection = vesselCorrectionForSailing(s, vesselMap, fromTerminalId);
+  const vesselName = timing.serverDeparture?.vesselName || vesselCorrection?.vesselName || timing.vessel?.vesselName || space?.vesselName || s.VesselName || '';
   const vesselHtml = vesselName ? `<div class="sail-vessel">${vesselName}</div>` : '';
   return `<div class="${cssClass}">${timeHtml}${vesselHtml}<div class="sail-status">${statusText}</div>${fillHtml}</div>`;
 }
