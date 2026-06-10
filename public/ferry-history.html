@@ -662,7 +662,8 @@
     function collectGpsTracks(day) {
       const byVessel = new Map();
       const rawSamples = Array.isArray(day?.vesselSamples) ? day.vesselSamples : [];
-      for (const sample of rawSamples) {
+      const sourceSamples = rawSamples.length ? rawSamples : legacyGpsSamples(day);
+      for (const sample of sourceSamples) {
         addGpsSample(byVessel, sample, sample.vesselName || 'Unknown', sample.vesselId || sample.vesselName || 'Unknown');
       }
 
@@ -674,6 +675,21 @@
         }))
         .filter(track => track.points.length > 1)
         .sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    function legacyGpsSamples(day) {
+      return (day?.trips || []).flatMap(trip =>
+        (trip.observations || [])
+          .filter(observation =>
+            typeof observation?.latitude === 'number' &&
+            typeof observation?.longitude === 'number'
+          )
+          .map(observation => ({
+            ...observation,
+            vesselName: observation.vesselName || trip.vesselName || 'Unknown',
+            vesselId: observation.vesselId || trip.vesselId || observation.vesselName || trip.vesselName || 'Unknown',
+          }))
+      );
     }
 
     function addGpsSample(byVessel, sample, vesselName, vesselId) {
