@@ -1271,16 +1271,27 @@ function vesselMatchScore(vessel, trip, nowMs) {
   return Math.abs(nowMs - trip.scheduledDepartureMs);
 }
 
+function vesselMatchPriority(vessel) {
+  if (!vessel) return 9;
+  if (vessel.leftDockMs && !vessel.atDock) return 0;
+  if (vessel.leftDockMs) return 1;
+  if (vessel.scheduledDepartureMs && !vessel.atDock) return 2;
+  if (vessel.etaMs && !vessel.atDock) return 3;
+  if (vessel.scheduledDepartureMs) return 4;
+  if (vessel.atDock) return 5;
+  return 8;
+}
+
 function assignVesselsToTrips(vessels, trips, nowMs) {
   const candidates = [];
   for (const vessel of vessels) {
     const key = vesselMatchKey(vessel);
     for (const trip of trips) {
       const score = vesselMatchScore(vessel, trip, nowMs);
-      if (score !== null) candidates.push({ key, vessel, tripId: trip.id, score });
+      if (score !== null) candidates.push({ key, vessel, tripId: trip.id, score, priority: vesselMatchPriority(vessel) });
     }
   }
-  candidates.sort((a, b) => a.score - b.score);
+  candidates.sort((a, b) => a.priority - b.priority || a.score - b.score);
   const usedVessels = new Set();
   const usedTrips = new Set();
   const assigned = new Map();

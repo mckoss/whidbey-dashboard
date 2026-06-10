@@ -1253,13 +1253,15 @@ function serverDepartureForSailing(s, vesselMap, fromTerminalId) {
 function findVesselForSailing(s, vesselMap, fromTerminalId, parsedSailings = null) {
   const schedMs = s.sailTime.getTime();
   const exact = vesselMap?.byScheduled?.[schedMs];
-  if (exact && exact.departingTerminalId === fromTerminalId) return exact;
 
   const vessels = vesselMap?.vessels || [];
   const candidates = vessels.filter(v =>
     (v.departingTerminalId === fromTerminalId || v.arrivingTerminalId === fromTerminalId) &&
     vesselCanMatchSailing(v, fromTerminalId, schedMs, parsedSailings)
   );
+  if (exact && exact.departingTerminalId === fromTerminalId && !candidates.includes(exact)) {
+    candidates.push(exact);
+  }
   if (!candidates.length) return null;
 
   // Prefer the most direct/closest vessel signal for this sailing. Delay
@@ -1268,11 +1270,25 @@ function findVesselForSailing(s, vesselMap, fromTerminalId, parsedSailings = nul
     .map(v => ({ v, estMs: estimateDepartureFromVessel(v, fromTerminalId, schedMs) }))
     .filter(x => x.estMs != null)
     .sort((a, b) => {
+      const aPriority = vesselMatchPriority(a.v);
+      const bPriority = vesselMatchPriority(b.v);
+      if (aPriority !== bPriority) return aPriority - bPriority;
       const aExact = a.v.scheduledDepartureMs === schedMs ? 0 : 1;
       const bExact = b.v.scheduledDepartureMs === schedMs ? 0 : 1;
       if (aExact !== bExact) return aExact - bExact;
       return Math.abs(a.estMs - schedMs) - Math.abs(b.estMs - schedMs);
     })[0]?.v || null;
+}
+
+function vesselMatchPriority(vessel) {
+  if (!vessel) return 9;
+  if (vessel.leftDockMs && !vessel.atDock) return 0;
+  if (vessel.leftDockMs) return 1;
+  if (vessel.scheduledDepartureMs && !vessel.atDock) return 2;
+  if (vessel.etaMs && !vessel.atDock) return 3;
+  if (vessel.scheduledDepartureMs) return 4;
+  if (vessel.atDock) return 5;
+  return 8;
 }
 
 function nearestSailingMsToEstimate(parsedSailings, estimateMs) {
@@ -1496,7 +1512,7 @@ function sailingCard(s, parsedSailings, spaceMap, vesselMap = {}, fromTerminalId
       : `<div class="sail-fill-label" style="color:var(--accent2)">${spaceLabel}</div>`;
     fillHtml = `<div class="sail-fill-wrap">${label}</div>`;
   }
-  const vesselName = s.VesselName || space?.vesselName || timing.vessel?.vesselName || '';
+  const vesselName = timing.vessel?.vesselName || space?.vesselName || s.VesselName || '';
   const vesselHtml = vesselName ? `<div class="sail-vessel">${vesselName}</div>` : '';
   return `<div class="${cssClass}">${timeHtml}${vesselHtml}<div class="sail-status">${statusText}</div>${fillHtml}</div>`;
 }

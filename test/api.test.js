@@ -356,6 +356,9 @@ test('ferry/history endpoint — ignores impossible early actual departures from
 test('ferry/history recorder — matches swapped underway vessels with blank WSF arrival terminal', async () => {
   const source = await readFile(join(__dirname, '../server.js'), 'utf8');
   assert.match(source, /function vesselDirectionMatchesTrip/, 'centralizes trip direction matching');
+  assert.match(source, /function vesselMatchPriority/, 'ranks competing vessel matches by signal quality');
+  assert.match(source, /a\.priority - b\.priority \|\| a\.score - b\.score/,
+    'moving left-dock GPS evidence outranks a scheduled vessel still sitting at the dock');
   assert.match(source, /!vessel\.atDock &&[\s\S]*?vessel\.leftDockMs &&[\s\S]*?!vessel\.arrivingTerminalId/,
     'allows underway vessels with blank arriving terminal to match by departure terminal and left-dock time');
   assert.match(source, /vesselProvidedDeparture && vessel\?\.vesselName/,
@@ -1274,6 +1277,81 @@ test('late ferry logic — server-confirmed departure overrides raw client infer
   const card = context.__lateTest.sailingCard(sailings[0], sailings, {}, vesselMap, 5);
   assert.match(card, /departed-confirmed/, 'server-confirmed departure marks the card departed');
   assert.match(card, /sail-vessel">Suquamish<\/div>/, 'renders server-confirmed vessel name');
+});
+
+test('late ferry logic — moving substituted vessel outranks scheduled docked vessel', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
+  const script = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+
+  const fixedNow = Date.UTC(2026, 5, 10, 4, 43); // 9:43 PM PDT
+  class FakeDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [fixedNow])); }
+    static now() { return fixedNow; }
+  }
+  Object.assign(FakeDate, Date);
+
+  const nullEl = { style: {}, className: '', textContent: '', innerHTML: '', querySelector: () => null };
+  const context = {
+    console,
+    Date: FakeDate,
+    setInterval: () => 0,
+    setTimeout: () => 0,
+    clearInterval: () => {},
+    fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
+    document: {
+      getElementById: () => nullEl,
+      querySelector: () => nullEl,
+      createElement: () => ({}),
+      head: { appendChild: () => {} },
+    },
+    window: {},
+  };
+  vm.createContext(context);
+  vm.runInContext(script + `\nthis.__lateTest = { buildVesselMap, computeSailingTimings, sailingCard };`, context);
+
+  const sailingMs = Date.UTC(2026, 5, 10, 4, 30); // 9:30 PM PDT
+  const leftDockMs = Date.UTC(2026, 5, 10, 4, 35, 42);
+  const sailings = [{
+    sailTime: new Date(sailingMs),
+    DepartingTime: `/Date(${sailingMs})/`,
+    VesselName: 'Suquamish',
+  }];
+  const vesselMap = context.__lateTest.buildVesselMap({ vessels: [
+    {
+      vesselId: 75,
+      vesselName: 'Suquamish',
+      inService: true,
+      atDock: true,
+      departingTerminalId: 5,
+      arrivingTerminalId: 14,
+      scheduledDepartureMs: sailingMs,
+      leftDockMs: null,
+      speed: 0,
+    },
+    {
+      vesselId: 68,
+      vesselName: 'Tokitae',
+      inService: true,
+      atDock: false,
+      departingTerminalId: 5,
+      arrivingTerminalId: null,
+      scheduledDepartureMs: null,
+      leftDockMs,
+      speed: 15.1,
+    },
+  ] });
+
+  const [timing] = context.__lateTest.computeSailingTimings(sailings, vesselMap, 5);
+  assert.equal(timing.effectiveMs, leftDockMs, 'uses the moving vessel left-dock time');
+  assert.equal(timing.vessel.vesselName, 'Tokitae', 'uses the moving substituted vessel instead of scheduled docked vessel');
+
+  const card = context.__lateTest.sailingCard(sailings[0], sailings, {}, vesselMap, 5);
+  assert.match(card, /sail-vessel">Tokitae<\/div>/, 'renders the moving substituted vessel on the card');
+  assert.doesNotMatch(card, /sail-vessel">Suquamish<\/div>/, 'does not keep the stale scheduled vessel label');
 });
 
 test('late ferry logic — direct delay does not propagate to later sailings', async () => {
