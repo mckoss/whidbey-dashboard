@@ -555,7 +555,7 @@
 
     function renderHistory(day) {
       const trips = Array.isArray(day.trips) ? day.trips : [];
-      const gpsTracks = collectGpsTracks(trips);
+      const gpsTracks = collectGpsTracks(day);
       const vessels = gpsTracks.map(track => track.name);
       const completed = trips.filter(t => t.actualDepartureMs).length;
       const generated = day.generatedAt ? formatClock(day.generatedAt) : 'none';
@@ -659,35 +659,26 @@
       return `<line class="trip-line scheduled-estimate" x1="${x1}" y1="${yForSegment(segment, clipStart, height, pad)}" x2="${x2}" y2="${yForSegment(segment, clipEnd, height, pad)}" stroke="rgba(148, 163, 184, 0.75)"><title>${escapeHtml(trip.fromTerminalName)} to ${escapeHtml(trip.toTerminalName)} scheduled ${formatGraphTimeMs(departMs, trip.date)}</title></line>`;
     }
 
-    function collectGpsTracks(trips) {
+    function collectGpsTracks(day) {
       const byVessel = new Map();
-      for (const trip of trips) {
-        for (const observation of trip.observations || []) {
-          const ms = Date.parse(observation.observedAt || '');
-          if (!Number.isFinite(ms) ||
-              typeof observation.latitude !== 'number' ||
-              typeof observation.longitude !== 'number') {
-            continue;
+      const rawSamples = Array.isArray(day?.vesselSamples) ? day.vesselSamples : [];
+      for (const sample of rawSamples) {
+        addGpsSample(byVessel, sample, sample.vesselName || 'Unknown', sample.vesselId || sample.vesselName || 'Unknown');
+      }
+
+      if (!rawSamples.length) {
+        for (const trip of day?.trips || []) {
+          for (const observation of trip.observations || []) {
+            addGpsSample(
+              byVessel,
+              observation,
+              observation.vesselName || trip.vesselName || 'Unknown',
+              observation.vesselId || trip.vesselId || observation.vesselName || trip.vesselName || 'Unknown'
+            );
           }
-          const name = observation.vesselName || trip.vesselName || 'Unknown';
-          const id = observation.vesselId || trip.vesselId || name;
-          const key = `${id}:${name}`;
-          const track = byVessel.get(key) || { key, name, points: [], seen: new Set() };
-          const sampleKey = [
-            ms,
-            observation.latitude.toFixed(5),
-            observation.longitude.toFixed(5),
-          ].join(':');
-          if (!track.seen.has(sampleKey)) {
-            track.seen.add(sampleKey);
-            track.points.push({
-              ms,
-              pct: terminalProgress(observation.latitude, observation.longitude),
-            });
-          }
-          byVessel.set(key, track);
         }
       }
+
       return [...byVessel.values()]
         .map(track => ({
           key: track.key,
@@ -698,10 +689,30 @@
         .sort((a, b) => a.name.localeCompare(b.name));
     }
 
-    function renderGpsTrackLines(tracks, segments, vessels, height, pad) {
-      return tracks.flatMap(track => segments.flatMap(segment =>
-        gpsTrackPolylines(track, segment, colorFor(track.name, vessels), height, pad)
-      )).join('');
+    function addGpsSample(byVessel, sample, vesselName, vesselId) {
+      const ms = Date.parse(sample?.observedAt || '');
+      if (!Number.isFinite(ms) ||
+          typeof sample?.latitude !== 'number' ||
+          typeof sample?.longitude !== 'number') {
+        return;
+      }
+      const name = vesselName || 'Unknown';
+      const id = vesselId || name;
+      const key = `${id}:${name}`;
+      const track = byVessel.get(key) || { key, name, points: [], seen: new Set() };
+      const sampleKey = [
+        ms,
+        sample.latitude.toFixed(5),
+        sample.longitude.toFixed(5),
+      ].join(':');
+      if (!track.seen.has(sampleKey)) {
+        track.seen.add(sampleKey);
+        track.points.push({
+          ms,
+          pct: terminalProgress(sample.latitude, sample.longitude),
+        });
+      }
+      byVessel.set(key, track);
     }
 
     function tripHasUsableGpsCoverage(trip) {
@@ -723,6 +734,12 @@
       const minPct = Math.min(...points.map(point => point.pct));
       const maxPct = Math.max(...points.map(point => point.pct));
       return maxPct - minPct >= GPS_ROUTE_COVERAGE_MIN;
+    }
+
+    function renderGpsTrackLines(tracks, segments, vessels, height, pad) {
+      return tracks.flatMap(track => segments.flatMap(segment =>
+        gpsTrackPolylines(track, segment, colorFor(track.name, vessels), height, pad)
+      )).join('');
     }
 
     function gpsTrackPolylines(track, segment, color, height, pad) {

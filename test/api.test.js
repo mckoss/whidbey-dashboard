@@ -288,6 +288,7 @@ test('ferry/history endpoint — returns a dated trip log shell and validates da
   assert.equal(d.date, today, 'returns requested Pacific date');
   assert.ok(Array.isArray(d.trips), 'history has trips array');
   assert.ok(Array.isArray(d.currentVessels), 'history has current vessel array');
+  assert.ok(Array.isArray(d.vesselSamples), 'history has raw vessel GPS samples array');
   assert.equal(d.retentionDays, 30, 'uses default 30-day retention');
 
   const bad = await fetch(`${BASE}/api/ferry/history?date=today`);
@@ -359,6 +360,9 @@ test('ferry/history recorder — matches swapped underway vessels with blank WSF
   assert.match(source, /function vesselMatchPriority/, 'ranks competing vessel matches by signal quality');
   assert.match(source, /a\.priority - b\.priority \|\| a\.score - b\.score/,
     'moving left-dock GPS evidence outranks a scheduled vessel still sitting at the dock');
+  assert.match(source, /function mergeFerryVesselSamples/, 'persists raw vessel GPS samples outside scheduled trips');
+  assert.match(source, /vesselSamples: mergeFerryVesselSamples\(existing\.vesselSamples, vessels, nowMs\)/,
+    'records raw vessel GPS samples for the history graph independent of trip matching');
   assert.match(source, /!vessel\.atDock &&[\s\S]*?vessel\.leftDockMs &&[\s\S]*?!vessel\.arrivingTerminalId/,
     'allows underway vessels with blank arriving terminal to match by departure terminal and left-dock time');
   assert.match(source, /vesselProvidedDeparture && vessel\?\.vesselName/,
@@ -765,9 +769,9 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /endMs: start \+ 24 \* HOUR_MS/, 'uses a fixed 24-hour 2 AM to 2 AM graph day');
   assert.match(html, /clipStart = Math\.max\(departMs, segment\.startMs\)/, 'clips schedule fallback lines at the start of each half-day segment');
   assert.match(html, /clipEnd = Math\.min\(arriveMs, segment\.endMs\)/, 'clips schedule fallback lines at the end of each half-day segment');
-  assert.match(html, /trip\.observations \|\| \[\]/, 'uses persisted vessel GPS observations for observed route paths');
-  assert.match(html, /function collectGpsTracks/, 'collects GPS vessel tracks from observations');
-  assert.match(html, /function renderGpsTrackLines/, 'renders GPS polylines from observations');
+  assert.match(html, /day\?\.vesselSamples/, 'uses raw persisted vessel GPS samples for observed route paths');
+  assert.match(html, /addGpsSample\(byVessel, sample/, 'collects GPS vessel tracks independent of scheduled trips');
+  assert.match(html, /function renderGpsTrackLines/, 'renders GPS polylines from raw vessel samples');
   assert.match(html, /gps-track-line/, 'marks GPS tracks separately from schedule context lines');
   assert.match(html, /GPS_TRACK_GAP_MS/, 'breaks GPS tracks across large sampling gaps');
   assert.match(html, /function tripHasUsableGpsCoverage/, 'detects trips already covered by GPS tracks');
