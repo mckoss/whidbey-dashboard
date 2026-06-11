@@ -169,6 +169,11 @@ even if another Google account successfully signs in.
 
 Data windows include headroom beyond the refresh interval (e.g., tide hourly fetches 52h for a 48h display with 2h refresh cycle).
 
+Ferry history records raw WSDOT vessel GPS samples when `/api/ferry/history`
+is hit. Production also uses `scripts/ferry-history-keepalive.sh` from system
+cron once per minute to keep recording through low-traffic periods, especially
+the midnight-to-2 AM tail of the operational ferry day.
+
 Cache files are written to `dataDir` in `config.json`, or local `./data` when
 `dataDir` is omitted. For Railway persistence across deploys, mount a Railway
 Volume at `/app/data` and set `"dataDir": "/app/data"` in `config.json`; local
