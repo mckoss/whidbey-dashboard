@@ -1071,6 +1071,20 @@ function ferryHistoryDayStartMs(date) {
   return startMs === null ? null : startMs + CONFIG.ferryHistoryDayStartHour * 60 * 60 * 1000;
 }
 
+function ferryHistoryOperationalDay(date) {
+  const startMs = ferryHistoryDayStartMs(date);
+  if (startMs === null) return null;
+  const endMs = startMs + 24 * 60 * 60 * 1000;
+  return {
+    timezone: CONFIG.timezone,
+    startHour: CONFIG.ferryHistoryDayStartHour,
+    startMs,
+    endMs,
+    startAt: new Date(startMs).toISOString(),
+    endAt: new Date(endMs).toISOString(),
+  };
+}
+
 function ferryHistoryFile(date) {
   return join(CONFIG.ferryHistoryDir, `${date}.json`);
 }
@@ -1078,6 +1092,7 @@ function ferryHistoryFile(date) {
 function emptyFerryHistoryDay(date) {
   return {
     date,
+    operationalDay: ferryHistoryOperationalDay(date),
     generatedAt: null,
     trips: [],
     currentVessels: [],
@@ -1105,8 +1120,12 @@ function readFerryHistoryDay(date) {
 
 function normalizeFerryHistoryDay(day) {
   const reportMs = day.sampledAtMs || Date.parse(day.generatedAt || '') || Date.now();
+  const operationalDay = day.operationalDay && Number.isFinite(day.operationalDay.startMs) && Number.isFinite(day.operationalDay.endMs)
+    ? day.operationalDay
+    : ferryHistoryOperationalDay(day.date);
   return {
     ...day,
+    operationalDay,
     vesselSamples: Array.isArray(day.vesselSamples) ? day.vesselSamples : [],
     trips: (day.trips || []).map(trip => {
       if (!trip.actualDepartureMs ||
@@ -1273,10 +1292,9 @@ function tripId(date, direction, scheduledDepartureMs) {
 }
 
 function tripBelongsToFerryHistoryDate(scheduledDepartureMs, date) {
-  const startMs = ferryHistoryDayStartMs(date);
-  if (startMs === null) return false;
-  const endMs = startMs + 24 * 60 * 60 * 1000;
-  return scheduledDepartureMs >= startMs && scheduledDepartureMs < endMs;
+  const operationalDay = ferryHistoryOperationalDay(date);
+  if (!operationalDay) return false;
+  return scheduledDepartureMs >= operationalDay.startMs && scheduledDepartureMs < operationalDay.endMs;
 }
 
 function vesselDirectionMatchesTrip(vessel, trip) {
@@ -1508,6 +1526,7 @@ async function recordFerryHistoryDay(date = ferryHistoryDateForMs(), nowMs = Dat
 
   const day = {
     date,
+    operationalDay: ferryHistoryOperationalDay(date),
     generatedAt: new Date(nowMs).toISOString(),
     sampledAtMs: nowMs,
     retentionDays: FERRY_HISTORY_RETENTION_DAYS,
@@ -1574,7 +1593,6 @@ app.get('/ferry-history', (req, res) => {
 // ── Client config (feature flags, analytics ID) ──────────────────────
 app.get('/api/config', (req, res) => {
   res.json({
-    ferryHistoryDayStartHour: CONFIG.ferryHistoryDayStartHour,
     ferryHistorySampleMs: FERRY_HISTORY_SAMPLE_INTERVAL_MS,
     gaMeasurementId: CONFIG.gaMeasurementId,
     googleClientId: googleClientId() || null,

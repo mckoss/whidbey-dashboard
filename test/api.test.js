@@ -289,6 +289,11 @@ test('ferry/history endpoint — returns a dated trip log shell and validates da
   assert.ok(Array.isArray(d.trips), 'history has trips array');
   assert.ok(Array.isArray(d.currentVessels), 'history has current vessel array');
   assert.ok(Array.isArray(d.vesselSamples), 'history has raw vessel GPS samples array');
+  assert.equal(d.operationalDay?.startHour, 2, 'history file carries its own operational-day start hour');
+  assert.equal(d.operationalDay?.timezone, 'America/Los_Angeles', 'history file carries its own operational-day timezone');
+  assert.ok(Number.isFinite(d.operationalDay?.startMs), 'history file carries its own start timestamp');
+  assert.ok(Number.isFinite(d.operationalDay?.endMs), 'history file carries its own end timestamp');
+  assert.equal(d.operationalDay.endMs - d.operationalDay.startMs, 24 * 60 * 60 * 1000, 'history file defines a 24-hour span');
   assert.equal(d.retentionDays, 30, 'uses default 30-day retention');
 
   const bad = await fetch(`${BASE}/api/ferry/history?date=today`);
@@ -299,7 +304,8 @@ test('ferry/history endpoint — returns a dated trip log shell and validates da
   const source = await readFile(join(__dirname, '../server.js'), 'utf8');
   assert.match(source, /ferryHistoryDayStartHour: Number\(configValue\('ferryHistoryDayStartHour', 2\)\)/, 'defines ferry history day boundary once in server config');
   assert.match(source, /function ferryHistoryDateForMs/, 'uses an operational history date instead of raw calendar date');
-  assert.match(source, /CONFIG\.ferryHistoryDayStartHour \* 60 \* 60 \* 1000/, 'server date math uses the configured ferry-history boundary');
+  assert.match(source, /function ferryHistoryOperationalDay/, 'stores the operational-day span in each history response');
+  assert.match(source, /operationalDay: ferryHistoryOperationalDay\(date\)/, 'history files are self-describing about their day span');
   assert.match(source, /tripBelongsToFerryHistoryDate\(scheduledDepartureMs, date\)/, 'assigns trips by 2 AM history-day window');
   assert.match(source, /req\.query\.date \|\| ferryHistoryDateForMs\(\)/, 'history API default date follows the 2 AM boundary');
 });
@@ -760,8 +766,9 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /top:\s*48/, 'keeps graph top padding tight');
   assert.match(html, /bottom:\s*18/, 'keeps graph bottom padding tight');
   assert.doesNotMatch(html, /const DAY_START_HOUR = 2/, 'history page does not hardcode the operational-day boundary');
-  assert.match(html, /ferryHistoryDayStartHour = cfg\.ferryHistoryDayStartHour/, 'history page reads the operational-day boundary from config');
-  assert.match(html, /configuredDayStartHour\(\)/, 'history page uses the configured operational-day boundary in date math');
+  assert.doesNotMatch(html, /ferryHistoryDayStartHour/, 'history page does not read the operational-day boundary from global config');
+  assert.match(html, /day\?\.operationalDay\?\.startMs/, 'history page reads graph start from the history file');
+  assert.match(html, /day\?\.operationalDay\?\.endMs/, 'history page reads graph end from the history file');
   assert.match(html, /formatGraphTimeMs/, 'formats graph times with operational-day labels');
   assert.match(html, /\$\{timeText\}\+1/, 'appends +1 to graph labels after midnight');
   assert.match(html, /terminalProgress/, 'can plot current vessel position from coordinates');
@@ -788,7 +795,7 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /trip\.fromTerminalName === 'Clinton'/, 'places Clinton and Mukilteo departure ticks on opposite outside edges');
   assert.match(html, /Array\.from\(\{ length: TIMELINE_COLUMN_COUNT \}/, 'builds timeline columns from the configured count');
   assert.match(html, /index \* TIMELINE_COLUMN_HOURS \* HOUR_MS/, 'splits graph columns into fixed 6-hour periods');
-  assert.match(html, /endMs: start \+ 24 \* HOUR_MS/, 'uses a fixed 24-hour 2 AM to 2 AM graph day');
+  assert.match(html, /return \{ startMs, endMs \}/, 'uses the history file span as graph bounds');
   assert.match(html, /gpsObservedCrossingCount\(gpsTracks\)/, 'summarizes observed crossings from GPS tracks');
   assert.match(html, /GPS-observed crossings/, 'labels track-derived crossings as GPS observed');
   assert.match(html, /WSF LeftDock matches/, 'labels WSDOT matched dock timestamps precisely');
@@ -870,7 +877,7 @@ test('server config — accepts canonical CONFIG_JSON for Railway-style deploys'
           const json = await res.json();
           assert.equal(json.googleClientId, 'config-json-client-id');
           assert.equal(json.ferryHistorySampleMs, 60000);
-          assert.equal(json.ferryHistoryDayStartHour, 2);
+          assert.equal(json.ferryHistoryDayStartHour, undefined);
           return;
         }
       } catch {}

@@ -458,7 +458,6 @@
     const clockEl = document.getElementById('clock');
     const dateEl = document.getElementById('date-display');
     let historyRefreshMs = 60 * 1000;
-    let ferryHistoryDayStartHour = null;
     let historyRefreshTimer = null;
     let historyRequestId = 0;
 
@@ -475,7 +474,7 @@
     });
 
     loadConfig().then(() => {
-      const initialDate = validDate(params.get('date')) || todayPacific();
+      const initialDate = validDate(params.get('date'));
       dateInput.value = initialDate;
       loadHistory(initialDate, { showLoading: true });
       startHistoryRefresh();
@@ -491,10 +490,6 @@
         if (Number.isFinite(cfg.ferryHistorySampleMs) && cfg.ferryHistorySampleMs >= 10000) {
           historyRefreshMs = cfg.ferryHistorySampleMs;
         }
-        if (!Number.isFinite(cfg.ferryHistoryDayStartHour)) {
-          throw new Error('Ferry history day boundary is missing from /api/config.');
-        }
-        ferryHistoryDayStartHour = cfg.ferryHistoryDayStartHour;
       } catch (e) {
         versionEl.textContent = '';
         throw e;
@@ -522,11 +517,8 @@
       return /^\d{4}-\d{2}-\d{2}$/.test(value || '') ? value : '';
     }
 
-    function todayPacific() {
-      return new Date(Date.now() - configuredDayStartHour() * HOUR_MS).toLocaleString('sv-SE', { timeZone: TZ }).slice(0, 10);
-    }
-
     function shiftDate(deltaDays) {
+      if (!validDate(dateInput.value)) return;
       const [year, month, day] = dateInput.value.split('-').map(Number);
       const next = new Date(Date.UTC(year, month - 1, day + deltaDays, 12));
       navigateTo(next.toISOString().slice(0, 10));
@@ -543,7 +535,10 @@
       const requestId = ++historyRequestId;
       if (options.showLoading) renderLoading(date);
       try {
-        const res = await fetch(`/api/ferry/history?date=${encodeURIComponent(date)}`, { cache: 'no-store' });
+        const url = date
+          ? `/api/ferry/history?date=${encodeURIComponent(date)}`
+          : '/api/ferry/history';
+        const res = await fetch(url, { cache: 'no-store' });
         const data = await res.json();
         if (requestId !== historyRequestId) return;
         if (!res.ok && !data.generatedAt) throw new Error(data.error || `HTTP ${res.status}`);
@@ -564,6 +559,7 @@
 
     function renderHistory(day) {
       const trips = Array.isArray(day.trips) ? day.trips : [];
+      if (validDate(day.date)) dateInput.value = day.date;
       const gpsTracks = collectGpsTracks(day);
       const vessels = gpsTracks.map(track => track.name);
       const leftDockMatches = trips.filter(t => t.actualDepartureMs).length;
@@ -606,7 +602,7 @@
     }
 
     function renderDiagram(day, trips, vessels, options = {}) {
-      const bounds = timeBounds(day.date, trips);
+      const bounds = timeBounds(day);
       const width = 1040;
       const durationMs = bounds.endMs - bounds.startMs;
       const hoursPerColumn = durationMs / TIMELINE_COLUMN_COUNT / HOUR_MS;
@@ -865,17 +861,23 @@
       return clamp(((lon - ax) * dx + (lat - ay) * dy) / (dx * dx + dy * dy), 0, 1);
     }
 
-    function timeBounds(date, trips) {
-      const dateText = date || todayPacific();
-      const start = zonedDateTimeMs(dateText, configuredDayStartHour(), 0);
-      return { startMs: start, endMs: start + 24 * HOUR_MS };
-    }
-
-    function configuredDayStartHour() {
-      if (!Number.isFinite(ferryHistoryDayStartHour)) {
-        throw new Error('Ferry history day boundary is not loaded.');
+    function timeBounds(day) {
+      const startMs = Number(day?.operationalDay?.startMs);
+      const endMs = Number(day?.operationalDay?.endMs);
+      if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs) {
+        return { startMs, endMs };
       }
-      return ferryHistoryDayStartHour;
+      const trips = Array.isArray(day?.trips) ? day.trips : [];
+      const sampleTimes = (Array.isArray(day?.vesselSamples) ? day.vesselSamples : [])
+        .map(sample => Date.parse(sample?.observedAt || ''))
+        .filter(Number.isFinite);
+      const tripTimes = trips
+        .flatMap(trip => [trip.scheduledDepartureMs, trip.actualDepartureMs, trip.arrivalMs])
+        .filter(Number.isFinite);
+      const times = [...tripTimes, ...sampleTimes];
+      const start = times.length ? Math.min(...times) : Date.now();
+      const end = times.length ? Math.max(...times) : start + 24 * HOUR_MS;
+      return { startMs: start, endMs: Math.max(end, start + HOUR_MS) };
     }
 
     function renderRows(trips) {
@@ -980,35 +982,6 @@
       const [year, month, day] = date.split('-').map(Number);
       const next = new Date(Date.UTC(year, month - 1, day + days, 12));
       return next.toISOString().slice(0, 10);
-    }
-
-    function zonedDateTimeMs(date, hour, minute) {
-      const [year, month, day] = date.split('-').map(Number);
-      const localAsUtc = Date.UTC(year, month - 1, day, hour, minute, 0);
-      return localAsUtc - timeZoneOffsetMs(localAsUtc);
-    }
-
-    function timeZoneOffsetMs(ms) {
-      const parts = new Intl.DateTimeFormat('en-US', {
-        timeZone: TZ,
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hourCycle: 'h23',
-      }).formatToParts(new Date(ms));
-      const byType = Object.fromEntries(parts.map(part => [part.type, part.value]));
-      const localAsUtc = Date.UTC(
-        Number(byType.year),
-        Number(byType.month) - 1,
-        Number(byType.day),
-        Number(byType.hour),
-        Number(byType.minute),
-        Number(byType.second)
-      );
-      return localAsUtc - ms;
     }
 
     function ceilToHour(ms) {
