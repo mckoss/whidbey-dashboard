@@ -442,6 +442,7 @@
     const GPS_TRACK_GAP_MS = 20 * 60 * 1000;
     const GPS_ROUTE_COVERAGE_MIN = 0.15;
     const GPS_TERMINAL_ZONE_PCT = 0.12;
+    const LEGACY_OPERATIONAL_DAY_START_HOUR = 2;
     const TZ = 'America/Los_Angeles';
     const CLINTON = { name: 'Clinton', lat: 47.9755, lon: -122.3493 };
     const MUKILTEO = { name: 'Mukilteo', lat: 47.9485, lon: -122.3046 };
@@ -867,17 +868,13 @@
       if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs) {
         return { startMs, endMs };
       }
-      const trips = Array.isArray(day?.trips) ? day.trips : [];
-      const sampleTimes = (Array.isArray(day?.vesselSamples) ? day.vesselSamples : [])
-        .map(sample => Date.parse(sample?.observedAt || ''))
-        .filter(Number.isFinite);
-      const tripTimes = trips
-        .flatMap(trip => [trip.scheduledDepartureMs, trip.actualDepartureMs, trip.arrivalMs])
-        .filter(Number.isFinite);
-      const times = [...tripTimes, ...sampleTimes];
-      const start = times.length ? Math.min(...times) : Date.now();
-      const end = times.length ? Math.max(...times) : start + 24 * HOUR_MS;
-      return { startMs: start, endMs: Math.max(end, start + HOUR_MS) };
+      return legacyOperationalDayBounds(day);
+    }
+
+    function legacyOperationalDayBounds(day) {
+      const dateText = validDate(day?.date) || localDateText(Date.now());
+      const start = zonedDateTimeMs(dateText, LEGACY_OPERATIONAL_DAY_START_HOUR, 0);
+      return { startMs: start, endMs: start + 24 * HOUR_MS };
     }
 
     function renderRows(trips) {
@@ -982,6 +979,35 @@
       const [year, month, day] = date.split('-').map(Number);
       const next = new Date(Date.UTC(year, month - 1, day + days, 12));
       return next.toISOString().slice(0, 10);
+    }
+
+    function zonedDateTimeMs(date, hour, minute) {
+      const [year, month, day] = date.split('-').map(Number);
+      const localAsUtc = Date.UTC(year, month - 1, day, hour, minute, 0);
+      return localAsUtc - timeZoneOffsetMs(localAsUtc);
+    }
+
+    function timeZoneOffsetMs(ms) {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: TZ,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hourCycle: 'h23',
+      }).formatToParts(new Date(ms));
+      const byType = Object.fromEntries(parts.map(part => [part.type, part.value]));
+      const localAsUtc = Date.UTC(
+        Number(byType.year),
+        Number(byType.month) - 1,
+        Number(byType.day),
+        Number(byType.hour),
+        Number(byType.minute),
+        Number(byType.second)
+      );
+      return localAsUtc - ms;
     }
 
     function ceilToHour(ms) {

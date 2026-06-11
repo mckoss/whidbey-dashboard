@@ -769,6 +769,9 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.doesNotMatch(html, /ferryHistoryDayStartHour/, 'history page does not read the operational-day boundary from global config');
   assert.match(html, /day\?\.operationalDay\?\.startMs/, 'history page reads graph start from the history file');
   assert.match(html, /day\?\.operationalDay\?\.endMs/, 'history page reads graph end from the history file');
+  assert.match(html, /const LEGACY_OPERATIONAL_DAY_START_HOUR = 2/, 'keeps a 2 AM fallback for older logs without operationalDay metadata');
+  assert.match(html, /function legacyOperationalDayBounds/, 'has a named legacy fallback for missing day-span metadata');
+  assert.match(html, /zonedDateTimeMs\(dateText, LEGACY_OPERATIONAL_DAY_START_HOUR, 0\)/, 'legacy fallback uses a 2 AM Pacific day boundary');
   assert.match(html, /formatGraphTimeMs/, 'formats graph times with operational-day labels');
   assert.match(html, /\$\{timeText\}\+1/, 'appends +1 to graph labels after midnight');
   assert.match(html, /terminalProgress/, 'can plot current vessel position from coordinates');
