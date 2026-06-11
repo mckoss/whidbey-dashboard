@@ -390,6 +390,8 @@
     .sailing.past { opacity: 0.3; }
     .sailing.departed-unknown { opacity: 0.7; border-color: var(--warn) !important; }
     .sailing.departed-unknown .sail-status { color: var(--warn); }
+    .sailing.missed-departure { opacity: 0.82; border-color: var(--danger) !important; }
+    .sailing.missed-departure .sail-status { color: var(--danger); }
 
     .sailing.last-of-day { border-color: var(--warn); }
 
@@ -1246,6 +1248,7 @@ function buildVesselMap(vesselData, departureData = null) {
     vessels,
     byScheduled,
     departures: departureData?.departures || {},
+    missedDepartures: departureData?.missedDepartures || {},
     vesselCorrections: departureData?.vesselCorrections || {},
   };
 }
@@ -1258,6 +1261,11 @@ function serverDepartureForSailing(s, vesselMap, fromTerminalId) {
 function vesselCorrectionForSailing(s, vesselMap, fromTerminalId) {
   const scheduledMs = s.sailTime.getTime();
   return vesselMap?.vesselCorrections?.[`${fromTerminalId}:${scheduledMs}`] || null;
+}
+
+function missedDepartureForSailing(s, vesselMap, fromTerminalId) {
+  const scheduledMs = s.sailTime.getTime();
+  return vesselMap?.missedDepartures?.[`${fromTerminalId}:${scheduledMs}`] || null;
 }
 
 function findVesselForSailing(s, vesselMap, fromTerminalId, parsedSailings = null) {
@@ -1482,11 +1490,14 @@ function sailingCard(s, parsedSailings, spaceMap, vesselMap = {}, fromTerminalId
   const isTrueLast = s.sailTime.getTime() === parsedSailings[trueLastIdx].sailTime.getTime();
   const display = s.sailTime.toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
 
-  const confirmed = isPast && isDepartureConfirmed(s, parsedSailings, spaceMap, vesselMap, fromTerminalId);
+  const missedDeparture = missedDepartureForSailing(s, vesselMap, fromTerminalId);
+  const missed = isPast && Boolean(missedDeparture);
+  const confirmed = !missed && isPast && isDepartureConfirmed(s, parsedSailings, spaceMap, vesselMap, fromTerminalId);
 
   let statusText = '';
   let cssClass = 'sailing';
-  if (isPast && confirmed)       { cssClass += ' past departed-confirmed'; statusText = 'Departed'; }
+  if (missed)                    { cssClass += ' past missed-departure';   statusText = 'Missed'; }
+  else if (isPast && confirmed)  { cssClass += ' past departed-confirmed'; statusText = 'Departed'; }
   else if (isPast && !confirmed) { cssClass += ' past departed-unknown';   statusText = 'Departed?'; }
   else if (isNext)               { cssClass += ' next';                    statusText = '▶ Next'; }
   else if (isTrueLast)           { cssClass += ' last-of-day';             statusText = '🔔 Last'; }
@@ -1508,7 +1519,7 @@ function sailingCard(s, parsedSailings, spaceMap, vesselMap = {}, fromTerminalId
   const space = spaceMap[String(s.sailTime.getTime())] || null;
   let fillHtml = '';
   // Show spaces for upcoming sailings and unconfirmed departures; hide once confirmed departed
-  if (!confirmed && space && space.maxSpaces > 0 && space.driveUpSpaces !== null) {
+  if (!confirmed && !missed && space && space.maxSpaces > 0 && space.driveUpSpaces !== null) {
     const filled = space.maxSpaces - space.driveUpSpaces;
     const pctFull = Math.min(100, (filled / space.maxSpaces) * 100);
     let barColor;

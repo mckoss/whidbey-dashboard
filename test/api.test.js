@@ -477,6 +477,64 @@ test('ferry/departures endpoint — exposes server-confirmed actual departures b
   assert.equal(d.vesselCorrections[correctionKey].basis, 'recent-gps-chain', 'labels vessel corrections separately from departed sailings');
 });
 
+test('ferry/departures endpoint — exposes GPS-observed departures and missed schedule slots', async () => {
+  const historyDate = '2026-06-07';
+  const firstMs = Date.UTC(2026, 5, 7, 14, 30);
+  const secondMs = Date.UTC(2026, 5, 7, 15, 0);
+  const historyDir = join(dataDir, 'ferry-history');
+  await mkdir(historyDir, { recursive: true });
+  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+    date: historyDate,
+    generatedAt: '2026-06-07T15:40:00.000Z',
+    sampledAtMs: Date.UTC(2026, 5, 7, 15, 40),
+    trips: [firstMs, secondMs].map(scheduledDepartureMs => ({
+      id: `${historyDate}:clinton-to-mukilteo:${scheduledDepartureMs}`,
+      date: historyDate,
+      direction: 'clinton-to-mukilteo',
+      fromTerminalId: 5,
+      toTerminalId: 14,
+      fromTerminalName: 'Clinton',
+      toTerminalName: 'Mukilteo',
+      scheduledDepartureMs,
+      actualDepartureMs: null,
+      arrivalMs: scheduledDepartureMs + 20 * 60 * 1000,
+      arrivalBasis: 'scheduled-estimate',
+      vesselName: '',
+      vesselId: null,
+      observations: [],
+    })),
+    vesselSamples: [{
+      observedAt: new Date(Date.UTC(2026, 5, 7, 14, 55)).toISOString(),
+      vesselName: 'Tokitae',
+      vesselId: 68,
+      latitude: 47.9755,
+      longitude: -122.3493,
+    }, {
+      observedAt: new Date(Date.UTC(2026, 5, 7, 15, 0)).toISOString(),
+      vesselName: 'Tokitae',
+      vesselId: 68,
+      latitude: 47.968,
+      longitude: -122.336,
+    }, {
+      observedAt: new Date(Date.UTC(2026, 5, 7, 15, 24)).toISOString(),
+      vesselName: 'Tokitae',
+      vesselId: 68,
+      latitude: 47.9485,
+      longitude: -122.3046,
+    }],
+    currentVessels: [],
+  }, null, 2));
+
+  const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
+  const missedKey = `5:${firstMs}`;
+  const observedKey = `5:${secondMs}`;
+  assert.equal(d.missedDepartures[missedKey].missed, true, 'marks the skipped earlier schedule slot missed');
+  assert.equal(d.missedDepartures[missedKey].source, 'gps-sequence', 'labels missed slots from GPS sequence allocation');
+  assert.equal(d.departures[observedKey].departed, true, 'maps the GPS departure to the later schedule slot');
+  assert.equal(d.departures[observedKey].source, 'gps-sequence', 'labels GPS-observed departures separately from WSF LeftDock');
+  assert.equal(d.departures[observedKey].vesselName, 'Tokitae', 'carries vessel identity from GPS track');
+});
+
 test('messages endpoint — Google-authorized admins can add and delete crawl messages', async () => {
   const unauthenticated = await sendJson('/api/messages', 'POST', {
     text: 'Private party at 7',
@@ -1333,6 +1391,68 @@ test('late ferry logic — server-confirmed departure overrides raw client infer
   const card = context.__lateTest.sailingCard(sailings[0], sailings, {}, vesselMap, 5);
   assert.match(card, /departed-confirmed/, 'server-confirmed departure marks the card departed');
   assert.match(card, /sail-vessel">Suquamish<\/div>/, 'renders server-confirmed vessel name');
+});
+
+test('late ferry logic — server-reported missed departure renders as missed chip', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
+  const script = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+
+  const fixedNow = Date.UTC(2026, 5, 9, 15, 45); // 8:45 AM PDT
+  class FakeDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [fixedNow])); }
+    static now() { return fixedNow; }
+  }
+  Object.assign(FakeDate, Date);
+
+  const nullEl = { style: {}, className: '', textContent: '', innerHTML: '', querySelector: () => null };
+  const context = {
+    console,
+    Date: FakeDate,
+    setInterval: () => 0,
+    setTimeout: () => 0,
+    clearInterval: () => {},
+    fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
+    document: {
+      getElementById: () => nullEl,
+      querySelector: () => nullEl,
+      createElement: () => ({}),
+      head: { appendChild: () => {} },
+    },
+    window: {},
+  };
+  vm.createContext(context);
+  vm.runInContext(script + `\nthis.__lateTest = { buildVesselMap, sailingCard };`, context);
+
+  const missedMs = Date.UTC(2026, 5, 9, 15, 0); // 8:00 AM PDT
+  const nextMs = Date.UTC(2026, 5, 9, 15, 30);   // 8:30 AM PDT
+  const sailings = [missedMs, nextMs].map(ms => ({
+    sailTime: new Date(ms),
+    DepartingTime: `/Date(${ms})/`,
+  }));
+  const vesselMap = context.__lateTest.buildVesselMap({ vessels: [] }, {
+    missedDepartures: {
+      [`5:${missedMs}`]: {
+        missed: true,
+        source: 'gps-sequence',
+        fromTerminalId: 5,
+        toTerminalId: 14,
+        scheduledDepartureMs: missedMs,
+      },
+    },
+  });
+  const spaceMap = {
+    [String(missedMs)]: { maxSpaces: 100, driveUpSpaces: 25 },
+  };
+
+  const card = context.__lateTest.sailingCard(sailings[0], sailings, spaceMap, vesselMap, 5);
+  assert.match(card, /missed-departure/, 'uses the missed departure class');
+  assert.match(card, /<div class="sail-status">Missed<\/div>/, 'labels the skipped schedule slot missed');
+  assert.doesNotMatch(card, /departed-unknown/, 'does not leave server-reported misses as ambiguous departures');
+  assert.doesNotMatch(card, /sail-fill-wrap/, 'does not show stale capacity on missed trips');
 });
 
 test('late ferry logic — moving substituted vessel outranks scheduled docked vessel', async () => {

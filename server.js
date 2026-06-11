@@ -1042,6 +1042,11 @@ const FERRY_CROSSING_ESTIMATE_MS = 20 * 60 * 1000;
 const FERRY_HISTORY_DEPARTURE_MATCH_MS = 20 * 60 * 1000;
 const FERRY_VESSEL_CORRECTION_LOOKAHEAD_MS = 4 * 60 * 60 * 1000;
 const FERRY_VESSEL_CORRECTION_RECENCY_MS = 2 * 60 * 60 * 1000;
+const FERRY_GPS_TERMINAL_ZONE_PCT = 0.12;
+const FERRY_GPS_STARTUP_IGNORE_MS = 10 * 60 * 1000;
+const FERRY_GPS_FIRST_DEPARTURE_GRACE_MS = 15 * 60 * 1000;
+const CLINTON_TERMINAL = { name: 'Clinton', lat: 47.9755, lon: -122.3493 };
+const MUKILTEO_TERMINAL = { name: 'Mukilteo', lat: 47.9485, lon: -122.3046 };
 const TERMINAL_NAMES = new Map([
   [CONFIG.wsfDepartingTerminal, 'Clinton'],
   [CONFIG.wsfArrivingTerminal, 'Mukilteo'],
@@ -1176,7 +1181,200 @@ function ferryDepartureSummary(day) {
       status: trip.status || null,
     };
   }
+  for (const { trip, departure } of ferryGpsScheduleObservations(day).matched) {
+    const key = ferryDepartureKey(trip.fromTerminalId, trip.scheduledDepartureMs);
+    if (departures[key]) continue;
+    departures[key] = {
+      departed: true,
+      source: 'gps-sequence',
+      direction: trip.direction,
+      fromTerminalId: trip.fromTerminalId,
+      toTerminalId: trip.toTerminalId,
+      scheduledDepartureMs: trip.scheduledDepartureMs,
+      actualDepartureMs: departure.ms,
+      delayMs: Math.max(0, departure.ms - trip.scheduledDepartureMs),
+      vesselName: departure.vesselName || trip.vesselName || '',
+      vesselId: departure.vesselId || trip.vesselId || null,
+      status: 'gps-observed',
+    };
+  }
   return departures;
+}
+
+function ferryMissedDepartureSummary(day) {
+  const missedDepartures = {};
+  for (const trip of ferryGpsScheduleObservations(day).missed) {
+    missedDepartures[ferryDepartureKey(trip.fromTerminalId, trip.scheduledDepartureMs)] = {
+      missed: true,
+      source: 'gps-sequence',
+      direction: trip.direction,
+      fromTerminalId: trip.fromTerminalId,
+      toTerminalId: trip.toTerminalId,
+      scheduledDepartureMs: trip.scheduledDepartureMs,
+      status: 'missed',
+    };
+  }
+  return missedDepartures;
+}
+
+function ferryGpsScheduleObservations(day) {
+  const scheduledTrips = (day?.trips || [])
+    .filter(trip => Number.isFinite(trip?.scheduledDepartureMs) && trip.direction)
+    .sort((a, b) => a.scheduledDepartureMs - b.scheduledDepartureMs);
+  if (!scheduledTrips.length) return { matched: [], missed: [] };
+  const firstScheduledMs = scheduledTrips[0].scheduledDepartureMs;
+  const serviceDepartures = ferryGpsObservedDepartures(day)
+    .filter(departure => departure.ms >= firstScheduledMs - FERRY_GPS_STARTUP_IGNORE_MS);
+  return allocateFerryGpsDeparturesToSchedule(serviceDepartures, scheduledTrips);
+}
+
+function ferryGpsObservedDepartures(day) {
+  return ferryGpsTracks(day)
+    .flatMap(track => ferryGpsObservedDeparturesForTrack(track))
+    .sort((a, b) => a.ms - b.ms);
+}
+
+function ferryGpsTracks(day) {
+  const byVessel = new Map();
+  for (const sample of compatibleFerryGpsSamples(day)) {
+    addFerryGpsSample(byVessel, sample, sample.vesselName || 'Unknown', sample.vesselId || sample.vesselName || 'Unknown');
+  }
+  return [...byVessel.values()]
+    .map(track => ({
+      ...track,
+      points: track.points.sort((a, b) => a.ms - b.ms),
+    }))
+    .filter(track => track.points.length > 1);
+}
+
+function compatibleFerryGpsSamples(day) {
+  const rawSamples = Array.isArray(day?.vesselSamples) ? day.vesselSamples : [];
+  if (!rawSamples.length) return legacyFerryGpsSamples(day);
+  const firstRawMs = Math.min(...rawSamples
+    .map(sample => Date.parse(sample?.observedAt || ''))
+    .filter(Number.isFinite));
+  if (!Number.isFinite(firstRawMs)) return rawSamples;
+  const legacyBackfill = legacyFerryGpsSamples(day)
+    .filter(sample => {
+      const ms = Date.parse(sample?.observedAt || '');
+      return Number.isFinite(ms) && ms < firstRawMs;
+    });
+  return [...legacyBackfill, ...rawSamples];
+}
+
+function legacyFerryGpsSamples(day) {
+  return (day?.trips || []).flatMap(trip =>
+    (trip.observations || [])
+      .filter(observation =>
+        typeof observation?.latitude === 'number' &&
+        typeof observation?.longitude === 'number'
+      )
+      .map(observation => ({
+        ...observation,
+        vesselName: observation.vesselName || trip.vesselName || 'Unknown',
+        vesselId: observation.vesselId || trip.vesselId || observation.vesselName || trip.vesselName || 'Unknown',
+      }))
+  );
+}
+
+function addFerryGpsSample(byVessel, sample, vesselName, vesselId) {
+  const ms = Date.parse(sample?.observedAt || '');
+  if (!Number.isFinite(ms) ||
+      typeof sample?.latitude !== 'number' ||
+      typeof sample?.longitude !== 'number') {
+    return;
+  }
+  const name = vesselName || 'Unknown';
+  const id = vesselId || name;
+  const key = `${id}:${name}`;
+  const track = byVessel.get(key) || { key, name, id, points: [], seen: new Set() };
+  const sampleKey = [
+    ms,
+    sample.latitude.toFixed(5),
+    sample.longitude.toFixed(5),
+  ].join(':');
+  if (!track.seen.has(sampleKey)) {
+    track.seen.add(sampleKey);
+    track.points.push({
+      ms,
+      pct: ferryTerminalProgress(sample.latitude, sample.longitude),
+    });
+  }
+  byVessel.set(key, track);
+}
+
+function ferryGpsObservedDeparturesForTrack(track) {
+  let terminal = '';
+  let pendingDeparture = null;
+  const departures = [];
+  for (const point of track.points) {
+    const currentTerminal = ferryGpsTerminalZone(point.pct);
+    if (terminal && !currentTerminal && !pendingDeparture) {
+      pendingDeparture = {
+        direction: terminal === 'Clinton' ? 'clinton-to-mukilteo' : 'mukilteo-to-clinton',
+        ms: point.ms,
+        fromTerminal: terminal,
+        toTerminal: terminal === 'Clinton' ? 'Mukilteo' : 'Clinton',
+        vesselName: track.name,
+        vesselId: track.id,
+      };
+    }
+    if (!currentTerminal) continue;
+    if (pendingDeparture && currentTerminal === pendingDeparture.toTerminal) {
+      departures.push(pendingDeparture);
+    }
+    pendingDeparture = null;
+    terminal = currentTerminal;
+  }
+  return departures;
+}
+
+function allocateFerryGpsDeparturesToSchedule(departures, scheduledTrips) {
+  const tripsByDirection = scheduledTrips.reduce((byDirection, trip) => {
+    const trips = byDirection.get(trip.direction) || [];
+    trips.push(trip);
+    byDirection.set(trip.direction, trips);
+    return byDirection;
+  }, new Map());
+  const nextTripIndexByDirection = new Map();
+  const matched = [];
+  const missed = [];
+  for (const departure of departures) {
+    const directionTrips = tripsByDirection.get(departure.direction) || [];
+    let tripIndex = nextTripIndexByDirection.get(departure.direction) || 0;
+    let trip = directionTrips[tripIndex];
+    if (!trip) continue;
+    if (tripIndex === 0 && departure.ms < trip.scheduledDepartureMs - FERRY_GPS_FIRST_DEPARTURE_GRACE_MS) continue;
+    while (tripIndex + 1 < directionTrips.length &&
+           departure.ms >= directionTrips[tripIndex + 1].scheduledDepartureMs) {
+      missed.push(directionTrips[tripIndex]);
+      tripIndex += 1;
+      trip = directionTrips[tripIndex];
+    }
+    nextTripIndexByDirection.set(departure.direction, tripIndex + 1);
+    matched.push({ trip, departure });
+  }
+  return { matched, missed };
+}
+
+function ferryGpsTerminalZone(pct) {
+  if (pct <= FERRY_GPS_TERMINAL_ZONE_PCT) return 'Clinton';
+  if (pct >= 1 - FERRY_GPS_TERMINAL_ZONE_PCT) return 'Mukilteo';
+  return '';
+}
+
+function ferryTerminalProgress(lat, lon) {
+  const ax = CLINTON_TERMINAL.lon;
+  const ay = CLINTON_TERMINAL.lat;
+  const bx = MUKILTEO_TERMINAL.lon;
+  const by = MUKILTEO_TERMINAL.lat;
+  const dx = bx - ax;
+  const dy = by - ay;
+  return clampNumber(((lon - ax) * dx + (lat - ay) * dy) / (dx * dx + dy * dy), 0, 1);
+}
+
+function clampNumber(value, min, max) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function ferryVesselCorrectionSummary(day, nowMs = Date.now()) {
@@ -1571,6 +1769,7 @@ app.get('/api/ferry/departures', async (req, res) => {
       generatedAt: day.generatedAt,
       sampledAtMs: day.sampledAtMs || null,
       departures: ferryDepartureSummary(day),
+      missedDepartures: ferryMissedDepartureSummary(day),
       vesselCorrections: ferryVesselCorrectionSummary(day, day.sampledAtMs || Date.now()),
     });
   } catch (e) {
@@ -1580,6 +1779,7 @@ app.get('/api/ferry/departures', async (req, res) => {
       generatedAt: existing.generatedAt,
       sampledAtMs: existing.sampledAtMs || null,
       departures: ferryDepartureSummary(existing),
+      missedDepartures: ferryMissedDepartureSummary(existing),
       vesselCorrections: ferryVesselCorrectionSummary(existing, existing.sampledAtMs || Date.now()),
       error: e.message,
     });
