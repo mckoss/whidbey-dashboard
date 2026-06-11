@@ -442,8 +442,8 @@
     const GPS_TRACK_GAP_MS = 20 * 60 * 1000;
     const GPS_ROUTE_COVERAGE_MIN = 0.15;
     const GPS_TERMINAL_ZONE_PCT = 0.12;
-    const GPS_SCHEDULED_CROSSING_MATCH_MS = 50 * 60 * 1000;
-    const FERRY_CROSSING_ESTIMATE_MS = 20 * 60 * 1000;
+    const GPS_STARTUP_IGNORE_MS = 10 * 60 * 1000;
+    const GPS_FIRST_DEPARTURE_GRACE_MS = 15 * 60 * 1000;
     const LEGACY_OPERATIONAL_DAY_START_HOUR = 2;
     const TZ = 'America/Los_Angeles';
     const CLINTON = { name: 'Clinton', lat: 47.9755, lon: -122.3493 };
@@ -763,62 +763,65 @@
     }
 
     function gpsObservedScheduledCrossingCount(tracks, trips) {
-      const crossings = gpsObservedCrossings(tracks);
-      const matchedTrips = new Set();
-      let matched = 0;
-      for (const crossing of crossings) {
-        const tripIndex = bestScheduledTripForCrossing(crossing, trips, matchedTrips);
-        if (tripIndex < 0) continue;
-        matchedTrips.add(tripIndex);
-        matched += 1;
-      }
-      return matched;
+      const scheduledTrips = trips
+        .filter(trip => Number.isFinite(trip?.scheduledDepartureMs) && trip.direction)
+        .sort((a, b) => a.scheduledDepartureMs - b.scheduledDepartureMs);
+      if (!scheduledTrips.length) return 0;
+      const firstScheduledMs = scheduledTrips[0].scheduledDepartureMs;
+      const serviceDepartures = gpsObservedDepartures(tracks)
+        .filter(departure => departure.ms >= firstScheduledMs - GPS_STARTUP_IGNORE_MS);
+      return allocateGpsDeparturesToSchedule(serviceDepartures, scheduledTrips);
     }
 
-    function gpsObservedCrossings(tracks) {
+    function gpsObservedDepartures(tracks) {
       return tracks
-        .flatMap(track => gpsObservedCrossingsForTrack(track))
+        .flatMap(track => gpsObservedDeparturesForTrack(track))
         .sort((a, b) => a.ms - b.ms);
     }
 
-    function gpsObservedCrossingsForTrack(track) {
-      let lastTerminal = '';
-      const crossings = [];
+    function gpsObservedDeparturesForTrack(track) {
+      let terminal = '';
+      let pendingDeparture = null;
+      const departures = [];
       for (const point of track.points) {
-        const terminal = gpsTerminalZone(point.pct);
-        if (!terminal) continue;
-        if (lastTerminal && terminal !== lastTerminal) {
-          crossings.push({
-            direction: lastTerminal === 'Clinton' ? 'clinton-to-mukilteo' : 'mukilteo-to-clinton',
+        const currentTerminal = gpsTerminalZone(point.pct);
+        if (terminal && !currentTerminal && !pendingDeparture) {
+          pendingDeparture = {
+            direction: terminal === 'Clinton' ? 'clinton-to-mukilteo' : 'mukilteo-to-clinton',
             ms: point.ms,
-            vesselName: track.name || '',
-          });
+            fromTerminal: terminal,
+            toTerminal: terminal === 'Clinton' ? 'Mukilteo' : 'Clinton',
+          };
         }
-        lastTerminal = terminal;
+        if (!currentTerminal) continue;
+        if (pendingDeparture && currentTerminal === pendingDeparture.toTerminal) {
+          departures.push(pendingDeparture);
+        }
+        pendingDeparture = null;
+        terminal = currentTerminal;
       }
-      return crossings;
+      return departures;
     }
 
-    function bestScheduledTripForCrossing(crossing, trips, matchedTrips) {
-      let bestIndex = -1;
-      let bestScore = Infinity;
-      for (let i = 0; i < trips.length; i += 1) {
-        const trip = trips[i];
-        if (matchedTrips.has(i) || !tripMatchesCrossing(crossing, trip)) continue;
-        const score = Math.abs(crossing.ms - (trip.scheduledDepartureMs + FERRY_CROSSING_ESTIMATE_MS));
-        if (score < bestScore) {
-          bestScore = score;
-          bestIndex = i;
-        }
+    function allocateGpsDeparturesToSchedule(departures, scheduledTrips) {
+      const tripsByDirection = scheduledTrips.reduce((byDirection, trip) => {
+        const trips = byDirection.get(trip.direction) || [];
+        trips.push(trip);
+        byDirection.set(trip.direction, trips);
+        return byDirection;
+      }, new Map());
+      const nextTripIndexByDirection = new Map();
+      let matched = 0;
+      for (const departure of departures) {
+        const directionTrips = tripsByDirection.get(departure.direction) || [];
+        const tripIndex = nextTripIndexByDirection.get(departure.direction) || 0;
+        const trip = directionTrips[tripIndex];
+        if (!trip) continue;
+        if (tripIndex === 0 && departure.ms < trip.scheduledDepartureMs - GPS_FIRST_DEPARTURE_GRACE_MS) continue;
+        nextTripIndexByDirection.set(departure.direction, tripIndex + 1);
+        matched += 1;
       }
-      return bestIndex;
-    }
-
-    function tripMatchesCrossing(crossing, trip) {
-      if (!trip?.scheduledDepartureMs || trip.direction !== crossing.direction) return false;
-      if (crossing.vesselName && trip.vesselName && crossing.vesselName !== trip.vesselName) return false;
-      const delta = crossing.ms - trip.scheduledDepartureMs;
-      return delta >= 0 && delta <= GPS_SCHEDULED_CROSSING_MATCH_MS;
+      return matched;
     }
 
     function gpsTerminalZone(pct) {

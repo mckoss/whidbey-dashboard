@@ -801,9 +801,13 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /return \{ startMs, endMs \}/, 'uses the history file span as graph bounds');
   assert.match(html, /gpsObservedScheduledCrossingCount\(gpsTracks, trips\)/, 'summarizes GPS crossings that match scheduled trips');
   assert.match(html, /GPS-observed scheduled crossings/, 'labels track-derived crossings as schedule-matched');
-  assert.match(html, /const GPS_SCHEDULED_CROSSING_MATCH_MS = 50 \* 60 \* 1000/, 'uses a bounded window to match GPS crossings to scheduled trips');
-  assert.match(html, /function bestScheduledTripForCrossing/, 'matches GPS crossings back to schedule rows');
-  assert.match(html, /tripMatchesCrossing/, 'filters unscheduled GPS crossings out of the summary count');
+  assert.match(html, /const GPS_STARTUP_IGNORE_MS = 10 \* 60 \* 1000/, 'ignores obvious pre-service startup GPS departures');
+  assert.match(html, /const GPS_FIRST_DEPARTURE_GRACE_MS = 15 \* 60 \* 1000/, 'uses a first-departure grace before service alignment starts');
+  assert.match(html, /function gpsObservedDepartures/, 'counts confirmed GPS departures instead of arrival-side crossings');
+  assert.match(html, /allocateGpsDeparturesToSchedule/, 'allocates GPS departures forward through scheduled service');
+  assert.match(html, /tripsByDirection/, 'keeps independent schedule sequences for each route direction');
+  assert.match(html, /nextTripIndexByDirection/, 'matches each GPS departure to the next remaining schedule in its direction');
+  assert.doesNotMatch(html, /GPS_SCHEDULED_CROSSING_MATCH_MS/, 'does not use a brittle per-row timing window for delayed service');
   assert.match(html, /WSF LeftDock matches/, 'labels WSDOT matched dock timestamps precisely');
   assert.doesNotMatch(html, /actual departures/, 'does not describe LeftDock matches as actual departures');
   assert.match(html, /const GPS_TERMINAL_ZONE_PCT = 0\.12/, 'uses a stable terminal zone threshold for GPS crossing counts');
