@@ -799,8 +799,11 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /Array\.from\(\{ length: TIMELINE_COLUMN_COUNT \}/, 'builds timeline columns from the configured count');
   assert.match(html, /index \* TIMELINE_COLUMN_HOURS \* HOUR_MS/, 'splits graph columns into fixed 6-hour periods');
   assert.match(html, /return \{ startMs, endMs \}/, 'uses the history file span as graph bounds');
-  assert.match(html, /gpsObservedCrossingCount\(gpsTracks\)/, 'summarizes observed crossings from GPS tracks');
-  assert.match(html, /GPS-observed crossings/, 'labels track-derived crossings as GPS observed');
+  assert.match(html, /gpsObservedScheduledCrossingCount\(gpsTracks, trips\)/, 'summarizes GPS crossings that match scheduled trips');
+  assert.match(html, /GPS-observed scheduled crossings/, 'labels track-derived crossings as schedule-matched');
+  assert.match(html, /const GPS_SCHEDULED_CROSSING_MATCH_MS = 50 \* 60 \* 1000/, 'uses a bounded window to match GPS crossings to scheduled trips');
+  assert.match(html, /function bestScheduledTripForCrossing/, 'matches GPS crossings back to schedule rows');
+  assert.match(html, /tripMatchesCrossing/, 'filters unscheduled GPS crossings out of the summary count');
   assert.match(html, /WSF LeftDock matches/, 'labels WSDOT matched dock timestamps precisely');
   assert.doesNotMatch(html, /actual departures/, 'does not describe LeftDock matches as actual departures');
   assert.match(html, /const GPS_TERMINAL_ZONE_PCT = 0\.12/, 'uses a stable terminal zone threshold for GPS crossing counts');

@@ -442,6 +442,8 @@
     const GPS_TRACK_GAP_MS = 20 * 60 * 1000;
     const GPS_ROUTE_COVERAGE_MIN = 0.15;
     const GPS_TERMINAL_ZONE_PCT = 0.12;
+    const GPS_SCHEDULED_CROSSING_MATCH_MS = 50 * 60 * 1000;
+    const FERRY_CROSSING_ESTIMATE_MS = 20 * 60 * 1000;
     const LEGACY_OPERATIONAL_DAY_START_HOUR = 2;
     const TZ = 'America/Los_Angeles';
     const CLINTON = { name: 'Clinton', lat: 47.9755, lon: -122.3493 };
@@ -564,14 +566,14 @@
       const gpsTracks = collectGpsTracks(day);
       const vessels = gpsTracks.map(track => track.name);
       const leftDockMatches = trips.filter(t => t.actualDepartureMs).length;
-      const gpsCrossings = gpsObservedCrossingCount(gpsTracks);
+      const gpsCrossings = gpsObservedScheduledCrossingCount(gpsTracks, trips);
       const generated = day.generatedAt ? formatClock(day.generatedAt) : 'none';
 
       const sampleCount = gpsTracks.reduce((sum, track) => sum + track.points.length, 0);
       const gpsSummary = sampleCount
         ? `${sampleCount} GPS samples`
         : 'no GPS samples';
-      summaryEl.innerHTML = `<strong>${trips.length}</strong> scheduled trips · <strong>${gpsCrossings}</strong> GPS-observed crossings · <strong>${leftDockMatches}</strong> WSF LeftDock matches · updated <strong>${escapeHtml(generated)}</strong> · ${escapeHtml(gpsSummary)}`;
+      summaryEl.innerHTML = `<strong>${trips.length}</strong> scheduled trips · <strong>${gpsCrossings}</strong> GPS-observed scheduled crossings · <strong>${leftDockMatches}</strong> WSF LeftDock matches · updated <strong>${escapeHtml(generated)}</strong> · ${escapeHtml(gpsSummary)}`;
       diagramMetaEl.textContent = '';
       tableMetaEl.textContent = vessels.length ? `${vessels.length} vessels` : '';
       errorEl.hidden = !(day.error || (day.errors && day.errors.length));
@@ -760,20 +762,63 @@
       return maxPct - minPct >= GPS_ROUTE_COVERAGE_MIN;
     }
 
-    function gpsObservedCrossingCount(tracks) {
-      return tracks.reduce((sum, track) => sum + gpsObservedCrossingsForTrack(track.points), 0);
+    function gpsObservedScheduledCrossingCount(tracks, trips) {
+      const crossings = gpsObservedCrossings(tracks);
+      const matchedTrips = new Set();
+      let matched = 0;
+      for (const crossing of crossings) {
+        const tripIndex = bestScheduledTripForCrossing(crossing, trips, matchedTrips);
+        if (tripIndex < 0) continue;
+        matchedTrips.add(tripIndex);
+        matched += 1;
+      }
+      return matched;
     }
 
-    function gpsObservedCrossingsForTrack(points) {
+    function gpsObservedCrossings(tracks) {
+      return tracks
+        .flatMap(track => gpsObservedCrossingsForTrack(track))
+        .sort((a, b) => a.ms - b.ms);
+    }
+
+    function gpsObservedCrossingsForTrack(track) {
       let lastTerminal = '';
-      let crossings = 0;
-      for (const point of points) {
+      const crossings = [];
+      for (const point of track.points) {
         const terminal = gpsTerminalZone(point.pct);
         if (!terminal) continue;
-        if (lastTerminal && terminal !== lastTerminal) crossings += 1;
+        if (lastTerminal && terminal !== lastTerminal) {
+          crossings.push({
+            direction: lastTerminal === 'Clinton' ? 'clinton-to-mukilteo' : 'mukilteo-to-clinton',
+            ms: point.ms,
+            vesselName: track.name || '',
+          });
+        }
         lastTerminal = terminal;
       }
       return crossings;
+    }
+
+    function bestScheduledTripForCrossing(crossing, trips, matchedTrips) {
+      let bestIndex = -1;
+      let bestScore = Infinity;
+      for (let i = 0; i < trips.length; i += 1) {
+        const trip = trips[i];
+        if (matchedTrips.has(i) || !tripMatchesCrossing(crossing, trip)) continue;
+        const score = Math.abs(crossing.ms - (trip.scheduledDepartureMs + FERRY_CROSSING_ESTIMATE_MS));
+        if (score < bestScore) {
+          bestScore = score;
+          bestIndex = i;
+        }
+      }
+      return bestIndex;
+    }
+
+    function tripMatchesCrossing(crossing, trip) {
+      if (!trip?.scheduledDepartureMs || trip.direction !== crossing.direction) return false;
+      if (crossing.vesselName && trip.vesselName && crossing.vesselName !== trip.vesselName) return false;
+      const delta = crossing.ms - trip.scheduledDepartureMs;
+      return delta >= 0 && delta <= GPS_SCHEDULED_CROSSING_MATCH_MS;
     }
 
     function gpsTerminalZone(pct) {
