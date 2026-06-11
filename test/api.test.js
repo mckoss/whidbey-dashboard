@@ -789,6 +789,12 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /Array\.from\(\{ length: TIMELINE_COLUMN_COUNT \}/, 'builds timeline columns from the configured count');
   assert.match(html, /index \* TIMELINE_COLUMN_HOURS \* HOUR_MS/, 'splits graph columns into fixed 6-hour periods');
   assert.match(html, /endMs: start \+ 24 \* HOUR_MS/, 'uses a fixed 24-hour 2 AM to 2 AM graph day');
+  assert.match(html, /gpsObservedCrossingCount\(gpsTracks\)/, 'summarizes observed crossings from GPS tracks');
+  assert.match(html, /GPS-observed crossings/, 'labels track-derived crossings as GPS observed');
+  assert.match(html, /WSF LeftDock matches/, 'labels WSDOT matched dock timestamps precisely');
+  assert.doesNotMatch(html, /actual departures/, 'does not describe LeftDock matches as actual departures');
+  assert.match(html, /const GPS_TERMINAL_ZONE_PCT = 0\.12/, 'uses a stable terminal zone threshold for GPS crossing counts');
+  assert.match(html, /function gpsTerminalZone/, 'classifies terminal zones for GPS crossing counts');
   assert.match(html, /clipStart = Math\.max\(departMs, segment\.startMs\)/, 'clips schedule fallback lines at the start of each half-day segment');
   assert.match(html, /clipEnd = Math\.min\(arriveMs, segment\.endMs\)/, 'clips schedule fallback lines at the end of each half-day segment');
   assert.match(html, /day\?\.vesselSamples/, 'uses raw persisted vessel GPS samples for observed route paths');

@@ -441,6 +441,7 @@
     const GRID_TICK_EXTENT = 8;
     const GPS_TRACK_GAP_MS = 20 * 60 * 1000;
     const GPS_ROUTE_COVERAGE_MIN = 0.15;
+    const GPS_TERMINAL_ZONE_PCT = 0.12;
     const TZ = 'America/Los_Angeles';
     const CLINTON = { name: 'Clinton', lat: 47.9755, lon: -122.3493 };
     const MUKILTEO = { name: 'Mukilteo', lat: 47.9485, lon: -122.3046 };
@@ -565,14 +566,15 @@
       const trips = Array.isArray(day.trips) ? day.trips : [];
       const gpsTracks = collectGpsTracks(day);
       const vessels = gpsTracks.map(track => track.name);
-      const completed = trips.filter(t => t.actualDepartureMs).length;
+      const leftDockMatches = trips.filter(t => t.actualDepartureMs).length;
+      const gpsCrossings = gpsObservedCrossingCount(gpsTracks);
       const generated = day.generatedAt ? formatClock(day.generatedAt) : 'none';
 
       const sampleCount = gpsTracks.reduce((sum, track) => sum + track.points.length, 0);
       const gpsSummary = sampleCount
         ? `${sampleCount} GPS samples`
         : 'no GPS samples';
-      summaryEl.innerHTML = `<strong>${trips.length}</strong> scheduled trips · <strong>${completed}</strong> actual departures · updated <strong>${escapeHtml(generated)}</strong> · ${escapeHtml(gpsSummary)}`;
+      summaryEl.innerHTML = `<strong>${trips.length}</strong> scheduled trips · <strong>${gpsCrossings}</strong> GPS-observed crossings · <strong>${leftDockMatches}</strong> WSF LeftDock matches · updated <strong>${escapeHtml(generated)}</strong> · ${escapeHtml(gpsSummary)}`;
       diagramMetaEl.textContent = '';
       tableMetaEl.textContent = vessels.length ? `${vessels.length} vessels` : '';
       errorEl.hidden = !(day.error || (day.errors && day.errors.length));
@@ -759,6 +761,28 @@
       const minPct = Math.min(...points.map(point => point.pct));
       const maxPct = Math.max(...points.map(point => point.pct));
       return maxPct - minPct >= GPS_ROUTE_COVERAGE_MIN;
+    }
+
+    function gpsObservedCrossingCount(tracks) {
+      return tracks.reduce((sum, track) => sum + gpsObservedCrossingsForTrack(track.points), 0);
+    }
+
+    function gpsObservedCrossingsForTrack(points) {
+      let lastTerminal = '';
+      let crossings = 0;
+      for (const point of points) {
+        const terminal = gpsTerminalZone(point.pct);
+        if (!terminal) continue;
+        if (lastTerminal && terminal !== lastTerminal) crossings += 1;
+        lastTerminal = terminal;
+      }
+      return crossings;
+    }
+
+    function gpsTerminalZone(pct) {
+      if (pct <= GPS_TERMINAL_ZONE_PCT) return 'Clinton';
+      if (pct >= 1 - GPS_TERMINAL_ZONE_PCT) return 'Mukilteo';
+      return '';
     }
 
     function renderGpsTrackLines(tracks, segments, vessels, height, pad) {
