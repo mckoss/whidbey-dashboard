@@ -297,8 +297,9 @@ test('ferry/history endpoint — returns a dated trip log shell and validates da
   assert.match(badBody.error, /YYYY-MM-DD/, 'explains date format');
 
   const source = await readFile(join(__dirname, '../server.js'), 'utf8');
-  assert.match(source, /const FERRY_HISTORY_DAY_START_HOUR = 2/, 'defines ferry history day at 2 AM');
+  assert.match(source, /ferryHistoryDayStartHour: Number\(configValue\('ferryHistoryDayStartHour', 2\)\)/, 'defines ferry history day boundary once in server config');
   assert.match(source, /function ferryHistoryDateForMs/, 'uses an operational history date instead of raw calendar date');
+  assert.match(source, /CONFIG\.ferryHistoryDayStartHour \* 60 \* 60 \* 1000/, 'server date math uses the configured ferry-history boundary');
   assert.match(source, /tripBelongsToFerryHistoryDate\(scheduledDepartureMs, date\)/, 'assigns trips by 2 AM history-day window');
   assert.match(source, /req\.query\.date \|\| ferryHistoryDateForMs\(\)/, 'history API default date follows the 2 AM boundary');
 });
@@ -758,7 +759,9 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /style="aspect-ratio:\$\{width\} \/ \$\{height\}"/, 'uses the SVG viewBox ratio instead of fixed vertical whitespace');
   assert.match(html, /top:\s*48/, 'keeps graph top padding tight');
   assert.match(html, /bottom:\s*18/, 'keeps graph bottom padding tight');
-  assert.match(html, /const DAY_START_HOUR = 2/, 'graph day starts at 2 AM');
+  assert.doesNotMatch(html, /const DAY_START_HOUR = 2/, 'history page does not hardcode the operational-day boundary');
+  assert.match(html, /ferryHistoryDayStartHour = cfg\.ferryHistoryDayStartHour/, 'history page reads the operational-day boundary from config');
+  assert.match(html, /configuredDayStartHour\(\)/, 'history page uses the configured operational-day boundary in date math');
   assert.match(html, /formatGraphTimeMs/, 'formats graph times with operational-day labels');
   assert.match(html, /\$\{timeText\}\+1/, 'appends +1 to graph labels after midnight');
   assert.match(html, /terminalProgress/, 'can plot current vessel position from coordinates');
@@ -828,6 +831,7 @@ test('config example — documents runtime and Google admin auth configuration',
   assert.equal(typeof config.wsfRouteId, 'number', 'example has route ID');
   assert.equal(config.ferryHistoryRetentionDays, 30, 'example documents ferry history retention');
   assert.equal(config.ferryHistorySampleMs, 60000, 'example documents ferry history sampling interval');
+  assert.equal(config.ferryHistoryDayStartHour, 2, 'example documents ferry history operational-day boundary');
   assert.ok('gaMeasurementId' in config, 'example documents optional Google Analytics ID');
   assert.ok(config.googleClientId, 'example has googleClientId placeholder');
   assert.ok(config.sessionSecret, 'example has sessionSecret placeholder');
@@ -860,6 +864,7 @@ test('server config — accepts canonical CONFIG_JSON for Railway-style deploys'
           const json = await res.json();
           assert.equal(json.googleClientId, 'config-json-client-id');
           assert.equal(json.ferryHistorySampleMs, 60000);
+          assert.equal(json.ferryHistoryDayStartHour, 2);
           return;
         }
       } catch {}

@@ -434,7 +434,6 @@
 
   <script>
     const COLORS = ['#f87171', '#34d399', '#38bdf8', '#fbbf24', '#a78bfa', '#fb923c', '#22d3ee', '#f472b6'];
-    const DAY_START_HOUR = 2;
     const HOUR_MS = 60 * 60 * 1000;
     const HALF_HOUR_MS = 30 * 60 * 1000;
     const TIMELINE_COLUMN_COUNT = 4;
@@ -458,12 +457,11 @@
     const clockEl = document.getElementById('clock');
     const dateEl = document.getElementById('date-display');
     let historyRefreshMs = 60 * 1000;
+    let ferryHistoryDayStartHour = null;
     let historyRefreshTimer = null;
     let historyRequestId = 0;
 
     const params = new URLSearchParams(window.location.search);
-    const initialDate = validDate(params.get('date')) || todayPacific();
-    dateInput.value = initialDate;
 
     document.getElementById('prev-date').addEventListener('click', () => shiftDate(-1));
     document.getElementById('next-date').addEventListener('click', () => shiftDate(1));
@@ -476,8 +474,13 @@
     });
 
     loadConfig().then(() => {
+      const initialDate = validDate(params.get('date')) || todayPacific();
+      dateInput.value = initialDate;
       loadHistory(initialDate, { showLoading: true });
       startHistoryRefresh();
+    }).catch(e => {
+      versionEl.textContent = '';
+      renderError(e.message);
     });
 
     async function loadConfig() {
@@ -487,8 +490,13 @@
         if (Number.isFinite(cfg.ferryHistorySampleMs) && cfg.ferryHistorySampleMs >= 10000) {
           historyRefreshMs = cfg.ferryHistorySampleMs;
         }
+        if (!Number.isFinite(cfg.ferryHistoryDayStartHour)) {
+          throw new Error('Ferry history day boundary is missing from /api/config.');
+        }
+        ferryHistoryDayStartHour = cfg.ferryHistoryDayStartHour;
       } catch (e) {
         versionEl.textContent = '';
+        throw e;
       }
     }
 
@@ -514,7 +522,7 @@
     }
 
     function todayPacific() {
-      return new Date(Date.now() - DAY_START_HOUR * HOUR_MS).toLocaleString('sv-SE', { timeZone: TZ }).slice(0, 10);
+      return new Date(Date.now() - configuredDayStartHour() * HOUR_MS).toLocaleString('sv-SE', { timeZone: TZ }).slice(0, 10);
     }
 
     function shiftDate(deltaDays) {
@@ -835,8 +843,15 @@
 
     function timeBounds(date, trips) {
       const dateText = date || todayPacific();
-      const start = zonedDateTimeMs(dateText, DAY_START_HOUR, 0);
+      const start = zonedDateTimeMs(dateText, configuredDayStartHour(), 0);
       return { startMs: start, endMs: start + 24 * HOUR_MS };
+    }
+
+    function configuredDayStartHour() {
+      if (!Number.isFinite(ferryHistoryDayStartHour)) {
+        throw new Error('Ferry history day boundary is not loaded.');
+      }
+      return ferryHistoryDayStartHour;
     }
 
     function renderRows(trips) {

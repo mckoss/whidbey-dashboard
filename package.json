@@ -1,6 +1,6 @@
 {
   "name": "whidbey-dashboard",
-  "version": "1.12.38",
+  "version": "1.12.39",
   "description": "",
   "main": "index.js",
   "scripts": {

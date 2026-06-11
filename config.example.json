@@ -11,6 +11,7 @@
   "wsfRouteId": 7,
   "ferryHistoryRetentionDays": 30,
   "ferryHistorySampleMs": 60000,
+  "ferryHistoryDayStartHour": 2,
   "gaMeasurementId": null,
   "googleClientId": "your-google-oauth-client-id.apps.googleusercontent.com",
   "sessionSecret": "replace-with-a-long-random-session-secret",

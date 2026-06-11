@@ -42,6 +42,7 @@ const CONFIG = {
   timezone: String(configValue('timezone', 'America/Los_Angeles')),
   ferryHistoryRetentionDays: Number(configValue('ferryHistoryRetentionDays', 30)),
   ferryHistorySampleMs: Number(configValue('ferryHistorySampleMs', 60 * 1000)),
+  ferryHistoryDayStartHour: Number(configValue('ferryHistoryDayStartHour', 2)),
 };
 
 const ADMIN_SESSION_COOKIE = 'whidbey_admin_session';
@@ -1041,7 +1042,6 @@ const FERRY_CROSSING_ESTIMATE_MS = 20 * 60 * 1000;
 const FERRY_HISTORY_DEPARTURE_MATCH_MS = 20 * 60 * 1000;
 const FERRY_VESSEL_CORRECTION_LOOKAHEAD_MS = 4 * 60 * 60 * 1000;
 const FERRY_VESSEL_CORRECTION_RECENCY_MS = 2 * 60 * 60 * 1000;
-const FERRY_HISTORY_DAY_START_HOUR = 2;
 const TERMINAL_NAMES = new Map([
   [CONFIG.wsfDepartingTerminal, 'Clinton'],
   [CONFIG.wsfArrivingTerminal, 'Mukilteo'],
@@ -1052,7 +1052,7 @@ function pacificDateForMs(ms = Date.now()) {
 }
 
 function ferryHistoryDateForMs(ms = Date.now()) {
-  return pacificDateForMs(ms - FERRY_HISTORY_DAY_START_HOUR * 60 * 60 * 1000);
+  return pacificDateForMs(ms - CONFIG.ferryHistoryDayStartHour * 60 * 60 * 1000);
 }
 
 function isIsoDate(value) {
@@ -1068,7 +1068,7 @@ function localDateStartMs(date, timeZone = CONFIG.timezone) {
 
 function ferryHistoryDayStartMs(date) {
   const startMs = localDateStartMs(date, CONFIG.timezone);
-  return startMs === null ? null : startMs + FERRY_HISTORY_DAY_START_HOUR * 60 * 60 * 1000;
+  return startMs === null ? null : startMs + CONFIG.ferryHistoryDayStartHour * 60 * 60 * 1000;
 }
 
 function ferryHistoryFile(date) {
@@ -1574,6 +1574,7 @@ app.get('/ferry-history', (req, res) => {
 // ── Client config (feature flags, analytics ID) ──────────────────────
 app.get('/api/config', (req, res) => {
   res.json({
+    ferryHistoryDayStartHour: CONFIG.ferryHistoryDayStartHour,
     ferryHistorySampleMs: FERRY_HISTORY_SAMPLE_INTERVAL_MS,
     gaMeasurementId: CONFIG.gaMeasurementId,
     googleClientId: googleClientId() || null,
