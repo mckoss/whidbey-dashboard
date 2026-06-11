@@ -566,14 +566,14 @@
       const gpsTracks = collectGpsTracks(day);
       const vessels = gpsTracks.map(track => track.name);
       const leftDockMatches = trips.filter(t => t.actualDepartureMs).length;
-      const gpsCrossings = gpsObservedScheduledCrossingCount(gpsTracks, trips);
+      const gpsScheduleStats = gpsObservedScheduleStats(gpsTracks, trips);
       const generated = day.generatedAt ? formatClock(day.generatedAt) : 'none';
 
       const sampleCount = gpsTracks.reduce((sum, track) => sum + track.points.length, 0);
       const gpsSummary = sampleCount
         ? `${sampleCount} GPS samples`
         : 'no GPS samples';
-      summaryEl.innerHTML = `<strong>${trips.length}</strong> scheduled trips · <strong>${gpsCrossings}</strong> GPS-observed scheduled crossings · <strong>${leftDockMatches}</strong> WSF LeftDock matches · updated <strong>${escapeHtml(generated)}</strong> · ${escapeHtml(gpsSummary)}`;
+      summaryEl.innerHTML = `<strong>${trips.length}</strong> scheduled trips · <strong>${gpsScheduleStats.matched}</strong> GPS-observed scheduled crossings · <strong>${gpsScheduleStats.missed}</strong> missed scheduled trips · <strong>${leftDockMatches}</strong> WSF LeftDock matches · updated <strong>${escapeHtml(generated)}</strong> · ${escapeHtml(gpsSummary)}`;
       diagramMetaEl.textContent = '';
       tableMetaEl.textContent = vessels.length ? `${vessels.length} vessels` : '';
       errorEl.hidden = !(day.error || (day.errors && day.errors.length));
@@ -762,11 +762,11 @@
       return maxPct - minPct >= GPS_ROUTE_COVERAGE_MIN;
     }
 
-    function gpsObservedScheduledCrossingCount(tracks, trips) {
+    function gpsObservedScheduleStats(tracks, trips) {
       const scheduledTrips = trips
         .filter(trip => Number.isFinite(trip?.scheduledDepartureMs) && trip.direction)
         .sort((a, b) => a.scheduledDepartureMs - b.scheduledDepartureMs);
-      if (!scheduledTrips.length) return 0;
+      if (!scheduledTrips.length) return { matched: 0, missed: 0 };
       const firstScheduledMs = scheduledTrips[0].scheduledDepartureMs;
       const serviceDepartures = gpsObservedDepartures(tracks)
         .filter(departure => departure.ms >= firstScheduledMs - GPS_STARTUP_IGNORE_MS);
@@ -812,16 +812,23 @@
       }, new Map());
       const nextTripIndexByDirection = new Map();
       let matched = 0;
+      let missed = 0;
       for (const departure of departures) {
         const directionTrips = tripsByDirection.get(departure.direction) || [];
-        const tripIndex = nextTripIndexByDirection.get(departure.direction) || 0;
-        const trip = directionTrips[tripIndex];
+        let tripIndex = nextTripIndexByDirection.get(departure.direction) || 0;
+        let trip = directionTrips[tripIndex];
         if (!trip) continue;
         if (tripIndex === 0 && departure.ms < trip.scheduledDepartureMs - GPS_FIRST_DEPARTURE_GRACE_MS) continue;
+        while (tripIndex + 1 < directionTrips.length &&
+               departure.ms >= directionTrips[tripIndex + 1].scheduledDepartureMs) {
+          missed += 1;
+          tripIndex += 1;
+          trip = directionTrips[tripIndex];
+        }
         nextTripIndexByDirection.set(departure.direction, tripIndex + 1);
         matched += 1;
       }
-      return matched;
+      return { matched, missed };
     }
 
     function gpsTerminalZone(pct) {

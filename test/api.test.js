@@ -799,14 +799,16 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /Array\.from\(\{ length: TIMELINE_COLUMN_COUNT \}/, 'builds timeline columns from the configured count');
   assert.match(html, /index \* TIMELINE_COLUMN_HOURS \* HOUR_MS/, 'splits graph columns into fixed 6-hour periods');
   assert.match(html, /return \{ startMs, endMs \}/, 'uses the history file span as graph bounds');
-  assert.match(html, /gpsObservedScheduledCrossingCount\(gpsTracks, trips\)/, 'summarizes GPS crossings that match scheduled trips');
+  assert.match(html, /gpsObservedScheduleStats\(gpsTracks, trips\)/, 'summarizes GPS crossings that match scheduled trips');
   assert.match(html, /GPS-observed scheduled crossings/, 'labels track-derived crossings as schedule-matched');
+  assert.match(html, /missed scheduled trips/, 'surfaces skipped scheduled departures separately from observed crossings');
   assert.match(html, /const GPS_STARTUP_IGNORE_MS = 10 \* 60 \* 1000/, 'ignores obvious pre-service startup GPS departures');
   assert.match(html, /const GPS_FIRST_DEPARTURE_GRACE_MS = 15 \* 60 \* 1000/, 'uses a first-departure grace before service alignment starts');
   assert.match(html, /function gpsObservedDepartures/, 'counts confirmed GPS departures instead of arrival-side crossings');
   assert.match(html, /allocateGpsDeparturesToSchedule/, 'allocates GPS departures forward through scheduled service');
   assert.match(html, /tripsByDirection/, 'keeps independent schedule sequences for each route direction');
   assert.match(html, /nextTripIndexByDirection/, 'matches each GPS departure to the next remaining schedule in its direction');
+  assert.match(html, /departure\.ms >= directionTrips\[tripIndex \+ 1\]\.scheduledDepartureMs/, 'counts a skipped slot when service slips into the next scheduled departure time');
   assert.doesNotMatch(html, /GPS_SCHEDULED_CROSSING_MATCH_MS/, 'does not use a brittle per-row timing window for delayed service');
   assert.match(html, /WSF LeftDock matches/, 'labels WSDOT matched dock timestamps precisely');
   assert.doesNotMatch(html, /actual departures/, 'does not describe LeftDock matches as actual departures');
