@@ -1543,9 +1543,12 @@ function isDepartureConfirmed(s, parsedSailings, spaceMap, vesselMap = {}, fromT
 }
 
 // Resolve a sailing's vessel name and how much we trust it. Direct evidence — a
-// server-confirmed departure, a recent GPS vessel correction, or a matched live
-// vessel location — is reliable. A name taken only from the WSF space/schedule
-// row is a low-confidence label: for future sailings WSF often repeats the same
+// server-confirmed departure or a matched live vessel location — is reliable.
+// The regenerated server forecast is the best source for future rows because it
+// advances the active vessel chain from observed departures. Older GPS-chain
+// corrections are still useful as a fallback, but can be stale once boats slip
+// by a full half-hour sailing. A name taken only from the WSF space/schedule row
+// is a low-confidence label: for future sailings WSF often repeats the same
 // VesselName across several consecutive departures before the real assignment is
 // firm, which on its own would render a physically impossible boat sequence.
 function vesselNameSourceForSailing(s, vesselMap, spaceMap, fromTerminalId, parsedSailings) {
@@ -1553,11 +1556,11 @@ function vesselNameSourceForSailing(s, vesselMap, spaceMap, fromTerminalId, pars
   const correction = vesselCorrectionForSailing(s, vesselMap, fromTerminalId);
   const prediction = predictedDepartureForSailing(s, vesselMap, fromTerminalId);
   const directName = timing.serverDeparture?.vesselName ||
-    correction?.vesselName ||
     (timing.hasDirectVesselSignal ? timing.vessel?.vesselName : '') ||
     '';
   if (directName) return { name: directName, direct: true };
   if (prediction?.vesselName) return { name: prediction.vesselName, direct: false, predicted: true };
+  if (correction?.vesselName) return { name: correction.vesselName, direct: true };
   const space = spaceMap?.[String(s.sailTime.getTime())] || null;
   return { name: space?.vesselName || s.VesselName || '', direct: false };
 }

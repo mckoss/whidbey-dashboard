@@ -2266,6 +2266,72 @@ test('late ferry logic — GPS vessel correction overrides stale scheduled vesse
   assert.doesNotMatch(card, /sail-vessel">Suquamish<\/div>/, 'does not show stale scheduled or space vessel name');
 });
 
+test('late ferry logic — regenerated vessel forecast overrides stale GPS-chain correction', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
+  const script = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+
+  const fixedNow = Date.UTC(2026, 5, 13, 2, 55); // 7:55 PM PDT
+  class FakeDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [fixedNow])); }
+    static now() { return fixedNow; }
+  }
+  Object.assign(FakeDate, Date);
+
+  const nullEl = { style: {}, className: '', textContent: '', innerHTML: '', querySelector: () => null };
+  const context = {
+    console,
+    Date: FakeDate,
+    setInterval: () => 0,
+    setTimeout: () => 0,
+    clearInterval: () => {},
+    fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
+    document: {
+      getElementById: () => nullEl,
+      querySelector: () => nullEl,
+      createElement: () => ({}),
+      head: { appendChild: () => {} },
+    },
+    window: {},
+  };
+  vm.createContext(context);
+  vm.runInContext(script + `\nthis.__lateTest = { buildVesselMap, sailingCard };`, context);
+
+  const sailingMs = Date.UTC(2026, 5, 13, 3, 5); // 8:05 PM PDT
+  const projectedMs = Date.UTC(2026, 5, 13, 3, 11); // 8:11 PM PDT
+  const sailing = {
+    sailTime: new Date(sailingMs),
+    DepartingTime: `/Date(${sailingMs})/`,
+    VesselName: 'Tokitae',
+  };
+  const vesselMap = context.__lateTest.buildVesselMap({ vessels: [] }, {
+    vesselCorrections: {
+      [`14:${sailingMs}`]: {
+        vesselName: 'Tokitae',
+        vesselId: 68,
+        basis: 'recent-gps-chain',
+      },
+    },
+    predictedDepartures: {
+      [`14:${sailingMs}`]: {
+        vesselName: 'Suquamish',
+        vesselId: 106,
+        scheduledDepartureMs: sailingMs,
+        projectedDepartureMs: projectedMs,
+        delayMs: projectedMs - sailingMs,
+        basis: 'gps-vessel-forecast',
+      },
+    },
+  });
+
+  const card = context.__lateTest.sailingCard(sailing, [sailing], {}, vesselMap, 14);
+  assert.match(card, /sail-vessel">Suquamish<\/div>/, 'renders regenerated vessel forecast for the future row');
+  assert.doesNotMatch(card, /sail-vessel">Tokitae<\/div>/, 'does not let stale GPS-chain correction override the forecast');
+});
+
 test('late ferry logic — direct delay does not propagate to later sailings', async () => {
   const { readFileSync } = await import('fs');
   const { dirname: dn, join: jn } = await import('path');
