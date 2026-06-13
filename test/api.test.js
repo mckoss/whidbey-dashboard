@@ -1978,7 +1978,7 @@ test('late ferry logic — inferred route delay projects onto upcoming chips wit
   const nextCard = context.__lateTest.sailingCard(sailings[2], sailings, {}, vesselMap, 5);
   assert.match(nextCard, /class="sail-time-est-route"/, 'inferred-delay time uses the amber route-delay style, not the red confirmed-late style');
   assert.match(nextCard, /~8:55 AM/, 'shows the projected (tilde) departure time');
-  assert.match(nextCard, /sail-route-delay">~20m late/, 'labels the chip with the expected delay');
+  assert.doesNotMatch(nextCard, /sail-route-delay|~20m late/, 'does not add a separate delay label');
   assert.match(nextCard, /\(sched 8:35 AM\)/, 'keeps the scheduled time visible for reference');
   assert.doesNotMatch(nextCard, /Scheduled Boat/, 'does not render a stale schedule-only vessel label on a delayed chip');
   assert.doesNotMatch(nextCard, /class="sail-time-est"/, 'does not use the red confirmed-late styling for an inferred delay');
@@ -2072,8 +2072,10 @@ test('late ferry logic — a repeated space-row vessel is not shown on consecuti
   // The confirmed departure keeps its real, directly-observed identity.
   assert.match(departedCard, /sail-vessel">Suquamish</, 'confirmed departed sailing keeps its real vessel name');
 
-  // The inferred route delay is still surfaced on the upcoming chips.
-  assert.match(c735, /sail-route-delay">~8m late/, 'upcoming chip still shows the inferred route delay');
+  // The inferred route delay is surfaced by the amber projected time, not a
+  // separate "N min late" status label.
+  assert.match(c735, /class="sail-time-est-route"/, 'upcoming chip still shows the inferred route delay through the projected time');
+  assert.doesNotMatch(c735, /sail-route-delay|~8m late/, 'upcoming chip does not show a separate inferred-delay label');
 
   // The bug: Tokitae must not be stamped on every consecutive upcoming sailing.
   const tokitaeCount = [c735, c805, c835].filter(card => /sail-vessel">Tokitae</.test(card)).length;

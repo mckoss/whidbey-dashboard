@@ -232,8 +232,9 @@ This keeps the frontend fully self-contained and avoids any external moon-image 
 - Empty ferry (all spaces open) shows "N open" text without a bar
 - Route delay: when recent departures in a direction have been consistently
   late, upcoming chips show the projected (tilde-prefixed) departure time in
-  amber with a "~N min late" note — inferred from GPS, distinct from a
-  red, boat-specific confirmed delay
+  amber with the scheduled time underneath — inferred from GPS, distinct from a
+  red, boat-specific confirmed delay. The chip does not show a separate
+  "N min late" status label.
 
 ## Tide Display
 
