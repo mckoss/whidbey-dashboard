@@ -1809,18 +1809,27 @@ function pruneFerryHistory(nowMs = Date.now()) {
 }
 
 async function ferryScheduleDataForHistory(cacheKey, fromTerminal, toTerminal) {
-  const hit = getCached(cacheKey);
-  if (hit) return hit.data;
-  const data = await fetchWsfFerryScheduleData(fromTerminal, toTerminal);
-  setCache(cacheKey, data, 30 * 1000);
-  return data;
+  return cachedDataForHistory(cacheKey, 30 * 1000, () =>
+    fetchWsfFerryScheduleData(fromTerminal, toTerminal));
 }
 
 async function ferrySpaceDataForHistory(cacheKey, fromTerminal, toTerminal) {
+  return cachedDataForHistory(cacheKey, 30 * 1000, () =>
+    fetchWsfFerrySpaceData(fromTerminal, toTerminal));
+}
+
+async function cachedDataForHistory(cacheKey, ttlMs, fetcher) {
   const hit = getCached(cacheKey);
   if (hit) return hit.data;
-  const data = await fetchWsfFerrySpaceData(fromTerminal, toTerminal);
-  setCache(cacheKey, data, 30 * 1000);
+
+  const stale = getStale(cacheKey);
+  if (stale) {
+    refreshCacheInBackground(cacheKey, ttlMs, fetcher, null);
+    return stale.data;
+  }
+
+  const data = await fetcher();
+  setCache(cacheKey, data, ttlMs);
   return data;
 }
 
