@@ -670,6 +670,91 @@ test('ferry/departures endpoint — trailing schedule slots are missed when serv
   assert.equal(m2cMissed.length, 0, 'a direction with no observed departures is never flagged missed');
 });
 
+test('ferry/departures endpoint — infers a per-direction route delay from recent late departures', async () => {
+  const historyDate = '2026-06-10';
+  const sampledAtMs = Date.UTC(2026, 5, 10, 15, 30);
+  // Clinton→Mukilteo: two recent departures running ~20 min late, plus one stale
+  // on-time departure outside the recency window that must not drag the median.
+  const c2m = [
+    { sched: Date.UTC(2026, 5, 10, 14, 30), delay: 18 },   // recent, late
+    { sched: Date.UTC(2026, 5, 10, 15, 0), delay: 22 },    // recent, late
+    { sched: Date.UTC(2026, 5, 10, 13, 0), delay: 2 },     // 2.5h ago — excluded
+  ];
+  // Mukilteo→Clinton: running on time — must not be flagged as delayed.
+  const m2c = [
+    { sched: Date.UTC(2026, 5, 10, 14, 45), delay: 3 },
+    { sched: Date.UTC(2026, 5, 10, 15, 10), delay: 4 },
+  ];
+  const mkTrip = (direction, fromTerminalId, toTerminalId, { sched, delay }) => ({
+    id: `${historyDate}:${direction}:${sched}`,
+    date: historyDate,
+    direction,
+    fromTerminalId,
+    toTerminalId,
+    fromTerminalName: fromTerminalId === 5 ? 'Clinton' : 'Mukilteo',
+    toTerminalName: toTerminalId === 5 ? 'Clinton' : 'Mukilteo',
+    scheduledDepartureMs: sched,
+    actualDepartureMs: sched + delay * 60 * 1000,
+    arrivalMs: sched + delay * 60 * 1000 + 20 * 60 * 1000,
+    arrivalBasis: 'scheduled-estimate',
+    vesselName: 'Tokitae',
+    vesselId: 68,
+    observations: [],
+  });
+  const historyDir = join(dataDir, 'ferry-history');
+  await mkdir(historyDir, { recursive: true });
+  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+    date: historyDate,
+    generatedAt: new Date(sampledAtMs).toISOString(),
+    sampledAtMs,
+    trips: [
+      ...c2m.map(t => mkTrip('clinton-to-mukilteo', 5, 14, t)),
+      ...m2c.map(t => mkTrip('mukilteo-to-clinton', 14, 5, t)),
+    ],
+    currentVessels: [],
+  }, null, 2));
+
+  const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
+  assert.ok(d.routeDelays, 'response includes a routeDelays map');
+  assert.equal(d.routeDelays['5'].delayMs, 20 * 60 * 1000, 'reports the median of the two recent late departures');
+  assert.equal(d.routeDelays['5'].sampleCount, 2, 'the stale on-time departure is excluded from the recency window');
+  assert.equal(d.routeDelays['5'].basis, 'recent-observed-departures', 'labels the route delay as inferred from observed departures');
+  assert.equal(d.routeDelays['14'], undefined, 'an on-time direction is never flagged with a route delay');
+});
+
+test('ferry/departures endpoint — a single late departure is not enough to claim a route delay', async () => {
+  const historyDate = '2026-06-09';
+  const sampledAtMs = Date.UTC(2026, 5, 9, 15, 30);
+  const sched = Date.UTC(2026, 5, 9, 15, 0);
+  const historyDir = join(dataDir, 'ferry-history');
+  await mkdir(historyDir, { recursive: true });
+  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+    date: historyDate,
+    generatedAt: new Date(sampledAtMs).toISOString(),
+    sampledAtMs,
+    trips: [{
+      id: `${historyDate}:clinton-to-mukilteo:${sched}`,
+      date: historyDate,
+      direction: 'clinton-to-mukilteo',
+      fromTerminalId: 5,
+      toTerminalId: 14,
+      fromTerminalName: 'Clinton',
+      toTerminalName: 'Mukilteo',
+      scheduledDepartureMs: sched,
+      actualDepartureMs: sched + 20 * 60 * 1000,
+      arrivalMs: sched + 40 * 60 * 1000,
+      arrivalBasis: 'scheduled-estimate',
+      vesselName: 'Tokitae',
+      vesselId: 68,
+      observations: [],
+    }],
+    currentVessels: [],
+  }, null, 2));
+
+  const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
+  assert.equal(d.routeDelays['5'], undefined, 'one late departure alone does not establish a route delay');
+});
+
 test('messages endpoint — Google-authorized admins can add and delete crawl messages', async () => {
   const unauthenticated = await sendJson('/api/messages', 'POST', {
     text: 'Private party at 7',
@@ -1718,6 +1803,103 @@ test('late ferry logic — overtaken missed slot does not propagate lateness to 
   assert.match(nextCard, /class="sailing next"/, 'following future chip remains the next sailing');
   assert.match(nextCard, /<div class="sail-time">9:00 AM<\/div>/, 'following chip keeps its scheduled time');
   assert.doesNotMatch(nextCard, /sail-time-est|sail-time-sched|was 9:00 AM/, 'following chip does not inherit the prior lateness');
+});
+
+test('late ferry logic — inferred route delay projects onto upcoming chips with no direct signal', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
+  const script = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+
+  const fixedNow = Date.UTC(2026, 5, 10, 15, 30); // 8:30 AM PDT
+  class FakeDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [fixedNow])); }
+    static now() { return fixedNow; }
+  }
+  Object.assign(FakeDate, Date);
+
+  const nullEl = { style: {}, className: '', textContent: '', innerHTML: '', querySelector: () => null };
+  const context = {
+    console,
+    Date: FakeDate,
+    setInterval: () => 0,
+    setTimeout: () => 0,
+    clearInterval: () => {},
+    fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
+    document: {
+      getElementById: () => nullEl,
+      querySelector: () => nullEl,
+      createElement: () => ({}),
+      head: { appendChild: () => {} },
+    },
+    window: {},
+  };
+  vm.createContext(context);
+  vm.runInContext(script + `\nthis.__lateTest = { buildVesselMap, computeSailingTimings, sailingCard };`, context);
+
+  const departedMs = Date.UTC(2026, 5, 10, 15, 0);  // 8:00 AM PDT — already departed (direct signal)
+  const missedMs = Date.UTC(2026, 5, 10, 15, 25);   // 8:25 AM PDT — server-confirmed missed
+  const nextMs = Date.UTC(2026, 5, 10, 15, 35);     // 8:35 AM PDT — upcoming, no direct signal
+  const laterMs = Date.UTC(2026, 5, 10, 16, 5);     // 9:05 AM PDT — upcoming, no direct signal
+  const sailings = [departedMs, missedMs, nextMs, laterMs].map(ms => ({
+    sailTime: new Date(ms),
+    DepartingTime: `/Date(${ms})/`,
+  }));
+  const vesselMap = context.__lateTest.buildVesselMap({ vessels: [] }, {
+    departures: {
+      [`5:${departedMs}`]: {
+        departed: true,
+        fromTerminalId: 5,
+        toTerminalId: 14,
+        scheduledDepartureMs: departedMs,
+        actualDepartureMs: departedMs + 20 * 60 * 1000,
+        vesselName: 'Tokitae',
+        vesselId: 68,
+      },
+    },
+    missedDepartures: {
+      [`5:${missedMs}`]: {
+        missed: true,
+        source: 'gps-sequence',
+        fromTerminalId: 5,
+        toTerminalId: 14,
+        scheduledDepartureMs: missedMs,
+      },
+    },
+    routeDelays: {
+      '5': {
+        fromTerminalId: 5,
+        direction: 'clinton-to-mukilteo',
+        delayMs: 20 * 60 * 1000,
+        sampleCount: 2,
+        basis: 'recent-observed-departures',
+      },
+    },
+  });
+
+  const timings = context.__lateTest.computeSailingTimings(sailings, vesselMap, 5);
+  const byMs = ms => timings.find(t => t.scheduledMs === ms);
+
+  assert.equal(byMs(nextMs).propagatedDelayMs, 20 * 60 * 1000, 'upcoming chip inherits the inferred route delay');
+  assert.equal(byMs(nextMs).effectiveMs, nextMs + 20 * 60 * 1000, 'projected departure pushes the effective (countdown) time out');
+  assert.equal(byMs(nextMs).routeDelayInfo.delayMs, 20 * 60 * 1000, 'exposes the inferred delay for display');
+  assert.equal(byMs(laterMs).propagatedDelayMs, 20 * 60 * 1000, 'all upcoming chips reflect the current route condition');
+  assert.equal(byMs(departedMs).propagatedDelayMs, 0, 'a chip with a confirmed departure is not overwritten by the inferred delay');
+  assert.equal(byMs(departedMs).effectiveMs, departedMs + 20 * 60 * 1000, 'departed chip keeps its actual departure time');
+  assert.equal(byMs(missedMs).propagatedDelayMs, 0, 'a server-confirmed missed slot is never reframed as a late upcoming boat');
+
+  const nextCard = context.__lateTest.sailingCard(sailings[2], sailings, {}, vesselMap, 5);
+  assert.match(nextCard, /class="sail-time-est-route"/, 'inferred-delay time uses the amber route-delay style, not the red confirmed-late style');
+  assert.match(nextCard, /~8:55 AM/, 'shows the projected (tilde) departure time');
+  assert.match(nextCard, /sail-route-delay">~20m late/, 'labels the chip with the expected delay');
+  assert.match(nextCard, /\(sched 8:35 AM\)/, 'keeps the scheduled time visible for reference');
+  assert.doesNotMatch(nextCard, /class="sail-time-est"/, 'does not use the red confirmed-late styling for an inferred delay');
+
+  const missedCard = context.__lateTest.sailingCard(sailings[1], sailings, {}, vesselMap, 5);
+  assert.match(missedCard, /<div class="sail-status">Missed<\/div>/, 'missed slot still renders as missed, with no route-delay note');
+  assert.doesNotMatch(missedCard, /sail-route-delay/, 'missed slot does not show an inferred delay note');
 });
 
 test('late ferry logic — moving substituted vessel outranks scheduled docked vessel', async () => {

@@ -475,6 +475,9 @@
 
     /* Late departure: red estimated time + smaller original scheduled time below */
     .sail-time-est { color: var(--danger); display: block; }
+    /* Inferred route delay (recent departures running late): amber, not red */
+    .sail-time-est-route { color: var(--warn); display: block; }
+    .sail-route-delay { color: var(--warn); }
     .sail-time-actual { color: var(--text); display: block; }
     .sailing.past .sail-time-actual { color: var(--dim); }
     .sail-time-sched { font-size: 0.62em; color: var(--dim); display: block; line-height: 1.3; }
@@ -595,6 +598,7 @@
       }
       /* Late ferry: est time inherits .sail-time sizing; sched is 60% of that */
       .sailing .sail-time-est { color: var(--danger); display: block; }
+      .sailing .sail-time-est-route { color: var(--warn); display: block; }
       .sailing .sail-time-actual { color: var(--text); display: block; }
       .sailing.past .sail-time-actual { color: var(--dim); }
       .sailing .sail-time-sched {
@@ -1250,7 +1254,14 @@ function buildVesselMap(vesselData, departureData = null) {
     departures: departureData?.departures || {},
     missedDepartures: departureData?.missedDepartures || {},
     vesselCorrections: departureData?.vesselCorrections || {},
+    routeDelays: departureData?.routeDelays || {},
   };
+}
+
+function routeDelayForTerminal(vesselMap, fromTerminalId) {
+  const delays = vesselMap?.routeDelays;
+  if (!delays) return null;
+  return delays[fromTerminalId] || delays[String(fromTerminalId)] || null;
 }
 
 function serverDepartureForSailing(s, vesselMap, fromTerminalId) {
@@ -1398,12 +1409,32 @@ function getRawSailingTiming(s, vesselMap, fromTerminalId, parsedSailings = null
 }
 
 function computeSailingTimings(parsedSailings, vesselMap = {}, fromTerminalId = 5) {
+  const now = Date.now();
+  const routeDelay = routeDelayForTerminal(vesselMap, fromTerminalId);
+  const routeDelayMs = routeDelay && routeDelay.delayMs > LATE_THRESHOLD_MS ? routeDelay.delayMs : 0;
   return parsedSailings.map(s => {
     const raw = getRawSailingTiming(s, vesselMap, fromTerminalId, parsedSailings);
+    // Inferred route delay applies only to sailings that have no direct signal
+    // of their own (no confirmed/observed departure, no matched vessel) and that
+    // would still be departing in the future at the route's current delay. Direct
+    // evidence and server-confirmed missed slots always take precedence, so this
+    // never overrides a Departed/Missed chip — it only warns that the upcoming
+    // boats are expected to run late before any has been individually tracked.
+    const projectedMs = raw.scheduledMs + routeDelayMs;
+    const eligible = routeDelayMs > 0 &&
+      projectedMs >= now &&
+      !raw.serverDeparture &&
+      !raw.vessel &&
+      !missedDepartureForSailing(s, vesselMap, fromTerminalId);
+    const propagatedDelayMs = eligible ? routeDelayMs : 0;
     return {
       ...raw,
+      effectiveMs: propagatedDelayMs ? Math.max(raw.effectiveMs, projectedMs) : raw.effectiveMs,
       sailing: s,
-      propagatedDelayMs: 0,
+      propagatedDelayMs,
+      routeDelayInfo: propagatedDelayMs
+        ? { projectedDepartureMs: projectedMs, delayMs: propagatedDelayMs, sampleCount: routeDelay.sampleCount }
+        : null,
     };
   });
 }
@@ -1502,16 +1533,25 @@ function sailingCard(s, parsedSailings, spaceMap, vesselMap = {}, fromTerminalId
   else if (isNext)               { cssClass += ' next';                    statusText = '▶ Next'; }
   else if (isTrueLast)           { cssClass += ' last-of-day';             statusText = '🔔 Last'; }
 
-  // Late departure display: upcoming/unconfirmed estimates are red; confirmed
+  // Late departure display: a directly-observed/estimated late departure is red
+  // (a real, boat-specific delay); an inferred route delay — projected from how
+  // late recent departures have been running — is amber and tilde-prefixed to
+  // signal it is an expectation, not a confirmed time for this boat. Confirmed
   // past departures keep both times as muted history.
   const lateInfo = timing.lateInfo;
+  const routeDelayInfo = timing.routeDelayInfo;
   let timeHtml;
+  let routeDelayNote = '';
   if (lateInfo && confirmed) {
     const actualTime = new Date(lateInfo.estimatedDepartureMs).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
     timeHtml = `<div class="sail-time"><span class="sail-time-actual">${actualTime}</span><span class="sail-time-sched">(was ${display})</span></div>`;
   } else if (lateInfo) {
     const estTime = new Date(lateInfo.estimatedDepartureMs).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
     timeHtml = `<div class="sail-time"><span class="sail-time-est">${estTime}</span><span class="sail-time-sched">(was ${display})</span></div>`;
+  } else if (routeDelayInfo && !isPast) {
+    const projTime = new Date(routeDelayInfo.projectedDepartureMs).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
+    timeHtml = `<div class="sail-time"><span class="sail-time-est-route">~${projTime}</span><span class="sail-time-sched">(sched ${display})</span></div>`;
+    routeDelayNote = `<span class="sail-route-delay">~${Math.round(routeDelayInfo.delayMs / 60000)}m late</span>`;
   } else {
     timeHtml = `<div class="sail-time">${display}</div>`;
   }
@@ -1536,7 +1576,8 @@ function sailingCard(s, parsedSailings, spaceMap, vesselMap = {}, fromTerminalId
   const vesselCorrection = vesselCorrectionForSailing(s, vesselMap, fromTerminalId);
   const vesselName = timing.serverDeparture?.vesselName || vesselCorrection?.vesselName || timing.vessel?.vesselName || space?.vesselName || s.VesselName || '';
   const vesselHtml = vesselName ? `<div class="sail-vessel">${vesselName}</div>` : '';
-  return `<div class="${cssClass}">${timeHtml}${vesselHtml}<div class="sail-status">${statusText}</div>${fillHtml}</div>`;
+  const statusHtml = `${statusText}${statusText && routeDelayNote ? ' · ' : ''}${routeDelayNote}`;
+  return `<div class="${cssClass}">${timeHtml}${vesselHtml}<div class="sail-status">${statusHtml}</div>${fillHtml}</div>`;
 }
 
 // Tracks the current "next sailing" time per panel so we can detect transitions

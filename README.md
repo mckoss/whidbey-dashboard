@@ -230,6 +230,10 @@ This keeps the frontend fully self-contained and avoids any external moon-image 
 - Slide animation when the next sailing transitions
 - Space occupancy: vessel name, fill bar (WSF hex colors), space count
 - Empty ferry (all spaces open) shows "N open" text without a bar
+- Route delay: when recent departures in a direction have been consistently
+  late, upcoming chips show the projected (tilde-prefixed) departure time in
+  amber with a "~N min late" note — inferred from GPS, distinct from a
+  red, boat-specific confirmed delay
 
 ## Tide Display
 

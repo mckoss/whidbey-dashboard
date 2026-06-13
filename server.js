@@ -1046,6 +1046,12 @@ const FERRY_GPS_TERMINAL_ZONE_PCT = 0.12;
 const FERRY_GPS_STARTUP_IGNORE_MS = 10 * 60 * 1000;
 const FERRY_GPS_FIRST_DEPARTURE_GRACE_MS = 15 * 60 * 1000;
 const FERRY_GPS_TRAILING_MISSED_GRACE_MS = 10 * 60 * 1000;
+// Route-level delay inferred from recent observed departures: how far back to
+// look, how many samples are required for confidence, and the median-delay floor
+// below which the route is treated as on time.
+const FERRY_ROUTE_DELAY_RECENCY_MS = 90 * 60 * 1000;
+const FERRY_ROUTE_DELAY_MIN_SAMPLES = 2;
+const FERRY_ROUTE_DELAY_THRESHOLD_MS = 8 * 60 * 1000;
 const CLINTON_TERMINAL = { name: 'Clinton', lat: 47.9755, lon: -122.3493 };
 const MUKILTEO_TERMINAL = { name: 'Mukilteo', lat: 47.9485, lon: -122.3046 };
 const TERMINAL_NAMES = new Map([
@@ -1216,6 +1222,50 @@ function ferryMissedDepartureSummary(day) {
     };
   }
   return missedDepartures;
+}
+
+function medianMs(values) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+}
+
+// Infer a per-direction route delay from the recent observed departures so that
+// upcoming chips can warn "running ~N min late" before any boat has been matched
+// to them directly. Robust to a single late outlier and to recovery: a tight
+// recency window plus a median over >= MIN_SAMPLES departures means a couple of
+// on-time runs pull the figure back down. Directions with too few recent
+// departures (startup, schedule gaps, end of day, GPS offline) emit nothing.
+function ferryRouteDelaySummary(day, nowMs = Date.now()) {
+  const routeDelays = {};
+  if (!Number.isFinite(nowMs)) return routeDelays;
+  const byTerminal = new Map();
+  for (const departure of Object.values(ferryDepartureSummary(day))) {
+    if (!departure?.departed || !Number.isFinite(departure.actualDepartureMs)) continue;
+    if (departure.actualDepartureMs > nowMs) continue;
+    if (departure.actualDepartureMs < nowMs - FERRY_ROUTE_DELAY_RECENCY_MS) continue;
+    const list = byTerminal.get(departure.fromTerminalId) || [];
+    list.push(departure);
+    byTerminal.set(departure.fromTerminalId, list);
+  }
+  for (const [fromTerminalId, departures] of byTerminal) {
+    if (departures.length < FERRY_ROUTE_DELAY_MIN_SAMPLES) continue;
+    departures.sort((a, b) => a.actualDepartureMs - b.actualDepartureMs);
+    const delayMs = medianMs(departures.map(d => Math.max(0, d.delayMs || 0)));
+    if (delayMs < FERRY_ROUTE_DELAY_THRESHOLD_MS) continue;
+    const latest = departures[departures.length - 1];
+    routeDelays[fromTerminalId] = {
+      fromTerminalId,
+      direction: latest.direction,
+      delayMs,
+      sampleCount: departures.length,
+      latestActualDepartureMs: latest.actualDepartureMs,
+      latestDelayMs: Math.max(0, latest.delayMs || 0),
+      basis: 'recent-observed-departures',
+    };
+  }
+  return routeDelays;
 }
 
 function ferryGpsScheduleObservations(day) {
@@ -1797,6 +1847,7 @@ app.get('/api/ferry/departures', async (req, res) => {
       departures: ferryDepartureSummary(day),
       missedDepartures: ferryMissedDepartureSummary(day),
       vesselCorrections: ferryVesselCorrectionSummary(day, day.sampledAtMs || Date.now()),
+      routeDelays: ferryRouteDelaySummary(day, day.sampledAtMs || Date.now()),
     });
   } catch (e) {
     const existing = readFerryHistoryDay(date);
@@ -1807,6 +1858,7 @@ app.get('/api/ferry/departures', async (req, res) => {
       departures: ferryDepartureSummary(existing),
       missedDepartures: ferryMissedDepartureSummary(existing),
       vesselCorrections: ferryVesselCorrectionSummary(existing, existing.sampledAtMs || Date.now()),
+      routeDelays: ferryRouteDelaySummary(existing, existing.sampledAtMs || Date.now()),
       error: e.message,
     });
   }

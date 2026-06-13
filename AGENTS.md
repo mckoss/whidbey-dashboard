@@ -63,6 +63,8 @@ Originally one panel (Clinton→Mukilteo only). Split into two side-by-side card
 
 **Space occupancy:** Shows vessel name + fill bar (using WSF's hex colors) + space count. When all spaces are open (no cars booked), shows "N open" in green text without a bar — this distinguishes "empty ferry" from "no data."
 
+**Route-level inferred delay:** Per-boat lateness only surfaces once a specific sailing has a direct signal (a confirmed/observed departure or a matched live vessel). That left upcoming chips reading "on time" even when every recent departure was running 15–20 min late. The server now derives a per-direction route delay (`ferryRouteDelaySummary` → `routeDelays` in `/api/ferry/departures`): the median delay of recent observed departures (≤90 min window, ≥2 samples, ≥8 min median). The client projects that delay onto upcoming chips that have *no* direct signal of their own (`computeSailingTimings` → `propagatedDelayMs`/`routeDelayInfo`), rendering an amber, tilde-prefixed projected time + "~N min late". This is deliberately distinct from the red, boat-specific confirmed-late display — amber = inferred expectation, red = a real tracked delay. Direct signals and server-confirmed missed slots always win, so an inferred delay never reframes a Departed or Missed chip. Directions with too few recent departures (startup, schedule gaps, end of day, GPS offline) emit nothing, avoiding false positives.
+
 ### Tides: Sparkline + Thermometer
 
 NOAA station 9445526 (Hansville) is a subordinate station — it only provides hi/lo predictions, not hourly readings. The server generates hourly points via **cosine interpolation** between hi/lo events (smoother than linear, closer to real tidal curves).
