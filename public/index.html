@@ -1246,22 +1246,30 @@ const VESSEL_SAILING_MATCH_WINDOW_MS = 45 * 60 * 1000;
 // two same-direction departures within this window cannot be the same vessel.
 const MIN_SAME_VESSEL_GAP_MS = 55 * 60 * 1000;
 
-// Build indexed vessel data from /api/ferry/vessels.
+// Build indexed ferry interpretation data. Raw vessel positions are accepted
+// only as a compatibility fallback; live chip scheduling comes from the server's
+// /api/ferry/departures resolvedSailings map.
 function buildVesselMap(vesselData, departureData = null) {
-  const vessels = (vesselData?.vessels || []).filter(v => v?.inService);
+  const hasRawVesselData = Array.isArray(vesselData?.vessels);
+  const vessels = hasRawVesselData ? vesselData.vessels.filter(v => v?.inService) : [];
   const byScheduled = {};
   for (const v of vessels) {
     if (v.scheduledDepartureMs != null) byScheduled[v.scheduledDepartureMs] = v;
   }
+  // Keep legacy interpretation fields available only for explicit raw-vessel
+  // fallback/test callers. The live dashboard passes no raw vessel data and
+  // renders the server's resolvedSailings interpretation instead.
+  const legacy = hasRawVesselData ? departureData || {} : {};
   return {
     vessels,
     byScheduled,
-    departures: departureData?.departures || {},
-    missedDepartures: departureData?.missedDepartures || {},
-    vesselCorrections: departureData?.vesselCorrections || {},
-    predictedDepartures: departureData?.predictedDepartures || {},
-    resolvedVessels: departureData?.resolvedVessels || {},
-    routeDelays: departureData?.routeDelays || {},
+    departures: legacy.departures || {},
+    missedDepartures: legacy.missedDepartures || {},
+    vesselCorrections: legacy.vesselCorrections || {},
+    predictedDepartures: legacy.predictedDepartures || {},
+    resolvedVessels: legacy.resolvedVessels || {},
+    resolvedSailings: departureData?.resolvedSailings || {},
+    routeDelays: legacy.routeDelays || {},
   };
 }
 
@@ -1289,6 +1297,11 @@ function predictedDepartureForSailing(s, vesselMap, fromTerminalId) {
 function resolvedVesselForSailing(s, vesselMap, fromTerminalId) {
   const scheduledMs = s.sailTime.getTime();
   return vesselMap?.resolvedVessels?.[`${fromTerminalId}:${scheduledMs}`] || null;
+}
+
+function resolvedSailingForSailing(s, vesselMap, fromTerminalId) {
+  const scheduledMs = s.sailTime.getTime();
+  return vesselMap?.resolvedSailings?.[`${fromTerminalId}:${scheduledMs}`] || null;
 }
 
 function missedDepartureForSailing(s, vesselMap, fromTerminalId) {
@@ -1442,6 +1455,32 @@ function computeSailingTimings(parsedSailings, vesselMap = {}, fromTerminalId = 
   const routeDelay = routeDelayForTerminal(vesselMap, fromTerminalId);
   const routeDelayMs = routeDelay && routeDelay.delayMs > LATE_THRESHOLD_MS ? routeDelay.delayMs : 0;
   return parsedSailings.map(s => {
+    const resolved = resolvedSailingForSailing(s, vesselMap, fromTerminalId);
+    if (resolved) {
+      const scheduledMs = resolved.scheduledDepartureMs || s.sailTime.getTime();
+      const effectiveMs = resolved.effectiveDepartureMs || scheduledMs;
+      const delayMs = Math.max(0, resolved.delayMs || 0);
+      return {
+        scheduledMs,
+        effectiveMs,
+        sailing: s,
+        serverResolved: resolved,
+        serverDeparture: resolved.isDeparted ? { actualDepartureMs: effectiveMs } : null,
+        hasDirectVesselSignal: Boolean(resolved.isDeparted),
+        lateInfo: resolved.isDeparted && delayMs > LATE_THRESHOLD_MS
+          ? { estimatedDepartureMs: effectiveMs, delayMs, atDock: false }
+          : null,
+        routeDelayInfo: resolved.isProjected && delayMs > 0
+          ? {
+              projectedDepartureMs: effectiveMs,
+              delayMs,
+              vesselName: resolved.vesselName || '',
+              basis: resolved.timingSource || 'server-resolved',
+            }
+          : null,
+      };
+    }
+
     const raw = getRawSailingTiming(s, vesselMap, fromTerminalId, parsedSailings);
     const predictedDeparture = predictedDepartureForSailing(s, vesselMap, fromTerminalId);
     // Inferred route delay applies only to sailings that have no direct signal
@@ -1520,6 +1559,7 @@ function isDepartureConfirmed(s, parsedSailings, spaceMap, vesselMap = {}, fromT
   // Only applies after the best-known departure time has passed
   const now = Date.now();
   const timing = getSailingTiming(s, vesselMap, fromTerminalId, parsedSailings);
+  if (timing.serverResolved) return Boolean(timing.serverResolved.isDeparted);
   if (timing.effectiveMs >= now) return false;
 
   const space = spaceMap[String(s.sailTime.getTime())] || null;
@@ -1577,6 +1617,9 @@ function vesselNameSourceForSailing(s, vesselMap, spaceMap, fromTerminalId, pars
 // unreliable schedule/space labels collide we drop them rather than show a bogus
 // guess (e.g. the same boat on three back-to-back half-hour sailings).
 function resolveVesselName(s, parsedSailings, spaceMap, vesselMap, fromTerminalId) {
+  const resolvedSailing = resolvedSailingForSailing(s, vesselMap, fromTerminalId);
+  if (resolvedSailing) return resolvedSailing.vesselName || '';
+
   const resolved = resolvedVesselForSailing(s, vesselMap, fromTerminalId);
   if (resolved) return resolved.vesselName || '';
 
@@ -1605,15 +1648,17 @@ function sailingCard(s, parsedSailings, spaceMap, vesselMap = {}, fromTerminalId
   const isTrueLast = s.sailTime.getTime() === parsedSailings[trueLastIdx].sailTime.getTime();
   const display = s.sailTime.toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
 
+  const serverStatus = timing.serverResolved?.status || '';
   const missedDeparture = missedDepartureForSailing(s, vesselMap, fromTerminalId);
-  const missed = isPast && Boolean(missedDeparture);
-  const confirmed = !missed && isPast && isDepartureConfirmed(s, parsedSailings, spaceMap, vesselMap, fromTerminalId);
+  const missed = serverStatus ? serverStatus === 'missed' : isPast && Boolean(missedDeparture);
+  const confirmed = serverStatus ? serverStatus === 'departed' : !missed && isPast && isDepartureConfirmed(s, parsedSailings, spaceMap, vesselMap, fromTerminalId);
+  const unknown = serverStatus ? serverStatus === 'unknown' : isPast && !confirmed;
 
   let statusText = '';
   let cssClass = 'sailing';
   if (missed)                    { cssClass += ' past missed-departure';   statusText = 'Missed'; }
   else if (isPast && confirmed)  { cssClass += ' past departed-confirmed'; statusText = 'Departed'; }
-  else if (isPast && !confirmed) { cssClass += ' past departed-unknown';   statusText = 'Departed?'; }
+  else if (isPast && unknown)    { cssClass += ' past departed-unknown';   statusText = 'Departed?'; }
   else if (isNext)               { cssClass += ' next';                    statusText = '▶ Next'; }
   else if (isTrueLast)           { cssClass += ' last-of-day';             statusText = '🔔 Last'; }
 
@@ -1915,14 +1960,13 @@ function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spac
 
 // ── Ferry loader ───────────────────────────────────────────────────────
 async function loadFerry() {
-  const [clintonSched, clintonSpace, mukilteoSched, mukilteoSpace, ferryAlerts, userMessages, vesselRes, departureRes] = await Promise.allSettled([
+  const [clintonSched, clintonSpace, mukilteoSched, mukilteoSpace, ferryAlerts, userMessages, departureRes] = await Promise.allSettled([
     fetch('/api/ferry/clinton').then(r => r.json()),
     fetch('/api/ferry/clinton/space').then(r => r.json()),
     fetch('/api/ferry/mukilteo').then(r => r.json()),
     fetch('/api/ferry/mukilteo/space').then(r => r.json()),
     fetch('/api/ferry/alerts').then(r => r.json()),
     fetch('/api/messages').then(r => r.json()),
-    fetch('/api/ferry/vessels').then(r => r.json()),
     fetch('/api/ferry/departures', { cache: 'no-store' }).then(r => r.json()),
   ]);
 
@@ -1936,10 +1980,10 @@ async function loadFerry() {
     : [];
   const clintonSpaceMissing = !hasUsableSpaceData(clintonSp);
   const mukilteoSpaceMissing = !hasUsableSpaceData(mukilteoSp);
-  const vesselData   = vesselRes.status === 'fulfilled' ? vesselRes.value : null;
   const departureData = departureRes.status === 'fulfilled' ? departureRes.value : null;
-  // Build vessel/departure map; safe to pass empty maps on API failure.
-  const vesselMap    = buildVesselMap(vesselData, departureData);
+  // Build the server interpretation map; raw vessel-position matching is a
+  // compatibility fallback only and is not fetched by the live dashboard.
+  const vesselMap    = buildVesselMap(null, departureData);
   updateFerryAlerts([...routeAlerts, ...crawlMessages]);
 
   if (clintonData?.error === 'WSF_API_KEY not configured') {

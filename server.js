@@ -1632,6 +1632,85 @@ function ferryResolvedVesselSummary(day, nowMs = Date.now(), summaries = {}) {
   return resolved;
 }
 
+function ferryResolvedSailingSummary(day, nowMs = Date.now(), summaries = {}) {
+  const departures = summaries.departures || ferryDepartureSummary(day);
+  const missedDepartures = summaries.missedDepartures || ferryMissedDepartureSummary(day);
+  const predictedDepartures = summaries.predictedDepartures || ferryPredictedDepartureSummary(day, nowMs);
+  const resolvedVessels = summaries.resolvedVessels ||
+    ferryResolvedVesselSummary(day, nowMs, { departures, predictedDepartures, vesselCorrections: summaries.vesselCorrections });
+  const routeDelays = summaries.routeDelays || ferryRouteDelaySummary(day, nowMs);
+  const resolved = {};
+  const trips = [...(day?.trips || [])]
+    .filter(trip => Number.isFinite(trip?.scheduledDepartureMs))
+    .sort((a, b) => a.scheduledDepartureMs - b.scheduledDepartureMs || a.direction.localeCompare(b.direction));
+
+  for (const trip of trips) {
+    const key = ferryDepartureKey(trip.fromTerminalId, trip.scheduledDepartureMs);
+    const departure = departures[key];
+    const missed = missedDepartures[key];
+    const prediction = predictedDepartures[key];
+    const routeDelay = routeDelays[trip.fromTerminalId];
+    const routeProjectedMs = routeDelay ? trip.scheduledDepartureMs + routeDelay.delayMs : null;
+    const routeProjectionEligible = routeProjectedMs &&
+      routeProjectionMsIsUseful(routeProjectedMs, trip.scheduledDepartureMs, nowMs);
+    const projectedDepartureMs = prediction?.projectedDepartureMs ||
+      (routeProjectionEligible ? routeProjectedMs : null);
+    const effectiveDepartureMs = departure?.actualDepartureMs ||
+      projectedDepartureMs ||
+      trip.scheduledDepartureMs;
+    const delayMs = departure?.delayMs ??
+      prediction?.delayMs ??
+      (routeProjectionEligible ? Math.max(0, routeProjectedMs - trip.scheduledDepartureMs) : 0);
+    let status = 'scheduled';
+    let timingSource = 'schedule-row';
+    if (missed) {
+      status = 'missed';
+      timingSource = missed.source || 'missed-departure';
+    } else if (departure) {
+      status = 'departed';
+      timingSource = departure.source || 'observed-departure';
+    } else if (prediction) {
+      status = 'projected';
+      timingSource = prediction.basis || 'gps-vessel-forecast';
+    } else if (routeProjectionEligible) {
+      status = 'projected';
+      timingSource = routeDelay.basis || 'recent-observed-departures';
+    }
+    if (status === 'scheduled' && effectiveDepartureMs < nowMs) {
+      status = 'unknown';
+      timingSource = 'server-unconfirmed';
+    }
+
+    const vessel = resolvedVessels[key] || {};
+    resolved[key] = {
+      direction: trip.direction,
+      fromTerminalId: trip.fromTerminalId,
+      toTerminalId: trip.toTerminalId,
+      scheduledDepartureMs: trip.scheduledDepartureMs,
+      effectiveDepartureMs,
+      displayDepartureMs: effectiveDepartureMs,
+      delayMs: Math.max(0, delayMs || 0),
+      status,
+      timingSource,
+      isProjected: status === 'projected',
+      isDeparted: status === 'departed',
+      isMissed: status === 'missed',
+      isUnknown: status === 'unknown',
+      vesselName: vessel.vesselName || '',
+      vesselId: vessel.vesselId || null,
+      vesselSource: vessel.source || 'none',
+    };
+  }
+
+  return resolved;
+}
+
+function routeProjectionMsIsUseful(projectedMs, scheduledMs, nowMs) {
+  return Number.isFinite(projectedMs) &&
+    projectedMs >= nowMs &&
+    projectedMs - scheduledMs >= FERRY_ROUTE_DELAY_THRESHOLD_MS;
+}
+
 function observedVesselForTrip(trip, actualDepartureMs) {
   if (!actualDepartureMs || !Array.isArray(trip?.observations)) return null;
   const observations = trip.observations
@@ -1988,6 +2067,7 @@ app.get('/api/ferry/departures', async (req, res) => {
     const vesselCorrections = ferryVesselCorrectionSummary(day, day.sampledAtMs || Date.now());
     const predictedDepartures = ferryPredictedDepartureSummary(day, day.sampledAtMs || Date.now());
     const routeDelays = ferryRouteDelaySummary(day, day.sampledAtMs || Date.now());
+    const resolvedVessels = ferryResolvedVesselSummary(day, day.sampledAtMs || Date.now(), { departures, predictedDepartures, vesselCorrections });
     res.json({
       date: day.date,
       generatedAt: day.generatedAt,
@@ -1996,7 +2076,8 @@ app.get('/api/ferry/departures', async (req, res) => {
       missedDepartures,
       vesselCorrections,
       predictedDepartures,
-      resolvedVessels: ferryResolvedVesselSummary(day, day.sampledAtMs || Date.now(), { departures, predictedDepartures, vesselCorrections }),
+      resolvedVessels,
+      resolvedSailings: ferryResolvedSailingSummary(day, day.sampledAtMs || Date.now(), { departures, missedDepartures, predictedDepartures, vesselCorrections, resolvedVessels, routeDelays }),
       routeDelays,
     });
   } catch (e) {
@@ -2006,6 +2087,7 @@ app.get('/api/ferry/departures', async (req, res) => {
     const vesselCorrections = ferryVesselCorrectionSummary(existing, existing.sampledAtMs || Date.now());
     const predictedDepartures = ferryPredictedDepartureSummary(existing, existing.sampledAtMs || Date.now());
     const routeDelays = ferryRouteDelaySummary(existing, existing.sampledAtMs || Date.now());
+    const resolvedVessels = ferryResolvedVesselSummary(existing, existing.sampledAtMs || Date.now(), { departures, predictedDepartures, vesselCorrections });
     res.status(existing.generatedAt ? 200 : 500).json({
       date: existing.date,
       generatedAt: existing.generatedAt,
@@ -2014,7 +2096,8 @@ app.get('/api/ferry/departures', async (req, res) => {
       missedDepartures,
       vesselCorrections,
       predictedDepartures,
-      resolvedVessels: ferryResolvedVesselSummary(existing, existing.sampledAtMs || Date.now(), { departures, predictedDepartures, vesselCorrections }),
+      resolvedVessels,
+      resolvedSailings: ferryResolvedSailingSummary(existing, existing.sampledAtMs || Date.now(), { departures, missedDepartures, predictedDepartures, vesselCorrections, resolvedVessels, routeDelays }),
       routeDelays,
       error: e.message,
     });

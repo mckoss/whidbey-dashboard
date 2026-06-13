@@ -527,6 +527,12 @@ test('ferry/departures endpoint — predicts future vessel chain from observed a
     'the server-resolved display vessel follows the regenerated forecast');
   assert.equal(d.resolvedVessels[`14:${m305}`].source, 'predicted-departure',
     'the resolved vessel source makes the server-side interpretation explicit');
+  assert.equal(d.resolvedSailings[`14:${m305}`].status, 'projected',
+    'the server resolves the chip status');
+  assert.equal(d.resolvedSailings[`14:${m305}`].effectiveDepartureMs, m305 + 29 * 60 * 1000,
+    'the server resolves the chip effective time');
+  assert.equal(d.resolvedSailings[`14:${m305}`].vesselName, 'Suquamish',
+    'the server resolves the chip vessel label');
   assert.equal(d.predictedDepartures[`14:${m305}`].projectedDepartureMs, m305 + 29 * 60 * 1000,
     'the predicted chain uses the route delay for the next sailing');
   assert.equal(d.predictedDepartures[`5:${c315}`].vesselName, 'Tokitae',
@@ -2311,7 +2317,7 @@ test('late ferry logic — regenerated vessel forecast overrides stale GPS-chain
     DepartingTime: `/Date(${sailingMs})/`,
     VesselName: 'Tokitae',
   };
-  const vesselMap = context.__lateTest.buildVesselMap({ vessels: [] }, {
+  const vesselMap = context.__lateTest.buildVesselMap(null, {
     vesselCorrections: {
       [`14:${sailingMs}`]: {
         vesselName: 'Tokitae',
@@ -2335,6 +2341,22 @@ test('late ferry logic — regenerated vessel forecast overrides stale GPS-chain
         vesselId: 106,
         scheduledDepartureMs: sailingMs,
         source: 'predicted-departure',
+      },
+    },
+    resolvedSailings: {
+      [`14:${sailingMs}`]: {
+        scheduledDepartureMs: sailingMs,
+        effectiveDepartureMs: projectedMs,
+        delayMs: projectedMs - sailingMs,
+        status: 'projected',
+        timingSource: 'gps-vessel-forecast',
+        isProjected: true,
+        isDeparted: false,
+        isMissed: false,
+        isUnknown: false,
+        vesselName: 'Suquamish',
+        vesselId: 106,
+        vesselSource: 'predicted-departure',
       },
     },
   });
