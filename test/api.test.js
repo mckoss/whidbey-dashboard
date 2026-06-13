@@ -477,6 +477,62 @@ test('ferry/departures endpoint — exposes server-confirmed actual departures b
   assert.equal(d.vesselCorrections[correctionKey].basis, 'recent-gps-chain', 'labels vessel corrections separately from departed sailings');
 });
 
+test('ferry/departures endpoint — predicts future vessel chain from observed availability', async () => {
+  const historyDate = '2026-06-14';
+  const sampledAtMs = Date.UTC(2026, 5, 14, 3, 0);
+  const m135 = Date.UTC(2026, 5, 14, 1, 35);
+  const m205 = Date.UTC(2026, 5, 14, 2, 5);
+  const c215 = Date.UTC(2026, 5, 14, 2, 15);
+  const m305 = Date.UTC(2026, 5, 14, 3, 5);
+  const c315 = Date.UTC(2026, 5, 14, 3, 15);
+  const m335 = Date.UTC(2026, 5, 14, 3, 35);
+  const trip = (direction, fromTerminalId, toTerminalId, scheduledDepartureMs, actualDepartureMs, vesselName, vesselId) => ({
+    id: `${historyDate}:${direction}:${scheduledDepartureMs}`,
+    date: historyDate,
+    direction,
+    fromTerminalId,
+    toTerminalId,
+    fromTerminalName: fromTerminalId === 5 ? 'Clinton' : 'Mukilteo',
+    toTerminalName: toTerminalId === 5 ? 'Clinton' : 'Mukilteo',
+    scheduledDepartureMs,
+    actualDepartureMs,
+    arrivalMs: (actualDepartureMs || scheduledDepartureMs) + 20 * 60 * 1000,
+    arrivalBasis: actualDepartureMs ? 'scheduled-estimate' : 'scheduled-estimate',
+    vesselName,
+    vesselId,
+    observations: [],
+  });
+  const historyDir = join(dataDir, 'ferry-history');
+  await mkdir(historyDir, { recursive: true });
+  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+    date: historyDate,
+    generatedAt: new Date(sampledAtMs).toISOString(),
+    sampledAtMs,
+    trips: [
+      trip('mukilteo-to-clinton', 14, 5, m135, m135 + 20 * 60 * 1000, 'Suquamish', 75),
+      trip('mukilteo-to-clinton', 14, 5, m205, m205 + 38 * 60 * 1000, 'Tokitae', 68),
+      trip('clinton-to-mukilteo', 5, 14, c215, c215 + 35 * 60 * 1000, 'Suquamish', 75),
+      trip('mukilteo-to-clinton', 14, 5, m305, null, 'Tokitae', 68),
+      trip('clinton-to-mukilteo', 5, 14, c315, null, 'Suquamish', 75),
+      trip('mukilteo-to-clinton', 14, 5, m335, null, 'Tokitae', 68),
+    ],
+    currentVessels: [],
+  }, null, 2));
+
+  const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
+  assert.equal(d.routeDelays['14'].delayMs, 29 * 60 * 1000, 'Mukilteo→Clinton delay is the recent median');
+  assert.equal(d.predictedDepartures[`14:${m305}`].vesselName, 'Suquamish',
+    'the next Mukilteo sailing goes to the vessel that can physically be back at Mukilteo');
+  assert.equal(d.predictedDepartures[`14:${m305}`].projectedDepartureMs, m305 + 29 * 60 * 1000,
+    'the predicted chain uses the route delay for the next sailing');
+  assert.equal(d.predictedDepartures[`5:${c315}`].vesselName, 'Tokitae',
+    'the other vessel is chained through the opposite terminal before it can return');
+  assert.equal(d.predictedDepartures[`14:${m335}`].vesselName, 'Tokitae',
+    'Tokitae may be assigned later only after the forecast has carried it back across');
+  assert.ok(d.predictedDepartures[`14:${m335}`].projectedDepartureMs >= m335 + 29 * 60 * 1000,
+    'the 8:35-style slot is delayed to the vessel availability, not shown as on-time');
+});
+
 test('ferry/departures endpoint — exposes GPS-observed departures and missed schedule slots', async () => {
   const historyDate = '2026-06-07';
   const firstMs = Date.UTC(2026, 5, 7, 14, 30);
@@ -1768,7 +1824,16 @@ test('late ferry logic — overtaken missed slot does not propagate lateness to 
     sailTime: new Date(ms),
     DepartingTime: `/Date(${ms})/`,
   }));
-  const vesselMap = context.__lateTest.buildVesselMap({ vessels: [] }, {
+  const vesselMap = context.__lateTest.buildVesselMap({ vessels: [{
+    vesselName: 'Scheduled Boat',
+    inService: true,
+    atDock: true,
+    departingTerminalId: 5,
+    arrivingTerminalId: 14,
+    scheduledDepartureMs: nextMs,
+    leftDockMs: null,
+    etaMs: null,
+  }] }, {
     departures: {
       [`5:${observedMs}`]: {
         departed: true,
@@ -1847,7 +1912,16 @@ test('late ferry logic — inferred route delay projects onto upcoming chips wit
     sailTime: new Date(ms),
     DepartingTime: `/Date(${ms})/`,
   }));
-  const vesselMap = context.__lateTest.buildVesselMap({ vessels: [] }, {
+  const vesselMap = context.__lateTest.buildVesselMap({ vessels: [{
+    vesselName: 'Scheduled Boat',
+    inService: true,
+    atDock: true,
+    departingTerminalId: 5,
+    arrivingTerminalId: 14,
+    scheduledDepartureMs: nextMs,
+    leftDockMs: null,
+    etaMs: null,
+  }] }, {
     departures: {
       [`5:${departedMs}`]: {
         departed: true,
@@ -1885,6 +1959,7 @@ test('late ferry logic — inferred route delay projects onto upcoming chips wit
   assert.equal(byMs(nextMs).propagatedDelayMs, 20 * 60 * 1000, 'upcoming chip inherits the inferred route delay');
   assert.equal(byMs(nextMs).effectiveMs, nextMs + 20 * 60 * 1000, 'projected departure pushes the effective (countdown) time out');
   assert.equal(byMs(nextMs).routeDelayInfo.delayMs, 20 * 60 * 1000, 'exposes the inferred delay for display');
+  assert.equal(byMs(nextMs).hasDirectVesselSignal, false, 'a schedule-only WSF vessel assignment is not direct evidence');
   assert.equal(byMs(laterMs).propagatedDelayMs, 20 * 60 * 1000, 'all upcoming chips reflect the current route condition');
   assert.equal(byMs(departedMs).propagatedDelayMs, 0, 'a chip with a confirmed departure is not overwritten by the inferred delay');
   assert.equal(byMs(departedMs).effectiveMs, departedMs + 20 * 60 * 1000, 'departed chip keeps its actual departure time');
@@ -1895,6 +1970,7 @@ test('late ferry logic — inferred route delay projects onto upcoming chips wit
   assert.match(nextCard, /~8:55 AM/, 'shows the projected (tilde) departure time');
   assert.match(nextCard, /sail-route-delay">~20m late/, 'labels the chip with the expected delay');
   assert.match(nextCard, /\(sched 8:35 AM\)/, 'keeps the scheduled time visible for reference');
+  assert.doesNotMatch(nextCard, /Scheduled Boat/, 'does not render a stale schedule-only vessel label on a delayed chip');
   assert.doesNotMatch(nextCard, /class="sail-time-est"/, 'does not use the red confirmed-late styling for an inferred delay');
 
   const missedCard = context.__lateTest.sailingCard(sailings[1], sailings, {}, vesselMap, 5);

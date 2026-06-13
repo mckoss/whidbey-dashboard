@@ -1244,7 +1244,7 @@ const VESSEL_SAILING_MATCH_WINDOW_MS = 45 * 60 * 1000;
 // together than one round trip. On the half-hour Mukilteo/Clinton schedule a
 // boat legitimately re-departs every ~60 min (two boats alternating), so any
 // two same-direction departures within this window cannot be the same vessel.
-const MIN_SAME_VESSEL_GAP_MS = 45 * 60 * 1000;
+const MIN_SAME_VESSEL_GAP_MS = 55 * 60 * 1000;
 
 // Build indexed vessel data from /api/ferry/vessels.
 function buildVesselMap(vesselData, departureData = null) {
@@ -1259,6 +1259,7 @@ function buildVesselMap(vesselData, departureData = null) {
     departures: departureData?.departures || {},
     missedDepartures: departureData?.missedDepartures || {},
     vesselCorrections: departureData?.vesselCorrections || {},
+    predictedDepartures: departureData?.predictedDepartures || {},
     routeDelays: departureData?.routeDelays || {},
   };
 }
@@ -1277,6 +1278,11 @@ function serverDepartureForSailing(s, vesselMap, fromTerminalId) {
 function vesselCorrectionForSailing(s, vesselMap, fromTerminalId) {
   const scheduledMs = s.sailTime.getTime();
   return vesselMap?.vesselCorrections?.[`${fromTerminalId}:${scheduledMs}`] || null;
+}
+
+function predictedDepartureForSailing(s, vesselMap, fromTerminalId) {
+  const scheduledMs = s.sailTime.getTime();
+  return vesselMap?.predictedDepartures?.[`${fromTerminalId}:${scheduledMs}`] || null;
 }
 
 function missedDepartureForSailing(s, vesselMap, fromTerminalId) {
@@ -1382,6 +1388,17 @@ function estimateDepartureFromVessel(vessel, fromTerminalId, schedMs) {
   return vessel.scheduledDepartureMs || null;
 }
 
+function hasDirectVesselSignal(vessel, fromTerminalId, schedMs) {
+  if (!vessel) return false;
+  if (vessel.leftDockMs && vessel.departingTerminalId === fromTerminalId) return true;
+  if (vessel.arrivingTerminalId === fromTerminalId && vessel.etaMs) return true;
+  if (vessel.atDock && vessel.departingTerminalId === fromTerminalId) {
+    const now = Date.now();
+    return schedMs <= now && now - schedMs <= VESSEL_SAILING_MATCH_WINDOW_MS;
+  }
+  return false;
+}
+
 function buildLateInfo(effectiveMs, scheduledMs, vessel = null) {
   const delayMs = effectiveMs - scheduledMs;
   return delayMs > LATE_THRESHOLD_MS
@@ -1409,6 +1426,7 @@ function getRawSailingTiming(s, vesselMap, fromTerminalId, parsedSailings = null
     effectiveMs,
     vessel: departureVessel,
     serverDeparture: serverDeparture || null,
+    hasDirectVesselSignal: !!serverDeparture || hasDirectVesselSignal(vessel, fromTerminalId, scheduledMs),
     lateInfo: buildLateInfo(effectiveMs, scheduledMs, departureVessel),
   };
 }
@@ -1419,26 +1437,36 @@ function computeSailingTimings(parsedSailings, vesselMap = {}, fromTerminalId = 
   const routeDelayMs = routeDelay && routeDelay.delayMs > LATE_THRESHOLD_MS ? routeDelay.delayMs : 0;
   return parsedSailings.map(s => {
     const raw = getRawSailingTiming(s, vesselMap, fromTerminalId, parsedSailings);
+    const predictedDeparture = predictedDepartureForSailing(s, vesselMap, fromTerminalId);
     // Inferred route delay applies only to sailings that have no direct signal
-    // of their own (no confirmed/observed departure, no matched vessel) and that
-    // would still be departing in the future at the route's current delay. Direct
-    // evidence and server-confirmed missed slots always take precedence, so this
-    // never overrides a Departed/Missed chip — it only warns that the upcoming
-    // boats are expected to run late before any has been individually tracked.
-    const projectedMs = raw.scheduledMs + routeDelayMs;
-    const eligible = routeDelayMs > 0 &&
+    // of their own (no confirmed/observed departure, no live vessel signal) and
+    // that would still be departing in the future at the route's current delay.
+    // A schedule-only WSF vessel assignment is not direct evidence; once the
+    // route is slipping, those labels can be stale by a whole sailing. Server
+    // predictions, when present, carry the regenerated vessel chain forward.
+    const predictedDelayMs = Math.max(0, predictedDeparture?.delayMs || 0);
+    const projectedDelayMs = Math.max(routeDelayMs, predictedDelayMs);
+    const projectedMs = predictedDeparture?.projectedDepartureMs || (raw.scheduledMs + projectedDelayMs);
+    const eligible = projectedDelayMs > 0 &&
       projectedMs >= now &&
       !raw.serverDeparture &&
-      !raw.vessel &&
+      !raw.hasDirectVesselSignal &&
       !missedDepartureForSailing(s, vesselMap, fromTerminalId);
-    const propagatedDelayMs = eligible ? routeDelayMs : 0;
+    const propagatedDelayMs = eligible ? projectedDelayMs : 0;
     return {
       ...raw,
       effectiveMs: propagatedDelayMs ? Math.max(raw.effectiveMs, projectedMs) : raw.effectiveMs,
       sailing: s,
+      predictedDeparture: eligible ? predictedDeparture : null,
       propagatedDelayMs,
       routeDelayInfo: propagatedDelayMs
-        ? { projectedDepartureMs: projectedMs, delayMs: propagatedDelayMs, sampleCount: routeDelay.sampleCount }
+        ? {
+            projectedDepartureMs: projectedMs,
+            delayMs: propagatedDelayMs,
+            sampleCount: routeDelay?.sampleCount || null,
+            vesselName: predictedDeparture?.vesselName || '',
+            basis: predictedDeparture?.basis || routeDelay?.basis || 'recent-observed-departures',
+          }
         : null,
     };
   });
@@ -1523,8 +1551,13 @@ function isDepartureConfirmed(s, parsedSailings, spaceMap, vesselMap = {}, fromT
 function vesselNameSourceForSailing(s, vesselMap, spaceMap, fromTerminalId, parsedSailings) {
   const timing = getRawSailingTiming(s, vesselMap, fromTerminalId, parsedSailings);
   const correction = vesselCorrectionForSailing(s, vesselMap, fromTerminalId);
-  const directName = timing.serverDeparture?.vesselName || correction?.vesselName || timing.vessel?.vesselName || '';
+  const prediction = predictedDepartureForSailing(s, vesselMap, fromTerminalId);
+  const directName = timing.serverDeparture?.vesselName ||
+    correction?.vesselName ||
+    (timing.hasDirectVesselSignal ? timing.vessel?.vesselName : '') ||
+    '';
   if (directName) return { name: directName, direct: true };
+  if (prediction?.vesselName) return { name: prediction.vesselName, direct: false, predicted: true };
   const space = spaceMap?.[String(s.sailTime.getTime())] || null;
   return { name: space?.vesselName || s.VesselName || '', direct: false };
 }
@@ -1536,7 +1569,7 @@ function vesselNameSourceForSailing(s, vesselMap, spaceMap, fromTerminalId, pars
 // guess (e.g. the same boat on three back-to-back half-hour sailings).
 function resolveVesselName(s, parsedSailings, spaceMap, vesselMap, fromTerminalId) {
   const self = vesselNameSourceForSailing(s, vesselMap, spaceMap, fromTerminalId, parsedSailings);
-  if (!self.name || self.direct) return self.name;
+  if (!self.name || self.direct || self.predicted) return self.name;
   const schedMs = s.sailTime.getTime();
   const list = parsedSailings || [s];
   const conflict = list.some(other => {
