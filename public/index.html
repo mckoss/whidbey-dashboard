@@ -1260,6 +1260,7 @@ function buildVesselMap(vesselData, departureData = null) {
     missedDepartures: departureData?.missedDepartures || {},
     vesselCorrections: departureData?.vesselCorrections || {},
     predictedDepartures: departureData?.predictedDepartures || {},
+    resolvedVessels: departureData?.resolvedVessels || {},
     routeDelays: departureData?.routeDelays || {},
   };
 }
@@ -1283,6 +1284,11 @@ function vesselCorrectionForSailing(s, vesselMap, fromTerminalId) {
 function predictedDepartureForSailing(s, vesselMap, fromTerminalId) {
   const scheduledMs = s.sailTime.getTime();
   return vesselMap?.predictedDepartures?.[`${fromTerminalId}:${scheduledMs}`] || null;
+}
+
+function resolvedVesselForSailing(s, vesselMap, fromTerminalId) {
+  const scheduledMs = s.sailTime.getTime();
+  return vesselMap?.resolvedVessels?.[`${fromTerminalId}:${scheduledMs}`] || null;
 }
 
 function missedDepartureForSailing(s, vesselMap, fromTerminalId) {
@@ -1571,6 +1577,9 @@ function vesselNameSourceForSailing(s, vesselMap, spaceMap, fromTerminalId, pars
 // unreliable schedule/space labels collide we drop them rather than show a bogus
 // guess (e.g. the same boat on three back-to-back half-hour sailings).
 function resolveVesselName(s, parsedSailings, spaceMap, vesselMap, fromTerminalId) {
+  const resolved = resolvedVesselForSailing(s, vesselMap, fromTerminalId);
+  if (resolved) return resolved.vesselName || '';
+
   const self = vesselNameSourceForSailing(s, vesselMap, spaceMap, fromTerminalId, parsedSailings);
   if (!self.name || self.direct || self.predicted) return self.name;
   const schedMs = s.sailTime.getTime();

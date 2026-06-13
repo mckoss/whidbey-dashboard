@@ -523,6 +523,10 @@ test('ferry/departures endpoint — predicts future vessel chain from observed a
   assert.equal(d.routeDelays['14'].delayMs, 29 * 60 * 1000, 'Mukilteo→Clinton delay is the recent median');
   assert.equal(d.predictedDepartures[`14:${m305}`].vesselName, 'Suquamish',
     'the next Mukilteo sailing goes to the vessel that can physically be back at Mukilteo');
+  assert.equal(d.resolvedVessels[`14:${m305}`].vesselName, 'Suquamish',
+    'the server-resolved display vessel follows the regenerated forecast');
+  assert.equal(d.resolvedVessels[`14:${m305}`].source, 'predicted-departure',
+    'the resolved vessel source makes the server-side interpretation explicit');
   assert.equal(d.predictedDepartures[`14:${m305}`].projectedDepartureMs, m305 + 29 * 60 * 1000,
     'the predicted chain uses the route delay for the next sailing');
   assert.equal(d.predictedDepartures[`5:${c315}`].vesselName, 'Tokitae',
@@ -2323,6 +2327,14 @@ test('late ferry logic — regenerated vessel forecast overrides stale GPS-chain
         projectedDepartureMs: projectedMs,
         delayMs: projectedMs - sailingMs,
         basis: 'gps-vessel-forecast',
+      },
+    },
+    resolvedVessels: {
+      [`14:${sailingMs}`]: {
+        vesselName: 'Suquamish',
+        vesselId: 106,
+        scheduledDepartureMs: sailingMs,
+        source: 'predicted-departure',
       },
     },
   });
