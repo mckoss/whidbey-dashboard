@@ -507,6 +507,47 @@ function cachedEndpoint(cacheKey, ttlMs, fetcher) {
   };
 }
 
+const backgroundRefreshes = new Map();
+
+function refreshCacheInBackground(cacheKey, ttlMs, fetcher, req) {
+  if (backgroundRefreshes.has(cacheKey)) return;
+  const refresh = (async () => {
+    try {
+      const data = await fetcher(req);
+      setCache(cacheKey, data, ttlMs);
+    } catch (e) {
+      console.warn(`[stale] background refresh failed for ${cacheKey}: ${e.message}`);
+    } finally {
+      backgroundRefreshes.delete(cacheKey);
+    }
+  })();
+  backgroundRefreshes.set(cacheKey, refresh);
+}
+
+function cachedEndpointStaleWhileRefresh(cacheKey, ttlMs, fetcher) {
+  return async (req, res) => {
+    const hit = getCached(cacheKey);
+    if (hit) {
+      return res.json(hit.data);
+    }
+
+    const stale = getStale(cacheKey);
+    if (stale) {
+      refreshCacheInBackground(cacheKey, ttlMs, fetcher, req);
+      const ageMin = Math.round((Date.now() - stale.cachedAt) / 60000);
+      return res.json({ ...stale.data, _stale: true, _staleAgeMinutes: ageMin, _refreshing: true });
+    }
+
+    try {
+      const data = await fetcher(req);
+      setCache(cacheKey, data, ttlMs);
+      res.json(data);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  };
+}
+
 app.use(express.static(join(__dirname, 'public')));
 
 app.get('/admin', (req, res) => {
@@ -950,7 +991,7 @@ function shouldCarryOverSailing(departureMs, nowMs = Date.now()) {
 }
 
 function ferryScheduleEndpoint(cacheKey, fromTerminal, toTerminal) {
-  return cachedEndpoint(cacheKey, 30 * 1000, async () => {
+  return cachedEndpointStaleWhileRefresh(cacheKey, 30 * 1000, async () => {
     const data = await fetchWsfFerryScheduleData(fromTerminal, toTerminal);
 
     // Merge carry-over sailings into the new response
