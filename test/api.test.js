@@ -1902,6 +1902,161 @@ test('late ferry logic — inferred route delay projects onto upcoming chips wit
   assert.doesNotMatch(missedCard, /sail-route-delay/, 'missed slot does not show an inferred delay note');
 });
 
+// Regression for the screenshot bug: WSF's space rows labeled three consecutive
+// half-hour Mukilteo→Clinton departures (7:35 / 8:05 / 8:35) all "Tokitae" while
+// the route delay projected later times. One vessel cannot make three back-to-back
+// same-direction crossings, so those low-confidence labels must not all render.
+test('late ferry logic — a repeated space-row vessel is not shown on consecutive same-direction sailings', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
+  const script = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+
+  const fixedNow = Date.UTC(2026, 5, 13, 2, 20); // 7:20 PM PDT
+  class FakeDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [fixedNow])); }
+    static now() { return fixedNow; }
+  }
+  Object.assign(FakeDate, Date);
+
+  const nullEl = { style: {}, className: '', textContent: '', innerHTML: '', querySelector: () => null };
+  const context = {
+    console,
+    Date: FakeDate,
+    setInterval: () => 0,
+    setTimeout: () => 0,
+    clearInterval: () => {},
+    fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
+    document: {
+      getElementById: () => nullEl,
+      querySelector: () => nullEl,
+      createElement: () => ({}),
+      head: { appendChild: () => {} },
+    },
+    window: {},
+  };
+  vm.createContext(context);
+  vm.runInContext(script + `\nthis.__lateTest = { buildVesselMap, sailingCard };`, context);
+
+  const departedMs = Date.UTC(2026, 5, 13, 2, 5);   // 7:05 PM — Suquamish, confirmed departed
+  const s735 = Date.UTC(2026, 5, 13, 2, 35);        // 7:35 PM — upcoming
+  const s805 = Date.UTC(2026, 5, 13, 3, 5);         // 8:05 PM — upcoming
+  const s835 = Date.UTC(2026, 5, 13, 3, 35);        // 8:35 PM — upcoming
+  const sailings = [departedMs, s735, s805, s835].map(ms => ({
+    sailTime: new Date(ms),
+    DepartingTime: `/Date(${ms})/`,
+  }));
+
+  // The WSF space feed repeats "Tokitae" across all three upcoming departures.
+  const spaceMap = {
+    [String(departedMs)]: { vesselName: 'Suquamish', maxSpaces: 144, driveUpSpaces: 0 },
+    [String(s735)]: { vesselName: 'Tokitae', maxSpaces: 144, driveUpSpaces: 98 },
+    [String(s805)]: { vesselName: 'Tokitae', maxSpaces: 144, driveUpSpaces: 141 },
+    [String(s835)]: { vesselName: 'Tokitae', maxSpaces: 144, driveUpSpaces: 141 },
+  };
+
+  const vesselMap = context.__lateTest.buildVesselMap({ vessels: [] }, {
+    departures: {
+      [`14:${departedMs}`]: {
+        departed: true,
+        fromTerminalId: 14,
+        toTerminalId: 5,
+        scheduledDepartureMs: departedMs,
+        actualDepartureMs: departedMs + 8 * 60 * 1000,
+        vesselName: 'Suquamish',
+        vesselId: 1,
+      },
+    },
+    routeDelays: {
+      '14': {
+        fromTerminalId: 14,
+        direction: 'mukilteo-to-clinton',
+        delayMs: 8 * 60 * 1000,
+        sampleCount: 3,
+        basis: 'recent-observed-departures',
+      },
+    },
+  });
+
+  const [departedCard, c735, c805, c835] =
+    sailings.map(s => context.__lateTest.sailingCard(s, sailings, spaceMap, vesselMap, 14));
+
+  // The confirmed departure keeps its real, directly-observed identity.
+  assert.match(departedCard, /sail-vessel">Suquamish</, 'confirmed departed sailing keeps its real vessel name');
+
+  // The inferred route delay is still surfaced on the upcoming chips.
+  assert.match(c735, /sail-route-delay">~8m late/, 'upcoming chip still shows the inferred route delay');
+
+  // The bug: Tokitae must not be stamped on every consecutive upcoming sailing.
+  const tokitaeCount = [c735, c805, c835].filter(card => /sail-vessel">Tokitae</.test(card)).length;
+  assert.equal(tokitaeCount, 0,
+    'a low-confidence space label is dropped when it would repeat a vessel across physically impossible consecutive sailings');
+
+  // Open-space counts are independent of the vessel label and remain visible.
+  assert.match(c805, /141 open/, 'drive-up space is still shown even when the vessel label is suppressed');
+});
+
+// Guard against over-suppression: when the same vessel legitimately re-departs an
+// hour later (two boats alternating on the half-hour schedule), both labels must
+// survive — only physically-impossible repeats inside one round trip are dropped.
+test('late ferry logic — alternating vessels on the half-hour schedule are preserved', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
+  const script = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+
+  const fixedNow = Date.UTC(2026, 5, 13, 2, 20); // 7:20 PM PDT
+  class FakeDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [fixedNow])); }
+    static now() { return fixedNow; }
+  }
+  Object.assign(FakeDate, Date);
+
+  const nullEl = { style: {}, className: '', textContent: '', innerHTML: '', querySelector: () => null };
+  const context = {
+    console,
+    Date: FakeDate,
+    setInterval: () => 0,
+    setTimeout: () => 0,
+    clearInterval: () => {},
+    fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
+    document: {
+      getElementById: () => nullEl,
+      querySelector: () => nullEl,
+      createElement: () => ({}),
+      head: { appendChild: () => {} },
+    },
+    window: {},
+  };
+  vm.createContext(context);
+  vm.runInContext(script + `\nthis.__lateTest = { buildVesselMap, sailingCard };`, context);
+
+  const s735 = Date.UTC(2026, 5, 13, 2, 35); // 7:35 PM — Tokitae
+  const s805 = Date.UTC(2026, 5, 13, 3, 5);  // 8:05 PM — Suquamish
+  const s835 = Date.UTC(2026, 5, 13, 3, 35); // 8:35 PM — Tokitae again (60 min after 7:35)
+  const sailings = [s735, s805, s835].map(ms => ({
+    sailTime: new Date(ms),
+    DepartingTime: `/Date(${ms})/`,
+  }));
+  const spaceMap = {
+    [String(s735)]: { vesselName: 'Tokitae', maxSpaces: 144, driveUpSpaces: 90 },
+    [String(s805)]: { vesselName: 'Suquamish', maxSpaces: 144, driveUpSpaces: 90 },
+    [String(s835)]: { vesselName: 'Tokitae', maxSpaces: 144, driveUpSpaces: 90 },
+  };
+  const vesselMap = context.__lateTest.buildVesselMap({ vessels: [] });
+
+  const [c735, c805, c835] =
+    sailings.map(s => context.__lateTest.sailingCard(s, sailings, spaceMap, vesselMap, 14));
+
+  assert.match(c735, /sail-vessel">Tokitae</, 'first Tokitae sailing keeps its label');
+  assert.match(c805, /sail-vessel">Suquamish</, 'the alternating Suquamish sailing keeps its label');
+  assert.match(c835, /sail-vessel">Tokitae</, 'a legitimate same-vessel re-departure an hour later is preserved');
+});
+
 test('late ferry logic — moving substituted vessel outranks scheduled docked vessel', async () => {
   const { readFileSync } = await import('fs');
   const { dirname: dn, join: jn } = await import('path');

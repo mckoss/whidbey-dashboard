@@ -1240,6 +1240,11 @@ const countdownIntervals = {};
 const MIN_TURNAROUND_MS = 15 * 60 * 1000;
 const LATE_THRESHOLD_MS = 5 * 60 * 1000;
 const VESSEL_SAILING_MATCH_WINDOW_MS = 45 * 60 * 1000;
+// A single vessel cannot make two departures from the same terminal closer
+// together than one round trip. On the half-hour Mukilteo/Clinton schedule a
+// boat legitimately re-departs every ~60 min (two boats alternating), so any
+// two same-direction departures within this window cannot be the same vessel.
+const MIN_SAME_VESSEL_GAP_MS = 45 * 60 * 1000;
 
 // Build indexed vessel data from /api/ferry/vessels.
 function buildVesselMap(vesselData, departureData = null) {
@@ -1509,6 +1514,40 @@ function isDepartureConfirmed(s, parsedSailings, spaceMap, vesselMap = {}, fromT
   return false;
 }
 
+// Resolve a sailing's vessel name and how much we trust it. Direct evidence — a
+// server-confirmed departure, a recent GPS vessel correction, or a matched live
+// vessel location — is reliable. A name taken only from the WSF space/schedule
+// row is a low-confidence label: for future sailings WSF often repeats the same
+// VesselName across several consecutive departures before the real assignment is
+// firm, which on its own would render a physically impossible boat sequence.
+function vesselNameSourceForSailing(s, vesselMap, spaceMap, fromTerminalId, parsedSailings) {
+  const timing = getRawSailingTiming(s, vesselMap, fromTerminalId, parsedSailings);
+  const correction = vesselCorrectionForSailing(s, vesselMap, fromTerminalId);
+  const directName = timing.serverDeparture?.vesselName || correction?.vesselName || timing.vessel?.vesselName || '';
+  if (directName) return { name: directName, direct: true };
+  const space = spaceMap?.[String(s.sailTime.getTime())] || null;
+  return { name: space?.vesselName || s.VesselName || '', direct: false };
+}
+
+// Resolve the vessel name to display, suppressing a low-confidence label when it
+// would place the same vessel on two same-direction departures too close
+// together to be physically possible. Direct evidence always wins; when only
+// unreliable schedule/space labels collide we drop them rather than show a bogus
+// guess (e.g. the same boat on three back-to-back half-hour sailings).
+function resolveVesselName(s, parsedSailings, spaceMap, vesselMap, fromTerminalId) {
+  const self = vesselNameSourceForSailing(s, vesselMap, spaceMap, fromTerminalId, parsedSailings);
+  if (!self.name || self.direct) return self.name;
+  const schedMs = s.sailTime.getTime();
+  const list = parsedSailings || [s];
+  const conflict = list.some(other => {
+    const otherMs = other.sailTime.getTime();
+    if (other === s || otherMs === schedMs) return false;
+    if (Math.abs(otherMs - schedMs) >= MIN_SAME_VESSEL_GAP_MS) return false;
+    return vesselNameSourceForSailing(other, vesselMap, spaceMap, fromTerminalId, parsedSailings).name === self.name;
+  });
+  return conflict ? '' : self.name;
+}
+
 function sailingCard(s, parsedSailings, spaceMap, vesselMap = {}, fromTerminalId = 5) {
   const now = Date.now();
   const timings = computeSailingTimings(parsedSailings, vesselMap, fromTerminalId);
@@ -1573,8 +1612,7 @@ function sailingCard(s, parsedSailings, spaceMap, vesselMap = {}, fromTerminalId
       : `<div class="sail-fill-label" style="color:var(--accent2)">${spaceLabel}</div>`;
     fillHtml = `<div class="sail-fill-wrap">${label}</div>`;
   }
-  const vesselCorrection = vesselCorrectionForSailing(s, vesselMap, fromTerminalId);
-  const vesselName = timing.serverDeparture?.vesselName || vesselCorrection?.vesselName || timing.vessel?.vesselName || space?.vesselName || s.VesselName || '';
+  const vesselName = resolveVesselName(s, parsedSailings, spaceMap, vesselMap, fromTerminalId);
   const vesselHtml = vesselName ? `<div class="sail-vessel">${vesselName}</div>` : '';
   const statusHtml = `${statusText}${statusText && routeDelayNote ? ' · ' : ''}${routeDelayNote}`;
   return `<div class="${cssClass}">${timeHtml}${vesselHtml}<div class="sail-status">${statusHtml}</div>${fillHtml}</div>`;
