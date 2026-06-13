@@ -535,6 +535,141 @@ test('ferry/departures endpoint — exposes GPS-observed departures and missed s
   assert.equal(d.departures[observedKey].vesselName, 'Tokitae', 'carries vessel identity from GPS track');
 });
 
+test('ferry/departures endpoint — accumulating lateness skips the overtaken schedule slot', async () => {
+  const historyDate = '2026-06-12';
+  const scheduleMs = [
+    Date.UTC(2026, 5, 12, 14, 0),
+    Date.UTC(2026, 5, 12, 14, 30),
+    Date.UTC(2026, 5, 12, 15, 0),
+    Date.UTC(2026, 5, 12, 15, 30),
+  ];
+  const departureMs = [
+    scheduleMs[0] + 10 * 60 * 1000,
+    scheduleMs[1] + 20 * 60 * 1000,
+    scheduleMs[2] + 30 * 60 * 1000,
+  ];
+  const historyDir = join(dataDir, 'ferry-history');
+  await mkdir(historyDir, { recursive: true });
+  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+    date: historyDate,
+    generatedAt: '2026-06-12T15:50:00.000Z',
+    sampledAtMs: Date.UTC(2026, 5, 12, 15, 50),
+    trips: scheduleMs.map(scheduledDepartureMs => ({
+      id: `${historyDate}:clinton-to-mukilteo:${scheduledDepartureMs}`,
+      date: historyDate,
+      direction: 'clinton-to-mukilteo',
+      fromTerminalId: 5,
+      toTerminalId: 14,
+      fromTerminalName: 'Clinton',
+      toTerminalName: 'Mukilteo',
+      scheduledDepartureMs,
+      actualDepartureMs: null,
+      arrivalMs: scheduledDepartureMs + 20 * 60 * 1000,
+      arrivalBasis: 'scheduled-estimate',
+      observations: [],
+    })),
+    vesselSamples: departureMs.flatMap((departMs, index) => {
+      const vesselId = 200 + index;
+      const vesselName = `Late Boat ${index + 1}`;
+      return [{
+        observedAt: new Date(departMs - 2 * 60 * 1000).toISOString(),
+        vesselName,
+        vesselId,
+        latitude: 47.9755,
+        longitude: -122.3493,
+      }, {
+        observedAt: new Date(departMs).toISOString(),
+        vesselName,
+        vesselId,
+        latitude: 47.968,
+        longitude: -122.336,
+      }, {
+        observedAt: new Date(departMs + 20 * 60 * 1000).toISOString(),
+        vesselName,
+        vesselId,
+        latitude: 47.9485,
+        longitude: -122.3046,
+      }];
+    }),
+    currentVessels: [],
+  }, null, 2));
+
+  const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
+  assert.equal(d.departures[`5:${scheduleMs[0]}`].actualDepartureMs, departureMs[0], 'first late departure maps to the first slot');
+  assert.equal(d.departures[`5:${scheduleMs[1]}`].actualDepartureMs, departureMs[1], 'second later departure maps to the second slot');
+  assert.equal(d.missedDepartures[`5:${scheduleMs[2]}`].missed, true, 'third slot is missed once service slips to the fourth slot');
+  assert.equal(d.departures[`5:${scheduleMs[3]}`].actualDepartureMs, departureMs[2], 'overtaking departure maps to the fourth slot');
+  assert.equal(Object.keys(d.missedDepartures).length, 1, 'only the overtaken slot is counted missed');
+});
+
+test('ferry/departures endpoint — trailing schedule slots are missed when service stops with no overtaking boat', async () => {
+  const historyDate = '2026-06-11';
+  // Clinton→Mukilteo: one boat serves the 14:00 slot, then service stops.
+  const c2mSlots = [
+    Date.UTC(2026, 5, 11, 14, 0),
+    Date.UTC(2026, 5, 11, 14, 30),
+    Date.UTC(2026, 5, 11, 15, 0),
+    Date.UTC(2026, 5, 11, 15, 30),
+  ];
+  // Mukilteo→Clinton: schedule exists but GPS never tracked a departure (offline).
+  const m2cSlots = [
+    Date.UTC(2026, 5, 11, 14, 15),
+    Date.UTC(2026, 5, 11, 14, 45),
+    Date.UTC(2026, 5, 11, 15, 15),
+  ];
+  const mkTrip = (direction, fromTerminalId, toTerminalId, scheduledDepartureMs) => ({
+    id: `${historyDate}:${direction}:${scheduledDepartureMs}`,
+    date: historyDate,
+    direction,
+    fromTerminalId,
+    toTerminalId,
+    fromTerminalName: fromTerminalId === 5 ? 'Clinton' : 'Mukilteo',
+    toTerminalName: toTerminalId === 5 ? 'Clinton' : 'Mukilteo',
+    scheduledDepartureMs,
+    actualDepartureMs: null,
+    arrivalMs: scheduledDepartureMs + 20 * 60 * 1000,
+    arrivalBasis: 'scheduled-estimate',
+    vesselName: '',
+    vesselId: null,
+    observations: [],
+  });
+  const historyDir = join(dataDir, 'ferry-history');
+  await mkdir(historyDir, { recursive: true });
+  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+    date: historyDate,
+    generatedAt: '2026-06-11T15:45:00.000Z',
+    sampledAtMs: Date.UTC(2026, 5, 11, 15, 45),
+    trips: [
+      ...c2mSlots.map(ms => mkTrip('clinton-to-mukilteo', 5, 14, ms)),
+      ...m2cSlots.map(ms => mkTrip('mukilteo-to-clinton', 14, 5, ms)),
+    ],
+    // One Clinton departure (terminal -> channel -> terminal) for the 14:00 slot.
+    vesselSamples: [{
+      observedAt: new Date(Date.UTC(2026, 5, 11, 14, 8)).toISOString(),
+      vesselName: 'Tokitae', vesselId: 68, latitude: 47.9755, longitude: -122.3493,
+    }, {
+      observedAt: new Date(Date.UTC(2026, 5, 11, 14, 12)).toISOString(),
+      vesselName: 'Tokitae', vesselId: 68, latitude: 47.968, longitude: -122.336,
+    }, {
+      observedAt: new Date(Date.UTC(2026, 5, 11, 14, 30)).toISOString(),
+      vesselName: 'Tokitae', vesselId: 68, latitude: 47.9485, longitude: -122.3046,
+    }],
+    currentVessels: [],
+  }, null, 2));
+
+  const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
+  assert.equal(d.departures[`5:${c2mSlots[0]}`].departed, true, 'the one observed boat serves the 14:00 slot');
+  assert.equal(d.missedDepartures[`5:${c2mSlots[1]}`].missed, true, 'overdue 14:30 trailing slot is missed');
+  assert.equal(d.missedDepartures[`5:${c2mSlots[2]}`].missed, true, 'overdue 15:00 trailing slot is missed');
+  assert.equal(d.missedDepartures[`5:${c2mSlots[2]}`].source, 'gps-sequence', 'trailing missed slots are labeled from sequence allocation');
+  assert.equal(d.missedDepartures[`5:${c2mSlots[3]}`], undefined, 'latest still-due slot (15:30) is not prematurely called missed');
+  assert.equal(d.departures[`5:${c2mSlots[1]}`], undefined, 'missed trailing slots are not reported as departed');
+  // Mukilteo→Clinton had no observed departure at all: do not invent missed runs
+  // (GPS may simply have been offline for that direction).
+  const m2cMissed = Object.keys(d.missedDepartures).filter(k => k.startsWith('14:'));
+  assert.equal(m2cMissed.length, 0, 'a direction with no observed departures is never flagged missed');
+});
+
 test('messages endpoint — Google-authorized admins can add and delete crawl messages', async () => {
   const unauthenticated = await sendJson('/api/messages', 'POST', {
     text: 'Private party at 7',
@@ -1148,6 +1283,58 @@ test('late ferry logic — inbound arrival enforces 15 minute turn-around and re
   assert.doesNotMatch(card, /Delayed/, 'does not render redundant delayed status text');
 });
 
+test('late ferry logic — a full (no drive-up space) upcoming sailing is flagged red', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
+  const script = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+
+  const fixedNow = Date.UTC(2026, 5, 12, 15, 0);
+  class FakeDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [fixedNow])); }
+    static now() { return fixedNow; }
+  }
+  Object.assign(FakeDate, Date);
+
+  const nullEl = { style: {}, className: '', textContent: '', innerHTML: '', querySelector: () => null };
+  const context = {
+    console,
+    Date: FakeDate,
+    setInterval: () => 0,
+    setTimeout: () => 0,
+    clearInterval: () => {},
+    fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
+    document: {
+      getElementById: () => nullEl,
+      querySelector: () => nullEl,
+      createElement: () => ({}),
+      head: { appendChild: () => {} },
+    },
+    window: {},
+  };
+  vm.createContext(context);
+  vm.runInContext(script + `\nthis.__lateTest = { buildVesselMap, sailingCard };`, context);
+
+  const fullMs = fixedNow + 20 * 60 * 1000;  // upcoming, no drive-up space
+  const openMs = fixedNow + 50 * 60 * 1000;  // upcoming, space available
+  const sailings = [fullMs, openMs].map(ms => ({ sailTime: new Date(ms), DepartingTime: `/Date(${ms})/` }));
+  const spaceMap = {
+    [String(fullMs)]: { maxSpaces: 100, driveUpSpaces: 0 },
+    [String(openMs)]: { maxSpaces: 100, driveUpSpaces: 40 },
+  };
+  const vesselMap = context.__lateTest.buildVesselMap({ vessels: [] });
+
+  const fullCard = context.__lateTest.sailingCard(sailings[0], sailings, spaceMap, vesselMap, 5);
+  const openCard = context.__lateTest.sailingCard(sailings[1], sailings, spaceMap, vesselMap, 5);
+
+  assert.match(fullCard, /sail-fill-label" style="color:var\(--danger\)">Full</, 'full sailing labels drive-up space as Full in danger red');
+  assert.match(fullCard, /background:#ef4444/, 'full sailing fill bar is red at capacity');
+  assert.match(openCard, /sail-fill-label[^>]*>40 open</, 'a sailing with space shows the open count');
+  assert.doesNotMatch(openCard, /color:var\(--danger\)/, 'a sailing with space is not flagged red');
+});
+
 test('late ferry logic — current vessel position does not resurrect old morning sailings', async () => {
   const { readFileSync } = await import('fs');
   const { dirname: dn, join: jn } = await import('path');
@@ -1453,6 +1640,84 @@ test('late ferry logic — server-reported missed departure renders as missed ch
   assert.match(card, /<div class="sail-status">Missed<\/div>/, 'labels the skipped schedule slot missed');
   assert.doesNotMatch(card, /departed-unknown/, 'does not leave server-reported misses as ambiguous departures');
   assert.doesNotMatch(card, /sail-fill-wrap/, 'does not show stale capacity on missed trips');
+});
+
+test('late ferry logic — overtaken missed slot does not propagate lateness to next chip', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
+  const script = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+
+  const fixedNow = Date.UTC(2026, 5, 12, 15, 45); // 8:45 AM PDT
+  class FakeDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [fixedNow])); }
+    static now() { return fixedNow; }
+  }
+  Object.assign(FakeDate, Date);
+
+  const nullEl = { style: {}, className: '', textContent: '', innerHTML: '', querySelector: () => null };
+  const context = {
+    console,
+    Date: FakeDate,
+    setInterval: () => 0,
+    setTimeout: () => 0,
+    clearInterval: () => {},
+    fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
+    document: {
+      getElementById: () => nullEl,
+      querySelector: () => nullEl,
+      createElement: () => ({}),
+      head: { appendChild: () => {} },
+    },
+    window: {},
+  };
+  vm.createContext(context);
+  vm.runInContext(script + `\nthis.__lateTest = { buildVesselMap, sailingCard };`, context);
+
+  const missedMs = Date.UTC(2026, 5, 12, 15, 0);   // 8:00 AM PDT
+  const observedMs = Date.UTC(2026, 5, 12, 15, 30); // 8:30 AM PDT
+  const nextMs = Date.UTC(2026, 5, 12, 16, 0);      // 9:00 AM PDT
+  const sailings = [missedMs, observedMs, nextMs].map(ms => ({
+    sailTime: new Date(ms),
+    DepartingTime: `/Date(${ms})/`,
+  }));
+  const vesselMap = context.__lateTest.buildVesselMap({ vessels: [] }, {
+    departures: {
+      [`5:${observedMs}`]: {
+        departed: true,
+        source: 'gps-sequence',
+        fromTerminalId: 5,
+        toTerminalId: 14,
+        scheduledDepartureMs: observedMs,
+        actualDepartureMs: observedMs,
+        vesselName: 'Late Boat 3',
+        vesselId: 203,
+      },
+    },
+    missedDepartures: {
+      [`5:${missedMs}`]: {
+        missed: true,
+        source: 'gps-sequence',
+        fromTerminalId: 5,
+        toTerminalId: 14,
+        scheduledDepartureMs: missedMs,
+      },
+    },
+  });
+
+  const missedCard = context.__lateTest.sailingCard(sailings[0], sailings, {}, vesselMap, 5);
+  const observedCard = context.__lateTest.sailingCard(sailings[1], sailings, {}, vesselMap, 5);
+  const nextCard = context.__lateTest.sailingCard(sailings[2], sailings, {}, vesselMap, 5);
+
+  assert.match(missedCard, /missed-departure/, 'overtaken schedule slot renders missed');
+  assert.match(missedCard, /<div class="sail-status">Missed<\/div>/, 'overtaken chip is labeled missed');
+  assert.match(observedCard, /departed-confirmed/, 'overtaking GPS departure renders as a confirmed departure');
+  assert.match(observedCard, /sail-vessel">Late Boat 3<\/div>/, 'overtaking departure keeps its observed vessel label');
+  assert.match(nextCard, /class="sailing next"/, 'following future chip remains the next sailing');
+  assert.match(nextCard, /<div class="sail-time">9:00 AM<\/div>/, 'following chip keeps its scheduled time');
+  assert.doesNotMatch(nextCard, /sail-time-est|sail-time-sched|was 9:00 AM/, 'following chip does not inherit the prior lateness');
 });
 
 test('late ferry logic — moving substituted vessel outranks scheduled docked vessel', async () => {

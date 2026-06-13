@@ -1045,6 +1045,7 @@ const FERRY_VESSEL_CORRECTION_RECENCY_MS = 2 * 60 * 60 * 1000;
 const FERRY_GPS_TERMINAL_ZONE_PCT = 0.12;
 const FERRY_GPS_STARTUP_IGNORE_MS = 10 * 60 * 1000;
 const FERRY_GPS_FIRST_DEPARTURE_GRACE_MS = 15 * 60 * 1000;
+const FERRY_GPS_TRAILING_MISSED_GRACE_MS = 10 * 60 * 1000;
 const CLINTON_TERMINAL = { name: 'Clinton', lat: 47.9755, lon: -122.3493 };
 const MUKILTEO_TERMINAL = { name: 'Mukilteo', lat: 47.9485, lon: -122.3046 };
 const TERMINAL_NAMES = new Map([
@@ -1225,7 +1226,8 @@ function ferryGpsScheduleObservations(day) {
   const firstScheduledMs = scheduledTrips[0].scheduledDepartureMs;
   const serviceDepartures = ferryGpsObservedDepartures(day)
     .filter(departure => departure.ms >= firstScheduledMs - FERRY_GPS_STARTUP_IGNORE_MS);
-  return allocateFerryGpsDeparturesToSchedule(serviceDepartures, scheduledTrips);
+  const nowMs = day?.sampledAtMs || Date.parse(day?.generatedAt || '') || null;
+  return allocateFerryGpsDeparturesToSchedule(serviceDepartures, scheduledTrips, nowMs);
 }
 
 function ferryGpsObservedDepartures(day) {
@@ -1329,7 +1331,7 @@ function ferryGpsObservedDeparturesForTrack(track) {
   return departures;
 }
 
-function allocateFerryGpsDeparturesToSchedule(departures, scheduledTrips) {
+function allocateFerryGpsDeparturesToSchedule(departures, scheduledTrips, nowMs = null) {
   const tripsByDirection = scheduledTrips.reduce((byDirection, trip) => {
     const trips = byDirection.get(trip.direction) || [];
     trips.push(trip);
@@ -1337,6 +1339,7 @@ function allocateFerryGpsDeparturesToSchedule(departures, scheduledTrips) {
     return byDirection;
   }, new Map());
   const nextTripIndexByDirection = new Map();
+  const matchedDirections = new Set();
   const matched = [];
   const missed = [];
   for (const departure of departures) {
@@ -1352,8 +1355,31 @@ function allocateFerryGpsDeparturesToSchedule(departures, scheduledTrips) {
       trip = directionTrips[tripIndex];
     }
     nextTripIndexByDirection.set(departure.direction, tripIndex + 1);
+    matchedDirections.add(departure.direction);
     matched.push({ trip, departure });
   }
+
+  // Trailing missed slots: the sample clock acts as a virtual departure. Once a
+  // slot's *successor* is also overdue (its scheduled time has elapsed past the
+  // sample time by a grace) and no boat ever served it, the run was missed —
+  // the overtaking rule above only fires when a later boat is observed, so a
+  // route that simply stops or skips its tail end would otherwise never surface.
+  // Restricted to directions that already produced a real departure (proof GPS
+  // tracking was live, not just offline), and the latest still-due slot is left
+  // unflagged so a boat merely running late is never prematurely called missed.
+  if (Number.isFinite(nowMs)) {
+    for (const [direction, directionTrips] of tripsByDirection) {
+      if (!matchedDirections.has(direction)) continue;
+      let tripIndex = nextTripIndexByDirection.get(direction) || 0;
+      while (tripIndex + 1 < directionTrips.length &&
+             directionTrips[tripIndex + 1].scheduledDepartureMs <= nowMs - FERRY_GPS_TRAILING_MISSED_GRACE_MS) {
+        missed.push(directionTrips[tripIndex]);
+        tripIndex += 1;
+      }
+      nextTripIndexByDirection.set(direction, tripIndex);
+    }
+  }
+
   return { matched, missed };
 }
 
