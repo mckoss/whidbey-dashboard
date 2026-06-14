@@ -478,14 +478,14 @@ test('ferry/departures endpoint — exposes server-confirmed actual departures b
 });
 
 test('ferry/departures endpoint — predicts future vessel chain from observed availability', async () => {
-  const historyDate = '2026-06-14';
-  const sampledAtMs = Date.UTC(2026, 5, 14, 3, 0);
-  const m135 = Date.UTC(2026, 5, 14, 1, 35);
-  const m205 = Date.UTC(2026, 5, 14, 2, 5);
-  const c215 = Date.UTC(2026, 5, 14, 2, 15);
-  const m305 = Date.UTC(2026, 5, 14, 3, 5);
-  const c315 = Date.UTC(2026, 5, 14, 3, 15);
-  const m335 = Date.UTC(2026, 5, 14, 3, 35);
+  const historyDate = '2026-06-13';
+  const sampledAtMs = Date.UTC(2026, 5, 13, 3, 0);
+  const m135 = Date.UTC(2026, 5, 13, 1, 35);
+  const m205 = Date.UTC(2026, 5, 13, 2, 5);
+  const c215 = Date.UTC(2026, 5, 13, 2, 15);
+  const m305 = Date.UTC(2026, 5, 13, 3, 5);
+  const c315 = Date.UTC(2026, 5, 13, 3, 15);
+  const m335 = Date.UTC(2026, 5, 13, 3, 35);
   const trip = (direction, fromTerminalId, toTerminalId, scheduledDepartureMs, actualDepartureMs, vesselName, vesselId) => ({
     id: `${historyDate}:${direction}:${scheduledDepartureMs}`,
     date: historyDate,
@@ -819,6 +819,221 @@ test('ferry/departures endpoint — a single late departure is not enough to cla
 
   const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
   assert.equal(d.routeDelays['5'], undefined, 'one late departure alone does not establish a route delay');
+});
+
+function ferryTestTrip(historyDate, direction, fromTerminalId, toTerminalId, scheduledDepartureMs, overrides = {}) {
+  return {
+    id: `${historyDate}:${direction}:${scheduledDepartureMs}`,
+    date: historyDate,
+    direction,
+    fromTerminalId,
+    toTerminalId,
+    fromTerminalName: fromTerminalId === 5 ? 'Clinton' : 'Mukilteo',
+    toTerminalName: toTerminalId === 5 ? 'Clinton' : 'Mukilteo',
+    scheduledDepartureMs,
+    actualDepartureMs: null,
+    arrivalMs: scheduledDepartureMs + 20 * 60 * 1000,
+    arrivalBasis: 'scheduled-estimate',
+    vesselName: '',
+    vesselId: null,
+    observations: [],
+    ...overrides,
+  };
+}
+
+function ferryTestPoint(pct) {
+  const clinton = { lat: 47.9755, lon: -122.3493 };
+  const mukilteo = { lat: 47.9485, lon: -122.3046 };
+  return {
+    latitude: clinton.lat + (mukilteo.lat - clinton.lat) * pct,
+    longitude: clinton.lon + (mukilteo.lon - clinton.lon) * pct,
+  };
+}
+
+function ferryTestSample(ms, vesselName, vesselId, pct, extra = {}) {
+  return {
+    observedAt: new Date(ms).toISOString(),
+    vesselName,
+    vesselId,
+    ...ferryTestPoint(pct),
+    ...extra,
+  };
+}
+
+test('ferry/departures endpoint — GPS vessel state forecasts destination departure with schedule context', async () => {
+  const historyDate = '2026-06-15';
+  const sampledAtMs = Date.UTC(2026, 5, 15, 16, 0);
+  const m1535 = Date.UTC(2026, 5, 15, 15, 35);
+  const m1605 = Date.UTC(2026, 5, 15, 16, 5);
+  const m1635 = Date.UTC(2026, 5, 15, 16, 35);
+  const expectedDepartureMs = Date.UTC(2026, 5, 15, 16, 32, 30);
+  const historyDir = join(dataDir, 'ferry-history');
+  await mkdir(historyDir, { recursive: true });
+  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+    date: historyDate,
+    generatedAt: new Date(sampledAtMs).toISOString(),
+    sampledAtMs,
+    trips: [m1535, m1605, m1635].map(ms =>
+      ferryTestTrip(historyDate, 'mukilteo-to-clinton', 14, 5, ms)),
+    vesselSamples: [
+      ferryTestSample(Date.UTC(2026, 5, 15, 15, 50), 'Tokitae', 68, 0.35, { arrivingTerminalId: 14 }),
+      ferryTestSample(Date.UTC(2026, 5, 15, 15, 55), 'Tokitae', 68, 0.45, { arrivingTerminalId: 14 }),
+      ferryTestSample(sampledAtMs, 'Tokitae', 68, 0.55, { arrivingTerminalId: 14 }),
+    ],
+    currentVessels: [],
+  }, null, 2));
+
+  const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
+  const status = Object.values(d.vesselStatuses).find(v => v.vesselName === 'Tokitae');
+  assert.equal(status.status, 'underway-to-mukilteo', 'classifies the vessel as inbound to Mukilteo from GPS motion');
+  assert.equal(status.availableTerminalId, 14, 'the next availability is the Mukilteo terminal');
+  assert.equal(status.availableMs, expectedDepartureMs, 'availability is GPS ETA plus ten minutes');
+  const prediction = d.predictedDepartures[`14:${m1605}`];
+  assert.equal(prediction.projectedDepartureMs, expectedDepartureMs, 'forecasts the Mukilteo departure from vessel-state availability');
+  assert.equal(prediction.scheduledReferenceMs, m1605, 'maps the projection to the closest prior scheduled slot');
+  assert.equal(d.resolvedSailings[`14:${m1605}`].displayScheduledMs, m1605, 'resolved sailings expose the scheduled display context');
+  assert.equal(d.resolvedSailings[`14:${m1605}`].timingSource, 'gps-vessel-state', 'resolved sailings identify the new forecast basis');
+});
+
+test('ferry/departures endpoint — operational forecast chains every 30 minutes and stops after close', async () => {
+  const historyDate = '2026-06-16';
+  const sampledAtMs = Date.UTC(2026, 5, 16, 16, 0);
+  const m1605 = Date.UTC(2026, 5, 16, 16, 5);
+  const m1635 = Date.UTC(2026, 5, 16, 16, 35);
+  const m1705 = Date.UTC(2026, 5, 16, 17, 5);
+  const c1635 = Date.UTC(2026, 5, 16, 16, 35);
+  const c1705 = Date.UTC(2026, 5, 16, 17, 5);
+  const historyDir = join(dataDir, 'ferry-history');
+  await mkdir(historyDir, { recursive: true });
+  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+    date: historyDate,
+    generatedAt: new Date(sampledAtMs).toISOString(),
+    sampledAtMs,
+    trips: [
+      ...[m1605, m1635, m1705].map(ms => ferryTestTrip(historyDate, 'mukilteo-to-clinton', 14, 5, ms)),
+      ...[c1635, c1705].map(ms => ferryTestTrip(historyDate, 'clinton-to-mukilteo', 5, 14, ms)),
+    ],
+    vesselSamples: [
+      ferryTestSample(Date.UTC(2026, 5, 16, 15, 50), 'Suquamish', 75, 1, { atDock: true }),
+      ferryTestSample(Date.UTC(2026, 5, 16, 15, 55), 'Suquamish', 75, 1, { atDock: true }),
+      ferryTestSample(sampledAtMs, 'Suquamish', 75, 1, { atDock: true }),
+    ],
+    currentVessels: [],
+  }, null, 2));
+
+  const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
+  assert.equal(d.predictedDepartures[`14:${m1605}`].projectedDepartureMs, m1605, 'at-dock vessel waits for the first due Mukilteo slot');
+  assert.equal(d.predictedDepartures[`5:${c1635}`].projectedDepartureMs, c1635, 'the same operational chain continues 30 minutes later at Clinton');
+  assert.equal(d.predictedDepartures[`14:${m1705}`].projectedDepartureMs, m1705, 'the vessel returns to Mukilteo another 30 minutes later');
+  assert.equal(d.predictedDepartures[`5:${c1705}`].projectedDepartureMs, c1705 + 30 * 60 * 1000,
+    'a final Clinton row may be projected no more than 30 minutes after the scheduled close');
+  const tooLate = Object.values(d.predictedDepartures)
+    .filter(p => p.fromTerminalId === 14 && p.projectedDepartureMs > m1705 + 30 * 60 * 1000);
+  assert.equal(tooLate.length, 0, 'does not project Mukilteo departures beyond the final scheduled slot plus 30 minutes');
+});
+
+test('ferry/departures endpoint — two vessels at one terminal consume separate forecast slots', async () => {
+  const historyDate = '2026-06-19';
+  const sampledAtMs = Date.UTC(2026, 5, 19, 16, 0);
+  const m1605 = Date.UTC(2026, 5, 19, 16, 5);
+  const m1635 = Date.UTC(2026, 5, 19, 16, 35);
+  const c1635 = Date.UTC(2026, 5, 19, 16, 35);
+  const c1705 = Date.UTC(2026, 5, 19, 17, 5);
+  const historyDir = join(dataDir, 'ferry-history');
+  await mkdir(historyDir, { recursive: true });
+  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+    date: historyDate,
+    generatedAt: new Date(sampledAtMs).toISOString(),
+    sampledAtMs,
+    trips: [
+      ...[m1605, m1635].map(ms => ferryTestTrip(historyDate, 'mukilteo-to-clinton', 14, 5, ms)),
+      ...[c1635, c1705].map(ms => ferryTestTrip(historyDate, 'clinton-to-mukilteo', 5, 14, ms)),
+    ],
+    vesselSamples: [
+      ferryTestSample(Date.UTC(2026, 5, 19, 15, 50), 'First Boat', 301, 1, { atDock: true }),
+      ferryTestSample(sampledAtMs, 'First Boat', 301, 1, { atDock: true }),
+      ferryTestSample(Date.UTC(2026, 5, 19, 15, 50), 'Second Boat', 302, 1, { atDock: true }),
+      ferryTestSample(sampledAtMs, 'Second Boat', 302, 1, { atDock: true }),
+    ],
+    currentVessels: [],
+  }, null, 2));
+
+  const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
+  assert.equal(d.predictedDepartures[`14:${m1605}`].projectedDepartureMs, m1605, 'first vessel takes the first Mukilteo slot');
+  assert.equal(d.predictedDepartures[`14:${m1635}`].projectedDepartureMs, m1635, 'second vessel takes the next Mukilteo slot');
+  assert.notEqual(d.predictedDepartures[`14:${m1605}`].vesselName, d.predictedDepartures[`14:${m1635}`].vesselName,
+    'the two same-terminal chips are assigned to different vessels');
+});
+
+test('ferry/departures endpoint — one-boat operation does not invent the missing vessel schedule', async () => {
+  const historyDate = '2026-06-17';
+  const sampledAtMs = Date.UTC(2026, 5, 17, 16, 0);
+  const c1400 = Date.UTC(2026, 5, 17, 14, 0);
+  const m1415 = Date.UTC(2026, 5, 17, 14, 15);
+  const c1605 = Date.UTC(2026, 5, 17, 16, 5);
+  const c1635 = Date.UTC(2026, 5, 17, 16, 35);
+  const m1605 = Date.UTC(2026, 5, 17, 16, 5);
+  const m1635 = Date.UTC(2026, 5, 17, 16, 35);
+  const historyDir = join(dataDir, 'ferry-history');
+  await mkdir(historyDir, { recursive: true });
+  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+    date: historyDate,
+    generatedAt: new Date(sampledAtMs).toISOString(),
+    sampledAtMs,
+    trips: [
+      ...[c1400, c1605, c1635].map(ms => ferryTestTrip(historyDate, 'clinton-to-mukilteo', 5, 14, ms)),
+      ...[m1415, m1605, m1635].map(ms => ferryTestTrip(historyDate, 'mukilteo-to-clinton', 14, 5, ms)),
+    ],
+    vesselSamples: [
+      ferryTestSample(Date.UTC(2026, 5, 17, 15, 35), 'Active Boat', 101, 0),
+      ferryTestSample(Date.UTC(2026, 5, 17, 15, 42), 'Active Boat', 101, 0.45),
+      ferryTestSample(Date.UTC(2026, 5, 17, 15, 55), 'Active Boat', 101, 1, { atDock: true }),
+      ferryTestSample(Date.UTC(2026, 5, 17, 15, 50), 'Missing Boat', 202, 0, { atDock: true }),
+      ferryTestSample(Date.UTC(2026, 5, 17, 15, 55), 'Missing Boat', 202, 0, { atDock: true }),
+      ferryTestSample(sampledAtMs, 'Missing Boat', 202, 0, { atDock: true }),
+    ],
+    currentVessels: [],
+  }, null, 2));
+
+  const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
+  assert.equal(d.predictedDepartures[`14:${m1605}`].vesselName, 'Active Boat', 'the recent passage vessel continues from Mukilteo');
+  assert.equal(d.predictedDepartures[`5:${c1605}`], undefined, 'does not invent the missing Clinton-side alternating boat');
+  assert.equal(d.predictedDepartures[`5:${c1635}`].vesselName, 'Active Boat', 'the active boat can forecast Clinton only after crossing back');
+  assert.equal(Object.values(d.vesselStatuses).some(v => v.vesselName === 'Missing Boat'), false,
+    'one-boat operational mode suppresses the other vessel from forecasting');
+});
+
+test('ferry/departures endpoint — GPS reversal is surfaced as returning without a departure', async () => {
+  const historyDate = '2026-06-18';
+  const sampledAtMs = Date.UTC(2026, 5, 18, 16, 0);
+  const c1550 = Date.UTC(2026, 5, 18, 15, 50);
+  const m1605 = Date.UTC(2026, 5, 18, 16, 5);
+  const historyDir = join(dataDir, 'ferry-history');
+  await mkdir(historyDir, { recursive: true });
+  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+    date: historyDate,
+    generatedAt: new Date(sampledAtMs).toISOString(),
+    sampledAtMs,
+    trips: [
+      ferryTestTrip(historyDate, 'clinton-to-mukilteo', 5, 14, c1550),
+      ferryTestTrip(historyDate, 'mukilteo-to-clinton', 14, 5, m1605),
+    ],
+    vesselSamples: [
+      ferryTestSample(Date.UTC(2026, 5, 18, 15, 50), 'Tokitae', 68, 0.2, { arrivingTerminalId: 14 }),
+      ferryTestSample(Date.UTC(2026, 5, 18, 15, 55), 'Tokitae', 68, 0.35, { arrivingTerminalId: 14 }),
+      ferryTestSample(sampledAtMs, 'Tokitae', 68, 0.28, { arrivingTerminalId: 14 }),
+    ],
+    currentVessels: [],
+  }, null, 2));
+
+  const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
+  const status = Object.values(d.vesselStatuses).find(v => v.vesselName === 'Tokitae');
+  assert.equal(status.status, 'returning', 'reversed GPS motion is surfaced as returning');
+  assert.equal(status.reason, 'gps-motion-reversal', 'the returning status explains the reversal');
+  assert.equal(d.departures[`5:${c1550}`], undefined, 'a mid-course reversal is not marked as a completed departure');
+  assert.equal(d.resolvedSailings[`5:${c1550}`].status, 'returning', 'the affected schedule chip is marked returning');
+  assert.equal(d.resolvedSailings[`5:${c1550}`].vesselName, 'Tokitae', 'the returning chip keeps the vessel label');
+  assert.equal(Object.keys(d.predictedDepartures).length, 0, 'returning vessels are not used for departure forecasts');
 });
 
 test('messages endpoint — Google-authorized admins can add and delete crawl messages', async () => {
@@ -1791,6 +2006,66 @@ test('late ferry logic — server-reported missed departure renders as missed ch
   assert.match(card, /<div class="sail-status">Missed<\/div>/, 'labels the skipped schedule slot missed');
   assert.doesNotMatch(card, /departed-unknown/, 'does not leave server-reported misses as ambiguous departures');
   assert.doesNotMatch(card, /sail-fill-wrap/, 'does not show stale capacity on missed trips');
+});
+
+test('late ferry logic — server-reported returning vessel renders as returning chip', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
+  const script = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+
+  const fixedNow = Date.UTC(2026, 5, 9, 15, 45); // 8:45 AM PDT
+  class FakeDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [fixedNow])); }
+    static now() { return fixedNow; }
+  }
+  Object.assign(FakeDate, Date);
+
+  const nullEl = { style: {}, className: '', textContent: '', innerHTML: '', querySelector: () => null };
+  const context = {
+    console,
+    Date: FakeDate,
+    setInterval: () => 0,
+    setTimeout: () => 0,
+    clearInterval: () => {},
+    fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
+    document: {
+      getElementById: () => nullEl,
+      querySelector: () => nullEl,
+      createElement: () => ({}),
+      head: { appendChild: () => {} },
+    },
+    window: {},
+  };
+  vm.createContext(context);
+  vm.runInContext(script + `\nthis.__lateTest = { buildVesselMap, sailingCard };`, context);
+
+  const returningMs = Date.UTC(2026, 5, 9, 15, 35); // 8:35 AM PDT
+  const sailings = [{
+    sailTime: new Date(returningMs),
+    DepartingTime: `/Date(${returningMs})/`,
+  }];
+  const vesselMap = context.__lateTest.buildVesselMap({ vessels: [] }, {
+    resolvedSailings: {
+      [`5:${returningMs}`]: {
+        status: 'returning',
+        fromTerminalId: 5,
+        toTerminalId: 14,
+        scheduledDepartureMs: returningMs,
+        effectiveDepartureMs: returningMs,
+        displayScheduledMs: returningMs,
+        vesselName: 'Tokitae',
+        vesselId: 68,
+      },
+    },
+  });
+
+  const card = context.__lateTest.sailingCard(sailings[0], sailings, {}, vesselMap, 5);
+  assert.match(card, /class="sailing returning"/, 'uses the returning class');
+  assert.match(card, /<div class="sail-status">Returning<\/div>/, 'labels the chip returning');
+  assert.match(card, /sail-vessel">Tokitae<\/div>/, 'keeps the returning vessel label');
 });
 
 test('late ferry logic — overtaken missed slot does not propagate lateness to next chip', async () => {

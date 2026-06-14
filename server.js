@@ -1081,6 +1081,8 @@ const FERRY_HISTORY_RETENTION_DAYS = CONFIG.ferryHistoryRetentionDays;
 const FERRY_HISTORY_SAMPLE_INTERVAL_MS = CONFIG.ferryHistorySampleMs;
 const FERRY_CROSSING_ESTIMATE_MS = 20 * 60 * 1000;
 const FERRY_TURNAROUND_ESTIMATE_MS = 15 * 60 * 1000;
+const FERRY_OPERATIONAL_TURNAROUND_MS = 10 * 60 * 1000;
+const FERRY_OPERATIONAL_INTERVAL_MS = 30 * 60 * 1000;
 const FERRY_HISTORY_DEPARTURE_MATCH_MS = 20 * 60 * 1000;
 const FERRY_VESSEL_CORRECTION_LOOKAHEAD_MS = 4 * 60 * 60 * 1000;
 const FERRY_VESSEL_CORRECTION_RECENCY_MS = 2 * 60 * 60 * 1000;
@@ -1089,6 +1091,10 @@ const FERRY_GPS_TERMINAL_ZONE_PCT = 0.12;
 const FERRY_GPS_STARTUP_IGNORE_MS = 10 * 60 * 1000;
 const FERRY_GPS_FIRST_DEPARTURE_GRACE_MS = 15 * 60 * 1000;
 const FERRY_GPS_TRAILING_MISSED_GRACE_MS = 10 * 60 * 1000;
+const FERRY_OPERATIONAL_HORIZON_MS = 4 * 60 * 60 * 1000;
+const FERRY_GPS_STATE_SAMPLE_COUNT = 3;
+const FERRY_GPS_STATE_RECENCY_MS = 30 * 60 * 1000;
+const FERRY_GPS_MIN_PROGRESS_PER_MINUTE = 0.0025;
 // Route-level delay inferred from recent observed departures: how far back to
 // look, how many samples are required for confidence, and the median-delay floor
 // below which the route is treated as on time.
@@ -1393,6 +1399,14 @@ function addFerryGpsSample(byVessel, sample, vesselName, vesselId) {
     track.points.push({
       ms,
       pct: ferryTerminalProgress(sample.latitude, sample.longitude),
+      latitude: sample.latitude,
+      longitude: sample.longitude,
+      atDock: sample.atDock ?? null,
+      speed: sample.speed ?? null,
+      etaMs: sample.etaMs || null,
+      leftDockMs: sample.leftDockMs || null,
+      departingTerminalId: sample.departingTerminalId ?? null,
+      arrivingTerminalId: sample.arrivingTerminalId ?? null,
     });
   }
   byVessel.set(key, track);
@@ -1532,8 +1546,274 @@ function ferryVesselCorrectionSummary(day, nowMs = Date.now()) {
   return corrections;
 }
 
-function ferryPredictedDepartureSummary(day, nowMs = Date.now()) {
+function terminalNameForId(terminalId) {
+  return TERMINAL_NAMES.get(terminalId) || String(terminalId || '');
+}
+
+function terminalIdForName(name) {
+  if (name === 'Clinton') return CONFIG.wsfDepartingTerminal;
+  if (name === 'Mukilteo') return CONFIG.wsfArrivingTerminal;
+  return null;
+}
+
+function ferryDirectionForTerminals(fromTerminalId, toTerminalId) {
+  if (fromTerminalId === CONFIG.wsfDepartingTerminal && toTerminalId === CONFIG.wsfArrivingTerminal) {
+    return 'clinton-to-mukilteo';
+  }
+  if (fromTerminalId === CONFIG.wsfArrivingTerminal && toTerminalId === CONFIG.wsfDepartingTerminal) {
+    return 'mukilteo-to-clinton';
+  }
+  return `${terminalNameForId(fromTerminalId).toLowerCase()}-to-${terminalNameForId(toTerminalId).toLowerCase()}`;
+}
+
+function ferryOperationalScheduleBounds(day) {
+  const byTerminal = new Map();
+  for (const trip of day?.trips || []) {
+    if (!Number.isFinite(trip?.scheduledDepartureMs)) continue;
+    const bounds = byTerminal.get(trip.fromTerminalId) || {
+      fromTerminalId: trip.fromTerminalId,
+      toTerminalId: trip.toTerminalId,
+      direction: trip.direction || ferryDirectionForTerminals(trip.fromTerminalId, trip.toTerminalId),
+      firstScheduledMs: trip.scheduledDepartureMs,
+      finalScheduledMs: trip.scheduledDepartureMs,
+    };
+    bounds.firstScheduledMs = Math.min(bounds.firstScheduledMs, trip.scheduledDepartureMs);
+    bounds.finalScheduledMs = Math.max(bounds.finalScheduledMs, trip.scheduledDepartureMs);
+    byTerminal.set(trip.fromTerminalId, bounds);
+  }
+  return byTerminal;
+}
+
+function ferryRecentPassageVesselIds(day, nowMs) {
+  const ids = new Set();
+  for (const departure of ferryGpsObservedDepartures(day)) {
+    if (!Number.isFinite(departure?.ms)) continue;
+    if (departure.ms > nowMs || nowMs - departure.ms > FERRY_GPS_STATE_RECENCY_MS) continue;
+    ids.add(departure.vesselId || departure.vesselName || 'Unknown');
+  }
+  return ids;
+}
+
+function ferryOneBoatOperationalMode(day, nowMs) {
+  if (!Number.isFinite(nowMs)) return { active: false, vesselIds: new Set() };
+  const bounds = ferryOperationalScheduleBounds(day);
+  const clinton = bounds.get(CONFIG.wsfDepartingTerminal);
+  const mukilteo = bounds.get(CONFIG.wsfArrivingTerminal);
+  if (!clinton || !mukilteo) return { active: false, vesselIds: new Set() };
+  if (nowMs < clinton.firstScheduledMs + FERRY_OPERATIONAL_INTERVAL_MS ||
+      nowMs < mukilteo.firstScheduledMs + FERRY_OPERATIONAL_INTERVAL_MS) {
+    return { active: false, vesselIds: new Set() };
+  }
+  const vesselIds = ferryRecentPassageVesselIds(day, nowMs);
+  return { active: vesselIds.size === 1, vesselIds };
+}
+
+function ferryVesselStatusSummary(day, nowMs = Date.now()) {
+  const statuses = {};
+  if (!Number.isFinite(nowMs)) return statuses;
+  const oneBoatMode = ferryOneBoatOperationalMode(day, nowMs);
+  for (const track of ferryGpsTracks(day)) {
+    const recent = track.points
+      .filter(point => point.ms <= nowMs && nowMs - point.ms <= FERRY_GPS_STATE_RECENCY_MS)
+      .slice(-FERRY_GPS_STATE_SAMPLE_COUNT);
+    if (!recent.length) continue;
+    const latest = recent[recent.length - 1];
+    const terminalName = ferryGpsTerminalZone(latest.pct);
+    const latestTerminalId = terminalIdForName(terminalName);
+    const vesselId = track.id || track.name || 'Unknown';
+    if (oneBoatMode.active && !oneBoatMode.vesselIds.has(vesselId)) continue;
+
+    if (latestTerminalId) {
+      statuses[track.key] = {
+        vesselName: track.name,
+        vesselId: track.id,
+        status: latestTerminalId === CONFIG.wsfDepartingTerminal ? 'at-clinton-dock' : 'at-mukilteo-dock',
+        terminalId: latestTerminalId,
+        terminalName: terminalNameForId(latestTerminalId),
+        availableTerminalId: latestTerminalId,
+        availableMs: nowMs,
+        observedAtMs: latest.ms,
+        progressPct: latest.pct,
+        basis: 'gps-vessel-state',
+      };
+      continue;
+    }
+
+    if (recent.length < 2) {
+      statuses[track.key] = ferryReturningStatus(track, latest, 'insufficient-gps-motion');
+      continue;
+    }
+
+    const first = recent[0];
+    const elapsedMinutes = (latest.ms - first.ms) / 60000;
+    const progressPerMinute = elapsedMinutes > 0 ? (latest.pct - first.pct) / elapsedMinutes : 0;
+    const segmentDirections = [];
+    for (let i = 1; i < recent.length; i += 1) {
+      const delta = recent[i].pct - recent[i - 1].pct;
+      if (Math.abs(delta) >= FERRY_GPS_MIN_PROGRESS_PER_MINUTE) segmentDirections.push(Math.sign(delta));
+    }
+    const reversed = segmentDirections.length > 1 && new Set(segmentDirections).size > 1;
+    const expectedTerminalId = latest.arrivingTerminalId === CONFIG.wsfDepartingTerminal ||
+      latest.arrivingTerminalId === CONFIG.wsfArrivingTerminal
+      ? latest.arrivingTerminalId
+      : null;
+    const expectedSign = expectedTerminalId === CONFIG.wsfDepartingTerminal ? -1 :
+      (expectedTerminalId === CONFIG.wsfArrivingTerminal ? 1 : 0);
+    const motionSign = Math.abs(progressPerMinute) >= FERRY_GPS_MIN_PROGRESS_PER_MINUTE ? Math.sign(progressPerMinute) : 0;
+    if (reversed ||
+        motionSign === 0 ||
+        (expectedSign && motionSign !== expectedSign)) {
+      statuses[track.key] = ferryReturningStatus(track, latest, reversed ? 'gps-motion-reversal' : 'not-making-way-to-expected-dock');
+      continue;
+    }
+
+    const destinationTerminalId = motionSign > 0 ? CONFIG.wsfArrivingTerminal : CONFIG.wsfDepartingTerminal;
+    const remainingProgress = motionSign > 0 ? 1 - latest.pct : latest.pct;
+    const etaMs = latest.ms + Math.round((remainingProgress / Math.abs(progressPerMinute)) * 60000);
+    statuses[track.key] = {
+      vesselName: track.name,
+      vesselId: track.id,
+      status: destinationTerminalId === CONFIG.wsfDepartingTerminal ? 'underway-to-clinton' : 'underway-to-mukilteo',
+      terminalId: null,
+      terminalName: null,
+      destinationTerminalId,
+      destinationTerminalName: terminalNameForId(destinationTerminalId),
+      availableTerminalId: destinationTerminalId,
+      etaMs,
+      availableMs: etaMs + FERRY_OPERATIONAL_TURNAROUND_MS,
+      observedAtMs: latest.ms,
+      progressPct: latest.pct,
+      progressPerMinute,
+      basis: 'gps-vessel-state',
+    };
+  }
+  return statuses;
+}
+
+function ferryReturningStatus(track, latest, reason) {
+  const expectedTerminalId = latest.arrivingTerminalId === CONFIG.wsfDepartingTerminal ||
+    latest.arrivingTerminalId === CONFIG.wsfArrivingTerminal
+    ? latest.arrivingTerminalId
+    : null;
+  const expectedFromTerminalId = expectedTerminalId === CONFIG.wsfDepartingTerminal
+    ? CONFIG.wsfArrivingTerminal
+    : (expectedTerminalId === CONFIG.wsfArrivingTerminal ? CONFIG.wsfDepartingTerminal : null);
+  return {
+    vesselName: track.name,
+    vesselId: track.id,
+    status: 'returning',
+    terminalId: null,
+    terminalName: null,
+    expectedTerminalId,
+    expectedTerminalName: expectedTerminalId ? terminalNameForId(expectedTerminalId) : null,
+    expectedFromTerminalId,
+    expectedFromTerminalName: expectedFromTerminalId ? terminalNameForId(expectedFromTerminalId) : null,
+    availableTerminalId: null,
+    availableMs: null,
+    observedAtMs: latest.ms,
+    progressPct: latest.pct,
+    basis: 'gps-vessel-state',
+    reason,
+  };
+}
+
+function closestScheduledAtOrBefore(trips, projectedMs) {
+  let match = null;
+  for (const trip of trips) {
+    if (trip.scheduledDepartureMs <= projectedMs) match = trip;
+    else break;
+  }
+  return match || trips[0] || null;
+}
+
+function operationalReferenceTrip(trips, projectedMs, usedKeys) {
+  const closest = closestScheduledAtOrBefore(trips, projectedMs);
+  const startIndex = Math.max(0, closest ? trips.indexOf(closest) : 0);
+  for (let i = startIndex; i < trips.length; i += 1) {
+    const trip = trips[i];
+    if (!usedKeys.has(ferryDepartureKey(trip.fromTerminalId, trip.scheduledDepartureMs))) return trip;
+  }
+  return null;
+}
+
+function ferryOperationalPredictions(day, nowMs = Date.now(), vesselStatuses = ferryVesselStatusSummary(day, nowMs)) {
   const predictions = {};
+  if (!Number.isFinite(nowMs)) return predictions;
+  const tripsByTerminal = new Map();
+  for (const trip of [...(day?.trips || [])].sort((a, b) => a.scheduledDepartureMs - b.scheduledDepartureMs)) {
+    if (!Number.isFinite(trip?.scheduledDepartureMs) ||
+        trip.actualDepartureMs ||
+        trip.scheduledDepartureMs < nowMs - FERRY_HISTORY_DEPARTURE_MATCH_MS) {
+      continue;
+    }
+    const trips = tripsByTerminal.get(trip.fromTerminalId) || [];
+    trips.push(trip);
+    tripsByTerminal.set(trip.fromTerminalId, trips);
+  }
+  const scheduleBounds = ferryOperationalScheduleBounds(day);
+  const departures = Object.values(ferryDepartureSummary(day));
+  const observedKeys = new Set(departures.map(departure =>
+    ferryDepartureKey(departure.fromTerminalId, departure.scheduledDepartureMs)));
+  const usedKeys = new Set(observedKeys);
+  const states = Object.values(vesselStatuses)
+    .filter(status => status.availableTerminalId && Number.isFinite(status.availableMs))
+    .map(status => ({
+      vesselName: status.vesselName,
+      vesselId: status.vesselId,
+      nextFromTerminalId: status.availableTerminalId,
+      availableMs: status.availableMs,
+      sourceStatus: status.status,
+      sourceObservedAtMs: status.observedAtMs,
+    }))
+    .sort((a, b) => a.availableMs - b.availableMs);
+
+  let guard = 0;
+  while (guard < 96 && states.length) {
+    guard += 1;
+    states.sort((a, b) => a.availableMs - b.availableMs || String(a.vesselName).localeCompare(String(b.vesselName)));
+    const state = states.shift();
+    const directionTrips = tripsByTerminal.get(state.nextFromTerminalId) || [];
+    const bounds = scheduleBounds.get(state.nextFromTerminalId);
+    if (!directionTrips.length || !bounds) continue;
+    const closeMs = bounds.finalScheduledMs + FERRY_OPERATIONAL_INTERVAL_MS;
+    const projectedBaseMs = Math.max(state.availableMs, nowMs);
+    const referenceTrip = operationalReferenceTrip(directionTrips, projectedBaseMs, usedKeys);
+    if (!referenceTrip) continue;
+    const projectedDepartureMs = Math.max(projectedBaseMs, referenceTrip.scheduledDepartureMs);
+    if (projectedDepartureMs > closeMs || projectedDepartureMs > nowMs + FERRY_OPERATIONAL_HORIZON_MS) continue;
+    const key = ferryDepartureKey(referenceTrip.fromTerminalId, referenceTrip.scheduledDepartureMs);
+    if (!observedKeys.has(key) && !predictions[key]) {
+      predictions[key] = {
+        direction: referenceTrip.direction,
+        fromTerminalId: referenceTrip.fromTerminalId,
+        toTerminalId: referenceTrip.toTerminalId,
+        scheduledDepartureMs: referenceTrip.scheduledDepartureMs,
+        scheduledReferenceMs: referenceTrip.scheduledDepartureMs,
+        displayScheduledMs: referenceTrip.scheduledDepartureMs,
+        projectedDepartureMs,
+        delayMs: Math.max(0, projectedDepartureMs - referenceTrip.scheduledDepartureMs),
+        vesselName: state.vesselName,
+        vesselId: state.vesselId,
+        sourceStatus: state.sourceStatus,
+        sourceObservedAtMs: state.sourceObservedAtMs,
+        basis: 'gps-vessel-state',
+      };
+    }
+    usedKeys.add(key);
+    state.nextFromTerminalId = referenceTrip.toTerminalId;
+    state.availableMs = projectedDepartureMs + FERRY_CROSSING_ESTIMATE_MS + FERRY_OPERATIONAL_TURNAROUND_MS;
+    state.sourceStatus = 'operational-chain';
+    states.push(state);
+  }
+
+  return predictions;
+}
+
+function ferryPredictedDepartureSummary(day, nowMs = Date.now()) {
+  const vesselStatuses = ferryVesselStatusSummary(day, nowMs);
+  const predictions = ferryOperationalPredictions(day, nowMs, vesselStatuses);
+  if (Object.keys(predictions).length) return predictions;
+  const legacyPredictions = {};
   if (!Number.isFinite(nowMs)) return predictions;
   const departures = Object.values(ferryDepartureSummary(day))
     .filter(departure =>
@@ -1544,7 +1824,7 @@ function ferryPredictedDepartureSummary(day, nowMs = Date.now()) {
       nowMs - departure.actualDepartureMs <= FERRY_VESSEL_CORRECTION_RECENCY_MS
     )
     .sort((a, b) => a.actualDepartureMs - b.actualDepartureMs);
-  if (!departures.length) return predictions;
+  if (!departures.length) return legacyPredictions;
 
   const statesByVessel = new Map();
   for (const departure of departures) {
@@ -1560,7 +1840,7 @@ function ferryPredictedDepartureSummary(day, nowMs = Date.now()) {
     });
   }
   const states = [...statesByVessel.values()];
-  if (!states.length) return predictions;
+  if (!states.length) return legacyPredictions;
 
   const routeDelays = ferryRouteDelaySummary(day, nowMs);
   const horizonMs = nowMs + FERRY_VESSEL_CORRECTION_LOOKAHEAD_MS;
@@ -1588,7 +1868,7 @@ function ferryPredictedDepartureSummary(day, nowMs = Date.now()) {
     if (!candidates.length) continue;
 
     const { state, projectedDepartureMs } = candidates[0];
-    predictions[ferryDepartureKey(trip.fromTerminalId, trip.scheduledDepartureMs)] = {
+    legacyPredictions[ferryDepartureKey(trip.fromTerminalId, trip.scheduledDepartureMs)] = {
       direction: trip.direction,
       fromTerminalId: trip.fromTerminalId,
       toTerminalId: trip.toTerminalId,
@@ -1608,7 +1888,20 @@ function ferryPredictedDepartureSummary(day, nowMs = Date.now()) {
     state.sourceActualDepartureMs = projectedDepartureMs;
   }
 
-  return predictions;
+  return legacyPredictions;
+}
+
+function returningVesselForTrip(trip, vesselStatuses = {}, nowMs = Date.now()) {
+  const candidates = Object.values(vesselStatuses)
+    .filter(status =>
+      status?.status === 'returning' &&
+      status.expectedFromTerminalId === trip.fromTerminalId &&
+      status.expectedTerminalId === trip.toTerminalId &&
+      Number.isFinite(status.observedAtMs) &&
+      Math.abs(nowMs - trip.scheduledDepartureMs) <= FERRY_HISTORY_DEPARTURE_MATCH_MS
+    )
+    .sort((a, b) => Math.abs(a.observedAtMs - trip.scheduledDepartureMs) - Math.abs(b.observedAtMs - trip.scheduledDepartureMs));
+  return candidates[0] || null;
 }
 
 function ferryResolvedVesselSummary(day, nowMs = Date.now(), summaries = {}) {
@@ -1616,6 +1909,7 @@ function ferryResolvedVesselSummary(day, nowMs = Date.now(), summaries = {}) {
   const departures = summaries.departures || ferryDepartureSummary(day);
   const predictions = summaries.predictedDepartures || ferryPredictedDepartureSummary(day, nowMs);
   const corrections = summaries.vesselCorrections || ferryVesselCorrectionSummary(day, nowMs);
+  const vesselStatuses = summaries.vesselStatuses || ferryVesselStatusSummary(day, nowMs);
   const trips = [...(day?.trips || [])]
     .filter(trip => Number.isFinite(trip?.scheduledDepartureMs))
     .sort((a, b) => a.scheduledDepartureMs - b.scheduledDepartureMs || a.direction.localeCompare(b.direction));
@@ -1625,15 +1919,18 @@ function ferryResolvedVesselSummary(day, nowMs = Date.now(), summaries = {}) {
     const departure = departures[key];
     const prediction = predictions[key];
     const correction = corrections[key];
+    const returning = returningVesselForTrip(trip, vesselStatuses, nowMs);
     const vesselName = departure?.vesselName ||
       prediction?.vesselName ||
       correction?.vesselName ||
+      returning?.vesselName ||
       trip.vesselName ||
       '';
     let source = '';
     if (departure?.vesselName) source = 'observed-departure';
     else if (prediction?.vesselName) source = 'predicted-departure';
     else if (correction?.vesselName) source = 'recent-gps-chain';
+    else if (returning?.vesselName) source = 'returning-vessel';
     else if (trip.vesselName) source = 'schedule-row';
     else source = 'none';
 
@@ -1643,7 +1940,7 @@ function ferryResolvedVesselSummary(day, nowMs = Date.now(), summaries = {}) {
       toTerminalId: trip.toTerminalId,
       scheduledDepartureMs: trip.scheduledDepartureMs,
       vesselName,
-      vesselId: departure?.vesselId || prediction?.vesselId || correction?.vesselId || trip.vesselId || null,
+      vesselId: departure?.vesselId || prediction?.vesselId || correction?.vesselId || returning?.vesselId || trip.vesselId || null,
       source,
     };
   }
@@ -1677,8 +1974,9 @@ function ferryResolvedSailingSummary(day, nowMs = Date.now(), summaries = {}) {
   const departures = summaries.departures || ferryDepartureSummary(day);
   const missedDepartures = summaries.missedDepartures || ferryMissedDepartureSummary(day);
   const predictedDepartures = summaries.predictedDepartures || ferryPredictedDepartureSummary(day, nowMs);
+  const vesselStatuses = summaries.vesselStatuses || ferryVesselStatusSummary(day, nowMs);
   const resolvedVessels = summaries.resolvedVessels ||
-    ferryResolvedVesselSummary(day, nowMs, { departures, predictedDepartures, vesselCorrections: summaries.vesselCorrections });
+    ferryResolvedVesselSummary(day, nowMs, { departures, predictedDepartures, vesselCorrections: summaries.vesselCorrections, vesselStatuses });
   const routeDelays = summaries.routeDelays || ferryRouteDelaySummary(day, nowMs);
   const resolved = {};
   const trips = [...(day?.trips || [])]
@@ -1690,6 +1988,7 @@ function ferryResolvedSailingSummary(day, nowMs = Date.now(), summaries = {}) {
     const departure = departures[key];
     const missed = missedDepartures[key];
     const prediction = predictedDepartures[key];
+    const returning = returningVesselForTrip(trip, vesselStatuses, nowMs);
     const routeDelay = routeDelays[trip.fromTerminalId];
     const routeProjectedMs = routeDelay ? trip.scheduledDepartureMs + routeDelay.delayMs : null;
     const routeProjectionEligible = routeProjectedMs &&
@@ -1710,6 +2009,9 @@ function ferryResolvedSailingSummary(day, nowMs = Date.now(), summaries = {}) {
     } else if (departure) {
       status = 'departed';
       timingSource = departure.source || 'observed-departure';
+    } else if (returning) {
+      status = 'returning';
+      timingSource = returning.reason || 'gps-returning';
     } else if (prediction) {
       status = 'projected';
       timingSource = prediction.basis || 'gps-vessel-forecast';
@@ -1728,6 +2030,8 @@ function ferryResolvedSailingSummary(day, nowMs = Date.now(), summaries = {}) {
       fromTerminalId: trip.fromTerminalId,
       toTerminalId: trip.toTerminalId,
       scheduledDepartureMs: trip.scheduledDepartureMs,
+      scheduledReferenceMs: prediction?.scheduledReferenceMs || trip.scheduledDepartureMs,
+      displayScheduledMs: prediction?.displayScheduledMs || trip.scheduledDepartureMs,
       effectiveDepartureMs,
       displayDepartureMs: effectiveDepartureMs,
       delayMs: Math.max(0, delayMs || 0),
@@ -1737,6 +2041,7 @@ function ferryResolvedSailingSummary(day, nowMs = Date.now(), summaries = {}) {
       isDeparted: status === 'departed',
       isMissed: status === 'missed',
       isUnknown: status === 'unknown',
+      isReturning: status === 'returning',
       vesselName: vessel.vesselName || '',
       vesselId: vessel.vesselId || null,
       vesselSource: vessel.source || 'none',
@@ -2115,9 +2420,10 @@ app.get('/api/ferry/departures', async (req, res) => {
     const departures = ferryDepartureSummary(day);
     const missedDepartures = ferryMissedDepartureSummary(day);
     const vesselCorrections = ferryVesselCorrectionSummary(day, day.sampledAtMs || Date.now());
+    const vesselStatuses = ferryVesselStatusSummary(day, day.sampledAtMs || Date.now());
     const predictedDepartures = ferryPredictedDepartureSummary(day, day.sampledAtMs || Date.now());
     const routeDelays = ferryRouteDelaySummary(day, day.sampledAtMs || Date.now());
-    const resolvedVessels = ferryResolvedVesselSummary(day, day.sampledAtMs || Date.now(), { departures, predictedDepartures, vesselCorrections });
+    const resolvedVessels = ferryResolvedVesselSummary(day, day.sampledAtMs || Date.now(), { departures, predictedDepartures, vesselCorrections, vesselStatuses });
     res.json({
       date: day.date,
       generatedAt: day.generatedAt,
@@ -2125,9 +2431,10 @@ app.get('/api/ferry/departures', async (req, res) => {
       departures,
       missedDepartures,
       vesselCorrections,
+      vesselStatuses,
       predictedDepartures,
       resolvedVessels,
-      resolvedSailings: ferryResolvedSailingSummary(day, day.sampledAtMs || Date.now(), { departures, missedDepartures, predictedDepartures, vesselCorrections, resolvedVessels, routeDelays }),
+      resolvedSailings: ferryResolvedSailingSummary(day, day.sampledAtMs || Date.now(), { departures, missedDepartures, predictedDepartures, vesselCorrections, vesselStatuses, resolvedVessels, routeDelays }),
       routeDelays,
     });
   } catch (e) {
@@ -2135,9 +2442,10 @@ app.get('/api/ferry/departures', async (req, res) => {
     const departures = ferryDepartureSummary(existing);
     const missedDepartures = ferryMissedDepartureSummary(existing);
     const vesselCorrections = ferryVesselCorrectionSummary(existing, existing.sampledAtMs || Date.now());
+    const vesselStatuses = ferryVesselStatusSummary(existing, existing.sampledAtMs || Date.now());
     const predictedDepartures = ferryPredictedDepartureSummary(existing, existing.sampledAtMs || Date.now());
     const routeDelays = ferryRouteDelaySummary(existing, existing.sampledAtMs || Date.now());
-    const resolvedVessels = ferryResolvedVesselSummary(existing, existing.sampledAtMs || Date.now(), { departures, predictedDepartures, vesselCorrections });
+    const resolvedVessels = ferryResolvedVesselSummary(existing, existing.sampledAtMs || Date.now(), { departures, predictedDepartures, vesselCorrections, vesselStatuses });
     res.status(existing.generatedAt ? 200 : 500).json({
       date: existing.date,
       generatedAt: existing.generatedAt,
@@ -2145,9 +2453,10 @@ app.get('/api/ferry/departures', async (req, res) => {
       departures,
       missedDepartures,
       vesselCorrections,
+      vesselStatuses,
       predictedDepartures,
       resolvedVessels,
-      resolvedSailings: ferryResolvedSailingSummary(existing, existing.sampledAtMs || Date.now(), { departures, missedDepartures, predictedDepartures, vesselCorrections, resolvedVessels, routeDelays }),
+      resolvedSailings: ferryResolvedSailingSummary(existing, existing.sampledAtMs || Date.now(), { departures, missedDepartures, predictedDepartures, vesselCorrections, vesselStatuses, resolvedVessels, routeDelays }),
       routeDelays,
       error: e.message,
     });
