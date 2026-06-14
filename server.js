@@ -2299,6 +2299,7 @@ function mergeTripObservation(existing, next, vessel, nowMs) {
     ...existing,
     ...next,
     space: mergeTripSpace(existing.space, next.space),
+    departureSpace: mergeTripDepartureSpace(existing.departureSpace, existing.space, next.space, actualDepartureMs),
     vesselName: observedVesselName || persistedObservedVesselName || next.vesselName || vessel?.vesselName || '',
     vesselId: observedVesselId || persistedObservedVesselId || vessel?.vesselId || null,
     actualDepartureMs,
@@ -2318,6 +2319,20 @@ function mergeTripSpace(existing = {}, next = {}) {
      Number.isFinite(next.maxSpaces) ||
      next.hexColor);
   return hasNextSpace ? next : (existing || next || {});
+}
+
+function mergeTripDepartureSpace(existing = {}, existingSpace = {}, nextSpace = {}, actualDepartureMs = null) {
+  if (hasTripSpace(existing)) return existing;
+  if (!actualDepartureMs) return existing || {};
+  const candidate = hasTripSpace(existingSpace) ? existingSpace : nextSpace;
+  return hasTripSpace(candidate) ? { ...candidate } : (existing || {});
+}
+
+function hasTripSpace(space = {}) {
+  return Boolean(space) &&
+    (Number.isFinite(space.driveUpSpaces) ||
+     Number.isFinite(space.maxSpaces) ||
+     space.hexColor);
 }
 
 function tripsFromSchedule(date, direction, fromTerminal, toTerminal, schedule, spaceByDeparture = {}) {
