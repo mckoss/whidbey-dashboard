@@ -607,11 +607,18 @@
         const url = date
           ? `/api/ferry/history?date=${encodeURIComponent(date)}`
           : '/api/ferry/history';
-        const res = await fetch(url, { cache: 'no-store' });
+        const departuresUrl = date
+          ? `/api/ferry/departures?date=${encodeURIComponent(date)}`
+          : '/api/ferry/departures';
+        const [res, departuresRes] = await Promise.all([
+          fetch(url, { cache: 'no-store' }),
+          fetch(departuresUrl, { cache: 'no-store' }),
+        ]);
         const data = await res.json();
+        const departureData = departuresRes.ok ? await departuresRes.json() : null;
         if (requestId !== historyRequestId) return;
         if (!res.ok && !data.generatedAt) throw new Error(data.error || `HTTP ${res.status}`);
-        renderHistory(data);
+        renderHistory(data, departureData);
       } catch (e) {
         if (requestId !== historyRequestId) return;
         renderError(e.message);
@@ -628,7 +635,7 @@
       errorEl.hidden = true;
     }
 
-    function renderHistory(day) {
+    function renderHistory(day, departureData = null) {
       const trips = Array.isArray(day.trips) ? day.trips : [];
       if (validDate(day.date)) dateInput.value = day.date;
       const gpsTracks = collectGpsTracks(day);
@@ -649,7 +656,7 @@
 
       renderDiagram(day, trips, vessels, { gpsTracks });
       renderLegend(vessels);
-      const tableTrips = tableTripRows(gpsScheduleStats);
+      const tableTrips = tableTripRows(gpsScheduleStats, departureData?.resolvedSailings);
       renderVehicleLoadCharts(day, tableTrips, vessels);
       renderRows(tableTrips);
     }
@@ -1065,9 +1072,23 @@
       tablesEl.innerHTML = terminalOrder.map(terminal => terminalTable(terminal, tableTrips, tableTrips)).join('');
     }
 
-    function tableTripRows(gpsScheduleStats = {}) {
+    function tableTripRows(gpsScheduleStats = {}, resolvedSailings = {}) {
       return [...(gpsScheduleStats.observedTrips || [])]
+        .map(trip => applyResolvedDepartureTruth(trip, resolvedSailings))
         .sort((a, b) => tableSortMs(a) - tableSortMs(b));
+    }
+
+    function applyResolvedDepartureTruth(trip, resolvedSailings = {}) {
+      if (!Number.isFinite(trip?.fromTerminalId) || !Number.isFinite(trip?.scheduledDepartureMs)) return trip;
+      const resolved = resolvedSailings[`${trip.fromTerminalId}:${trip.scheduledDepartureMs}`];
+      if (!resolved?.isDeparted || !Number.isFinite(resolved.effectiveDepartureMs)) return trip;
+      return {
+        ...trip,
+        actualDepartureMs: resolved.effectiveDepartureMs,
+        vesselName: resolved.vesselName || trip.vesselName,
+        vesselId: resolved.vesselId || trip.vesselId || null,
+        departureSource: resolved.timingSource || 'resolved-sailing',
+      };
     }
 
     function renderVehicleLoadCharts(day, trips, vessels) {

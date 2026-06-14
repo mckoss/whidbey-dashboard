@@ -1563,7 +1563,8 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /function tableTripFromGpsDeparture/, 'builds lower table rows from GPS-observed crossings');
   assert.match(html, /if \(pendingDeparture\) departures\.push\(pendingDeparture\)/, 'shows in-progress GPS-observed departures before the crossing completes');
   assert.match(html, /observedTrips/, 'uses GPS-observed trips as the lower-table row source');
-  assert.match(html, /tableTripRows\(gpsScheduleStats\)/, 'does not pass scheduled API trips into the lower-table row builder');
+  assert.match(html, /tableTripRows\(gpsScheduleStats, departureData\?\.resolvedSailings\)/, 'passes resolved departure truth into the GPS-observed lower-table row builder');
+  assert.match(html, /function applyResolvedDepartureTruth/, 'shares resolved sailing departure timestamps with the history table');
   assert.match(html, /terminalTable\(terminal, tableTrips, tableTrips\)/, 'computes dock time from the GPS-observed table rows');
   assert.doesNotMatch(html, /matchedTrips/, 'does not build lower-table rows by overlaying GPS onto scheduled rows');
   assert.doesNotMatch(html, /unscheduledTrips/, 'does not distinguish GPS-only rows from the normal observed-row source');
@@ -1779,6 +1780,73 @@ test('ferry history page — matched WSF actual departure can beat GPS departure
   assert.equal(rows.length, 1, 'builds one table row for the observed trip');
   assert.equal(rows[0].actualDepartureMs, wsfActualMs,
     'uses the earlier server-confirmed WSF actual departure over the later GPS sample');
+});
+
+test('ferry history page — lower table uses same resolved departure time as departure chips', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'ferry-history.html'), 'utf8');
+  const script = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+
+  const element = { innerHTML: '', textContent: '', hidden: false, value: '', addEventListener: () => {} };
+  const context = {
+    console,
+    Date,
+    URL,
+    URLSearchParams,
+    setInterval: () => 0,
+    setTimeout: () => 0,
+    clearInterval: () => {},
+    fetch: () => Promise.resolve({ ok: true, json: () => Promise.resolve({}) }),
+    document: {
+      hidden: false,
+      addEventListener: () => {},
+      getElementById: () => element,
+    },
+    window: {
+      location: {
+        search: '',
+        href: 'https://example.test/ferry-history',
+      },
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(script + `\nthis.__historyTest = { gpsObservedScheduleStats, tableTripRows };`, context);
+
+  const scheduledMs = Date.UTC(2026, 5, 14, 22, 35);
+  const chipActualMs = Date.UTC(2026, 5, 14, 22, 53, 52);
+  const gpsArtifactMs = Date.UTC(2026, 5, 14, 22, 57);
+  const stats = context.__historyTest.gpsObservedScheduleStats([{
+    key: '68:Tokitae',
+    name: 'Tokitae',
+    points: [
+      { ms: Date.UTC(2026, 5, 14, 22, 53, 26), pct: 0.99, atDock: true },
+      { ms: gpsArtifactMs, pct: 0.87, atDock: false },
+      { ms: Date.UTC(2026, 5, 14, 23, 10, 0), pct: 0.03, atDock: true },
+    ],
+  }], [{
+    direction: 'mukilteo-to-clinton',
+    fromTerminalName: 'Mukilteo',
+    toTerminalName: 'Clinton',
+    scheduledDepartureMs: scheduledMs,
+    actualDepartureMs: null,
+    vesselName: 'Tokitae',
+  }]);
+  const rows = context.__historyTest.tableTripRows(stats, {
+    [`14:${scheduledMs}`]: {
+      isDeparted: true,
+      effectiveDepartureMs: chipActualMs,
+      timingSource: 'observed-departure',
+      vesselName: 'Tokitae',
+      vesselId: 68,
+    },
+  });
+
+  assert.equal(rows.length, 1, 'builds one table row for the observed trip');
+  assert.equal(rows[0].actualDepartureMs, chipActualMs,
+    'uses the same resolved departure timestamp as the main departure chip');
 });
 
 test('config example — documents runtime and Google admin auth configuration', async () => {
@@ -2329,6 +2397,84 @@ test('late ferry logic — server-confirmed departure overrides raw client infer
   const card = context.__lateTest.sailingCard(sailings[0], sailings, {}, vesselMap, 5);
   assert.match(card, /departed-confirmed/, 'server-confirmed departure marks the card departed');
   assert.match(card, /sail-vessel">Suquamish<\/div>/, 'renders server-confirmed vessel name');
+});
+
+test('late ferry logic — live resolved departure table uses server effective departure time', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
+  const script = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+
+  const fixedNow = Date.UTC(2026, 5, 14, 23, 0); // 4:00 PM PDT
+  class FakeDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [fixedNow])); }
+    static now() { return fixedNow; }
+  }
+  Object.assign(FakeDate, Date);
+
+  const nullEl = { style: {}, className: '', textContent: '', innerHTML: '', querySelector: () => null };
+  const context = {
+    console,
+    Date: FakeDate,
+    setInterval: () => 0,
+    setTimeout: () => 0,
+    clearInterval: () => {},
+    fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
+    document: {
+      getElementById: () => nullEl,
+      querySelector: () => nullEl,
+      createElement: () => ({}),
+      head: { appendChild: () => {} },
+    },
+    window: {},
+  };
+  vm.createContext(context);
+  vm.runInContext(script + `\nthis.__lateTest = { buildVesselMap, computeSailingTimings, sailingCard };`, context);
+
+  const scheduledMs = Date.UTC(2026, 5, 14, 22, 35); // 3:35 PM PDT
+  const actualMs = Date.UTC(2026, 5, 14, 22, 53, 52);
+  const laterGpsMs = Date.UTC(2026, 5, 14, 22, 57);
+  const sailings = [{
+    sailTime: new Date(scheduledMs),
+    DepartingTime: `/Date(${scheduledMs})/`,
+  }];
+  const vesselMap = context.__lateTest.buildVesselMap(null, {
+    resolvedSailings: {
+      [`14:${scheduledMs}`]: {
+        direction: 'mukilteo-to-clinton',
+        fromTerminalId: 14,
+        toTerminalId: 5,
+        scheduledDepartureMs: scheduledMs,
+        effectiveDepartureMs: actualMs,
+        delayMs: actualMs - scheduledMs,
+        status: 'departed',
+        timingSource: 'observed-departure',
+        isDeparted: true,
+        vesselName: 'Tokitae',
+        vesselId: 68,
+      },
+    },
+    departures: {
+      [`14:${scheduledMs}`]: {
+        departed: true,
+        fromTerminalId: 14,
+        toTerminalId: 5,
+        scheduledDepartureMs: scheduledMs,
+        actualDepartureMs: laterGpsMs,
+        vesselName: 'Tokitae',
+        vesselId: 68,
+      },
+    },
+  });
+
+  const [timing] = context.__lateTest.computeSailingTimings(sailings, vesselMap, 14);
+  assert.equal(timing.effectiveMs, actualMs, 'uses the live resolvedSailings time, not a later legacy GPS timestamp');
+
+  const card = context.__lateTest.sailingCard(sailings[0], sailings, {}, vesselMap, 14);
+  assert.match(card, /3:53 PM/, 'renders the earlier server-resolved actual departure in the main table chip');
+  assert.doesNotMatch(card, /3:57 PM/, 'does not render the later GPS-zone or refresh artifact');
 });
 
 test('late ferry logic — server-reported missed departure renders as missed chip', async () => {
