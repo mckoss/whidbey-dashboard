@@ -506,6 +506,7 @@
     const GPS_TRACK_GAP_MS = 20 * 60 * 1000;
     const GPS_ROUTE_COVERAGE_MIN = 0.15;
     const GPS_TERMINAL_ZONE_PCT = 0.12;
+    const GPS_ARRIVAL_TERMINAL_ZONE_PCT = 0.04;
     const GPS_FIRST_DEPARTURE_GRACE_MS = 15 * 60 * 1000;
     const LEGACY_OPERATIONAL_DAY_START_HOUR = 2;
     const TZ = 'America/Los_Angeles';
@@ -860,6 +861,20 @@
       const departures = [];
       for (const point of track.points) {
         const currentTerminal = gpsTerminalZone(point.pct);
+        const arrivalTerminal = gpsTerminalZone(point.pct, GPS_ARRIVAL_TERMINAL_ZONE_PCT);
+        if (pendingDeparture) {
+          if (arrivalTerminal === pendingDeparture.toTerminal) {
+            pendingDeparture.arrivalMs = point.ms;
+            departures.push(pendingDeparture);
+            pendingDeparture = null;
+            terminal = arrivalTerminal;
+          }
+          if (pendingDeparture && currentTerminal && currentTerminal !== pendingDeparture.toTerminal) {
+            pendingDeparture = null;
+            terminal = currentTerminal;
+          }
+          continue;
+        }
         if (terminal && !currentTerminal && !pendingDeparture) {
           pendingDeparture = {
             direction: terminal === 'Clinton' ? 'clinton-to-mukilteo' : 'mukilteo-to-clinton',
@@ -871,11 +886,6 @@
           };
         }
         if (!currentTerminal) continue;
-        if (pendingDeparture && currentTerminal === pendingDeparture.toTerminal) {
-          pendingDeparture.arrivalMs = point.ms;
-          departures.push(pendingDeparture);
-        }
-        pendingDeparture = null;
         terminal = currentTerminal;
       }
       if (pendingDeparture) departures.push(pendingDeparture);
@@ -939,9 +949,9 @@
       };
     }
 
-    function gpsTerminalZone(pct) {
-      if (pct <= GPS_TERMINAL_ZONE_PCT) return 'Clinton';
-      if (pct >= 1 - GPS_TERMINAL_ZONE_PCT) return 'Mukilteo';
+    function gpsTerminalZone(pct, zonePct = GPS_TERMINAL_ZONE_PCT) {
+      if (pct <= zonePct) return 'Clinton';
+      if (pct >= 1 - zonePct) return 'Mukilteo';
       return '';
     }
 
