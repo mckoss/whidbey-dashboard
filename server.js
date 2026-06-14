@@ -2,7 +2,7 @@ import express from 'express';
 import fetch from 'node-fetch';
 import { OAuth2Client } from 'google-auth-library';
 import morgan from 'morgan';
-import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs';
 import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
@@ -2099,7 +2099,10 @@ function observedVesselForTrip(trip, actualDepartureMs) {
 
 function writeFerryHistoryDay(day) {
   mkdirSync(CONFIG.ferryHistoryDir, { recursive: true });
-  writeFileSync(ferryHistoryFile(day.date), JSON.stringify(day, null, 2));
+  const file = ferryHistoryFile(day.date);
+  const tmpFile = `${file}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tmpFile, JSON.stringify(day, null, 2));
+  renameSync(tmpFile, file);
 }
 
 function pruneFerryHistory(nowMs = Date.now()) {

@@ -317,6 +317,9 @@ test('ferry/history endpoint — returns a dated trip log shell and validates da
   assert.match(source, /const observations = ferryGpsScheduleObservations\(day\)/, 'uses the same GPS schedule allocation path for departure-space snapshots');
   assert.match(source, /observedDepartureMs: departure\.ms/, 'stores the GPS-observed departure time with the frozen vehicle-space snapshot');
   assert.match(source, /applyGpsDepartureSpaceSnapshots\(day\)/, 'applies departure-space snapshots before writing history files');
+  assert.match(source, /writeFerryHistoryDay\(day\)/, 'writes the enriched history day to disk');
+  assert.match(source, /const tmpFile = `\$\{file\}\.\$\{process\.pid\}\.\$\{Date\.now\(\)\}\.tmp`/, 'writes history files through a temp file first');
+  assert.match(source, /renameSync\(tmpFile, file\)/, 'atomically replaces the durable history file after the write completes');
 });
 
 test('ferry/history endpoint — ignores impossible early actual departures from stale vessel matches', async () => {
