@@ -878,6 +878,7 @@
         pendingDeparture = null;
         terminal = currentTerminal;
       }
+      if (pendingDeparture) departures.push(pendingDeparture);
       return departures;
     }
 

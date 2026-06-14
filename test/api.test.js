@@ -1358,6 +1358,7 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /function actualArrivalMs/, 'isolates observed actual arrival timestamps');
   assert.match(html, /gps-observed-terminal/, 'uses GPS-observed arrivals to fill actual travel and dock durations');
   assert.match(html, /function tableTripFromGpsDeparture/, 'builds lower table rows from GPS-observed crossings');
+  assert.match(html, /if \(pendingDeparture\) departures\.push\(pendingDeparture\)/, 'shows in-progress GPS-observed departures before the crossing completes');
   assert.match(html, /observedTrips/, 'uses GPS-observed trips as the lower-table row source');
   assert.match(html, /tableTripRows\(gpsScheduleStats\)/, 'does not pass scheduled API trips into the lower-table row builder');
   assert.match(html, /terminalTable\(terminal, tableTrips, tableTrips\)/, 'computes dock time from the GPS-observed table rows');
