@@ -870,13 +870,14 @@
             pendingDeparture = null;
             terminal = arrivalTerminal;
           }
-          if (pendingDeparture && currentTerminal && currentTerminal !== pendingDeparture.toTerminal) {
+          if (pendingDeparture && currentTerminal && currentTerminal !== pendingDeparture.toTerminal && point.atDock !== false) {
             pendingDeparture = null;
             terminal = currentTerminal;
           }
           continue;
         }
-        if (terminal && !currentTerminal && !pendingDeparture) {
+        const dockDeparture = terminal && currentTerminal === terminal && point.atDock === false;
+        if (terminal && (!currentTerminal || dockDeparture) && !pendingDeparture) {
           pendingDeparture = {
             direction: terminal === 'Clinton' ? 'clinton-to-mukilteo' : 'mukilteo-to-clinton',
             ms: point.ms,

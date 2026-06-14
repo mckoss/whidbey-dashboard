@@ -1630,6 +1630,7 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /const GPS_TERMINAL_ZONE_PCT = 0\.12/, 'uses a stable terminal zone threshold for GPS crossing counts');
   assert.match(html, /const GPS_ARRIVAL_TERMINAL_ZONE_PCT = 0\.04/, 'uses a tighter GPS threshold before filling actual arrival and travel time');
   assert.match(html, /atDock: sample\.atDock \?\? null/, 'carries WSF dock state into client-side GPS track points');
+  assert.match(html, /point\.atDock === false/, 'uses WSF dock departure state instead of waiting to leave the broad GPS terminal zone');
   assert.match(html, /arrivalTerminal === pendingDeparture\.toTerminal && point\.atDock !== false/, 'requires dock-side GPS confirmation before closing an in-progress crossing');
   assert.match(html, /function gpsTerminalZone/, 'classifies terminal zones for GPS crossing counts');
   assert.match(html, /clipStart = Math\.max\(departMs, segment\.startMs\)/, 'clips schedule fallback lines at the start of each half-day segment');
@@ -1653,6 +1654,65 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   const scriptMatch = html.match(/<script[^>]*>([\s\S]*?)<\/script>/);
   assert.ok(scriptMatch, 'found ferry history script block');
   assert.doesNotThrow(() => new Function(scriptMatch[1]), 'ferry history inline JS should parse without syntax errors');
+});
+
+test('ferry history page — atDock false starts an observed departure before leaving terminal zone', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'ferry-history.html'), 'utf8');
+  const script = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+
+  const element = {
+    style: {},
+    hidden: false,
+    textContent: '',
+    innerHTML: '',
+    value: '',
+    addEventListener: () => {},
+  };
+  const context = {
+    console,
+    Date,
+    URL,
+    URLSearchParams,
+    setInterval: () => 0,
+    setTimeout: () => 0,
+    clearInterval: () => {},
+    fetch: () => Promise.resolve({ ok: true, json: () => Promise.resolve({}) }),
+    document: {
+      hidden: false,
+      addEventListener: () => {},
+      getElementById: () => element,
+    },
+    window: {
+      location: {
+        search: '',
+        href: 'https://example.test/ferry-history',
+      },
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(script + `\nthis.__historyTest = { gpsObservedDeparturesForTrack };`, context);
+
+  const departMs = Date.UTC(2026, 5, 14, 22, 54, 26);
+  const departures = context.__historyTest.gpsObservedDeparturesForTrack({
+    key: '68:Tokitae',
+    name: 'Tokitae',
+    points: [
+      { ms: Date.UTC(2026, 5, 14, 22, 53, 26), pct: 0.99, atDock: true },
+      { ms: departMs, pct: 0.99, atDock: false },
+      { ms: Date.UTC(2026, 5, 14, 22, 56, 27), pct: 0.95, atDock: false },
+      { ms: Date.UTC(2026, 5, 14, 23, 10, 0), pct: 0.03, atDock: true },
+    ],
+  });
+
+  assert.equal(departures.length, 1, 'detects the Mukilteo departure');
+  assert.equal(departures[0].ms, departMs, 'uses the first atDock false sample as actual departure time');
+  assert.equal(departures[0].direction, 'mukilteo-to-clinton');
+  assert.equal(departures[0].fromTerminal, 'Mukilteo');
+  assert.equal(departures[0].toTerminal, 'Clinton');
 });
 
 test('config example — documents runtime and Google admin auth configuration', async () => {
