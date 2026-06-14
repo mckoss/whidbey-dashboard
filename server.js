@@ -1100,7 +1100,7 @@ const FERRY_GPS_MIN_PROGRESS_PER_MINUTE = 0.0025;
 // below which the route is treated as on time.
 const FERRY_ROUTE_DELAY_RECENCY_MS = 90 * 60 * 1000;
 const FERRY_ROUTE_DELAY_MIN_SAMPLES = 2;
-const FERRY_ROUTE_DELAY_THRESHOLD_MS = 8 * 60 * 1000;
+const FERRY_ROUTE_DELAY_THRESHOLD_MS = 4 * 60 * 1000;
 const CLINTON_TERMINAL = { name: 'Clinton', lat: 47.9755, lon: -122.3493 };
 const MUKILTEO_TERMINAL = { name: 'Mukilteo', lat: 47.9485, lon: -122.3046 };
 const TERMINAL_NAMES = new Map([

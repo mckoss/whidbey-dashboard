@@ -833,6 +833,36 @@ test('ferry/departures endpoint — a single late departure is not enough to cla
   assert.equal(d.routeDelays['5'], undefined, 'one late departure alone does not establish a route delay');
 });
 
+test('ferry/departures endpoint — modest repeated lateness projects the route delay', async () => {
+  const historyDate = '2026-06-20';
+  const sampledAtMs = Date.UTC(2026, 5, 20, 18, 0);
+  const recent = [
+    Date.UTC(2026, 5, 20, 17, 0),
+    Date.UTC(2026, 5, 20, 17, 30),
+  ];
+  const nextMs = Date.UTC(2026, 5, 20, 18, 0);
+  const historyDir = join(dataDir, 'ferry-history');
+  await mkdir(historyDir, { recursive: true });
+  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+    date: historyDate,
+    generatedAt: new Date(sampledAtMs).toISOString(),
+    sampledAtMs,
+    trips: [
+      ...recent.map(sched => ferryTestTrip(historyDate, 'clinton-to-mukilteo', 5, 14, sched, {
+        actualDepartureMs: sched + 5 * 60 * 1000,
+        arrivalMs: sched + 25 * 60 * 1000,
+      })),
+      ferryTestTrip(historyDate, 'clinton-to-mukilteo', 5, 14, nextMs),
+    ],
+    currentVessels: [],
+  }, null, 2));
+
+  const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
+  assert.equal(d.routeDelays['5'].delayMs, 5 * 60 * 1000, 'two five-minute late departures establish a modest route delay');
+  assert.equal(d.resolvedSailings[`5:${nextMs}`].status, 'projected', 'next chip is projected instead of stuck on the scheduled time');
+  assert.equal(d.resolvedSailings[`5:${nextMs}`].effectiveDepartureMs, nextMs + 5 * 60 * 1000, 'next chip projects the repeated five-minute delay');
+});
+
 function ferryTestTrip(historyDate, direction, fromTerminalId, toTerminalId, scheduledDepartureMs, overrides = {}) {
   return {
     id: `${historyDate}:${direction}:${scheduledDepartureMs}`,
