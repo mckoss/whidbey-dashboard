@@ -1586,9 +1586,10 @@ function ferryVesselCorrectionSummary(day, nowMs = Date.now()) {
   if (!latestObservedTrip) return corrections;
 
   let expectedFromTerminalId = latestObservedTrip.toTerminalId;
+  let lastCorrectedScheduledMs = latestObservedTrip.scheduledDepartureMs;
   const horizonMs = nowMs + FERRY_VESSEL_CORRECTION_LOOKAHEAD_MS;
   for (const trip of trips) {
-    if (trip.scheduledDepartureMs <= latestObservedTrip.scheduledDepartureMs ||
+    if (trip.scheduledDepartureMs <= lastCorrectedScheduledMs ||
         trip.scheduledDepartureMs < nowMs - FERRY_HISTORY_DEPARTURE_MATCH_MS ||
         trip.scheduledDepartureMs > horizonMs ||
         trip.actualDepartureMs ||
@@ -1607,6 +1608,7 @@ function ferryVesselCorrectionSummary(day, nowMs = Date.now()) {
       basis: 'recent-gps-chain',
     };
     expectedFromTerminalId = trip.toTerminalId;
+    lastCorrectedScheduledMs = trip.scheduledDepartureMs;
   }
   return corrections;
 }

@@ -1666,7 +1666,7 @@ function sailingCard(s, parsedSailings, spaceMap, vesselMap = {}, fromTerminalId
   } else if (lateInfo) {
     const estTime = new Date(lateInfo.estimatedDepartureMs).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
     timeHtml = `<div class="sail-time"><span class="sail-time-est">${estTime}</span><span class="sail-time-sched">(was ${display})</span></div>`;
-  } else if (routeDelayInfo && !isPast) {
+  } else if (routeDelayInfo && (!isPast || serverStatus === 'projected')) {
     const projTime = new Date(routeDelayInfo.projectedDepartureMs).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
     timeHtml = `<div class="sail-time"><span class="sail-time-est-route">~${projTime}</span><span class="sail-time-sched">(sched ${display})</span></div>`;
   } else {

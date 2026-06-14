@@ -489,6 +489,41 @@ test('ferry/departures endpoint — exposes server-confirmed actual departures b
   assert.equal(d.vesselCorrections[correctionKey].basis, 'recent-gps-chain', 'labels vessel corrections separately from departed sailings');
 });
 
+test('ferry/departures endpoint — GPS-chain corrections never assign one vessel to simultaneous terminal departures', async () => {
+  const historyDate = '2026-06-24';
+  const sampledAtMs = Date.UTC(2026, 5, 24, 22, 15);
+  const m1505 = Date.UTC(2026, 5, 24, 22, 5);
+  const c1535 = Date.UTC(2026, 5, 24, 22, 35);
+  const m1535 = Date.UTC(2026, 5, 24, 22, 35);
+  const m1605 = Date.UTC(2026, 5, 24, 23, 5);
+  const historyDir = join(dataDir, 'ferry-history');
+  await mkdir(historyDir, { recursive: true });
+  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+    date: historyDate,
+    generatedAt: new Date(sampledAtMs).toISOString(),
+    sampledAtMs,
+    trips: [
+      ferryTestTrip(historyDate, 'mukilteo-to-clinton', 14, 5, m1505, {
+        actualDepartureMs: m1505 + 4 * 60 * 1000,
+        vesselName: 'Suquamish',
+        vesselId: 75,
+      }),
+      ferryTestTrip(historyDate, 'clinton-to-mukilteo', 5, 14, c1535),
+      ferryTestTrip(historyDate, 'mukilteo-to-clinton', 14, 5, m1535),
+      ferryTestTrip(historyDate, 'mukilteo-to-clinton', 14, 5, m1605),
+    ],
+    currentVessels: [],
+  }, null, 2));
+
+  const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
+  assert.equal(d.vesselCorrections[`5:${c1535}`].vesselName, 'Suquamish',
+    'the observed vessel can be corrected onto its next departure terminal');
+  assert.equal(d.vesselCorrections[`14:${m1535}`], undefined,
+    'the same vessel is not also corrected onto the opposite terminal at the same scheduled time');
+  assert.equal(d.vesselCorrections[`14:${m1605}`].vesselName, 'Suquamish',
+    'the correction chain may continue only at the next later scheduled time');
+});
+
 test('ferry/departures endpoint — predicts future vessel chain from observed availability', async () => {
   const historyDate = '2026-06-13';
   const sampledAtMs = Date.UTC(2026, 5, 13, 3, 0);
@@ -2801,6 +2836,72 @@ test('late ferry logic — regenerated vessel forecast overrides stale GPS-chain
   const card = context.__lateTest.sailingCard(sailing, [sailing], {}, vesselMap, 14);
   assert.match(card, /sail-vessel">Suquamish<\/div>/, 'renders regenerated vessel forecast for the future row');
   assert.doesNotMatch(card, /sail-vessel">Tokitae<\/div>/, 'does not let stale GPS-chain correction override the forecast');
+});
+
+test('late ferry logic — projected chips keep the forecast time after it slips just into the past', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
+  const script = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+
+  const sailingMs = Date.UTC(2026, 5, 13, 3, 5); // 8:05 PM PDT
+  const projectedMs = Date.UTC(2026, 5, 13, 3, 11); // 8:11 PM PDT
+  const fixedNow = projectedMs + 90 * 1000;
+  class FakeDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [fixedNow])); }
+    static now() { return fixedNow; }
+  }
+  Object.assign(FakeDate, Date);
+
+  const nullEl = { style: {}, className: '', textContent: '', innerHTML: '', querySelector: () => null };
+  const context = {
+    console,
+    Date: FakeDate,
+    setInterval: () => 0,
+    setTimeout: () => 0,
+    clearInterval: () => {},
+    fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
+    document: {
+      getElementById: () => nullEl,
+      querySelector: () => nullEl,
+      createElement: () => ({}),
+      head: { appendChild: () => {} },
+    },
+    window: {},
+  };
+  vm.createContext(context);
+  vm.runInContext(script + `\nthis.__lateTest = { buildVesselMap, sailingCard };`, context);
+
+  const sailing = {
+    sailTime: new Date(sailingMs),
+    DepartingTime: `/Date(${sailingMs})/`,
+  };
+  const vesselMap = context.__lateTest.buildVesselMap(null, {
+    resolvedSailings: {
+      [`14:${sailingMs}`]: {
+        scheduledDepartureMs: sailingMs,
+        effectiveDepartureMs: projectedMs,
+        delayMs: projectedMs - sailingMs,
+        status: 'projected',
+        timingSource: 'gps-vessel-state',
+        isProjected: true,
+        isDeparted: false,
+        isMissed: false,
+        isUnknown: false,
+        vesselName: 'Suquamish',
+        vesselId: 75,
+        vesselSource: 'predicted-departure',
+      },
+    },
+  });
+
+  const card = context.__lateTest.sailingCard(sailing, [sailing], {}, vesselMap, 14);
+  assert.match(card, /class="sail-time-est-route"/, 'keeps the projected style while the server still marks the row projected');
+  assert.match(card, /~8:11 PM/, 'continues to show the projected time instead of snapping back to the scheduled time');
+  assert.match(card, /\(sched 8:05 PM\)/, 'keeps the scheduled baseline visible');
+  assert.doesNotMatch(card, /<div class="sail-time">8:05 PM<\/div>/, 'does not render the bare scheduled time for a stale projected row');
 });
 
 test('late ferry logic — direct delay does not propagate to later sailings', async () => {
