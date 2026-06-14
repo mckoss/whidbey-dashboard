@@ -1327,8 +1327,12 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /missed-sailing/, 'uses a distinct row style for missed scheduled departures');
   assert.match(html, /<span class="missed">Missed<\/span>/, 'labels skipped schedule slots as missed in the table');
   assert.match(html, /function actualDepartureMs/, 'isolates confirmed actual departure timestamps');
-  assert.match(html, /function actualArrivalMs/, 'isolates observed actual dock arrival timestamps');
-  assert.match(html, /arrivalBasis === 'observed-at-dock'/, 'only observed dock arrivals can drive travel and dock durations');
+  assert.match(html, /function actualArrivalMs/, 'isolates observed actual arrival timestamps');
+  assert.match(html, /gps-observed-terminal/, 'uses GPS-observed arrivals to fill actual travel and dock durations');
+  assert.match(html, /function tableTripFromGpsDeparture/, 'adds GPS-observed crossings that are not present in the published schedule');
+  assert.match(html, /unscheduledTrips/, 'keeps early unmatched GPS crossings in the lower table');
+  assert.match(html, /matchedTrips/, 'overlays GPS actual departure and arrival on matched scheduled rows');
+  assert.match(html, /terminalTable\(terminal, tableTrips, tableTrips\)/, 'computes dock time from the GPS-enriched table rows');
   assert.match(html, /no confirmed departure/, 'explains blank travel durations for unconfirmed trips');
   assert.doesNotMatch(html, /trip\.actualDepartureMs \|\| trip\.scheduledDepartureMs/, 'does not fill actual departures from the schedule');
   assert.doesNotMatch(html, /departed \+ 20 \* 60 \* 1000/, 'does not fabricate table arrivals from default travel time');
@@ -1377,7 +1381,7 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /gpsObservedScheduleStats\(gpsTracks, trips\)/, 'summarizes GPS crossings that match scheduled trips');
   assert.match(html, /GPS-observed scheduled crossings/, 'labels track-derived crossings as schedule-matched');
   assert.match(html, /missed scheduled trips/, 'surfaces skipped scheduled departures separately from observed crossings');
-  assert.match(html, /const GPS_STARTUP_IGNORE_MS = 10 \* 60 \* 1000/, 'ignores obvious pre-service startup GPS departures');
+  assert.doesNotMatch(html, /GPS_STARTUP_IGNORE_MS/, 'does not drop real early GPS crossings before the first published schedule row');
   assert.match(html, /const GPS_FIRST_DEPARTURE_GRACE_MS = 15 \* 60 \* 1000/, 'uses a first-departure grace before service alignment starts');
   assert.match(html, /function gpsObservedDepartures/, 'counts confirmed GPS departures instead of arrival-side crossings');
   assert.match(html, /allocateGpsDeparturesToSchedule/, 'allocates GPS departures forward through scheduled service');

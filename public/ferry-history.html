@@ -448,7 +448,6 @@
     const GPS_TRACK_GAP_MS = 20 * 60 * 1000;
     const GPS_ROUTE_COVERAGE_MIN = 0.15;
     const GPS_TERMINAL_ZONE_PCT = 0.12;
-    const GPS_STARTUP_IGNORE_MS = 10 * 60 * 1000;
     const GPS_FIRST_DEPARTURE_GRACE_MS = 15 * 60 * 1000;
     const LEGACY_OPERATIONAL_DAY_START_HOUR = 2;
     const TZ = 'America/Los_Angeles';
@@ -772,11 +771,17 @@
       const scheduledTrips = trips
         .filter(trip => Number.isFinite(trip?.scheduledDepartureMs) && trip.direction)
         .sort((a, b) => a.scheduledDepartureMs - b.scheduledDepartureMs);
-      if (!scheduledTrips.length) return { matched: 0, missed: 0, missedTrips: [] };
-      const firstScheduledMs = scheduledTrips[0].scheduledDepartureMs;
-      const serviceDepartures = gpsObservedDepartures(tracks)
-        .filter(departure => departure.ms >= firstScheduledMs - GPS_STARTUP_IGNORE_MS);
-      return allocateGpsDeparturesToSchedule(serviceDepartures, scheduledTrips);
+      const departures = gpsObservedDepartures(tracks);
+      if (!scheduledTrips.length) {
+        return {
+          matched: 0,
+          missed: 0,
+          matchedTrips: [],
+          missedTrips: [],
+          unscheduledTrips: departures.map(tableTripFromGpsDeparture),
+        };
+      }
+      return allocateGpsDeparturesToSchedule(departures, scheduledTrips);
     }
 
     function gpsObservedDepartures(tracks) {
@@ -803,6 +808,7 @@
         }
         if (!currentTerminal) continue;
         if (pendingDeparture && currentTerminal === pendingDeparture.toTerminal) {
+          pendingDeparture.arrivalMs = point.ms;
           departures.push(pendingDeparture);
         }
         pendingDeparture = null;
@@ -821,13 +827,18 @@
       const nextTripIndexByDirection = new Map();
       let matched = 0;
       let missed = 0;
+      const matchedTrips = [];
       const missedTrips = [];
+      const unscheduledTrips = [];
       for (const departure of departures) {
         const directionTrips = tripsByDirection.get(departure.direction) || [];
         let tripIndex = nextTripIndexByDirection.get(departure.direction) || 0;
         let trip = directionTrips[tripIndex];
         if (!trip) continue;
-        if (tripIndex === 0 && departure.ms < trip.scheduledDepartureMs - GPS_FIRST_DEPARTURE_GRACE_MS) continue;
+        if (tripIndex === 0 && departure.ms < trip.scheduledDepartureMs - GPS_FIRST_DEPARTURE_GRACE_MS) {
+          unscheduledTrips.push(tableTripFromGpsDeparture(departure));
+          continue;
+        }
         while (tripIndex + 1 < directionTrips.length &&
                departure.ms >= directionTrips[tripIndex + 1].scheduledDepartureMs) {
           missedTrips.push({
@@ -841,9 +852,36 @@
           trip = directionTrips[tripIndex];
         }
         nextTripIndexByDirection.set(departure.direction, tripIndex + 1);
+        matchedTrips.push({
+          ...trip,
+          actualDepartureMs: departure.ms,
+          arrivalMs: departure.arrivalMs || null,
+          arrivalBasis: departure.arrivalMs ? 'gps-observed-terminal' : '',
+          tableStatus: 'actual',
+          vesselName: departure.vesselName || trip.vesselName || '',
+          vesselKey: departure.vesselKey || '',
+        });
         matched += 1;
       }
-      return { matched, missed, missedTrips };
+      return { matched, missed, matchedTrips, missedTrips, unscheduledTrips };
+    }
+
+    function tableTripFromGpsDeparture(departure) {
+      return {
+        direction: departure.direction,
+        fromTerminalName: departure.fromTerminal,
+        toTerminalName: departure.toTerminal,
+        fromTerminalId: departure.fromTerminal === 'Clinton' ? 5 : 14,
+        toTerminalId: departure.toTerminal === 'Clinton' ? 5 : 14,
+        scheduledDepartureMs: null,
+        actualDepartureMs: departure.ms,
+        arrivalMs: departure.arrivalMs || null,
+        arrivalBasis: departure.arrivalMs ? 'gps-observed-terminal' : '',
+        tableStatus: 'actual',
+        vesselName: departure.vesselName || 'Unknown',
+        vesselKey: departure.vesselKey || '',
+        gpsOnly: true,
+      };
     }
 
     function gpsTerminalZone(pct) {
@@ -954,14 +992,26 @@
       }
       const tableTrips = tableTripRows(trips, gpsScheduleStats);
       const terminalOrder = ['Mukilteo', 'Clinton'];
-      tablesEl.innerHTML = terminalOrder.map(terminal => terminalTable(terminal, tableTrips, trips)).join('');
+      tablesEl.innerHTML = terminalOrder.map(terminal => terminalTable(terminal, tableTrips, tableTrips)).join('');
     }
 
     function tableTripRows(trips, gpsScheduleStats = {}) {
+      const matchedByKey = new Map((gpsScheduleStats.matchedTrips || []).map(trip => [tripKey(trip), trip]));
       const missedByKey = new Map((gpsScheduleStats.missedTrips || []).map(trip => [tripKey(trip), trip]));
-      return [...trips]
-        .sort((a, b) => (a.scheduledDepartureMs || 0) - (b.scheduledDepartureMs || 0))
+      const scheduledRows = [...trips]
         .map(trip => {
+          const matched = matchedByKey.get(tripKey(trip));
+          if (matched) {
+            return {
+              ...trip,
+              actualDepartureMs: matched.actualDepartureMs,
+              arrivalMs: matched.arrivalMs,
+              arrivalBasis: matched.arrivalBasis,
+              tableStatus: 'actual',
+              vesselName: matched.vesselName || trip.vesselName || '',
+              vesselKey: matched.vesselKey || '',
+            };
+          }
           const missed = !trip.actualDepartureMs && missedByKey.get(tripKey(trip));
           if (missed) {
             return {
@@ -975,6 +1025,8 @@
             tableStatus: trip.actualDepartureMs ? 'actual' : 'scheduled',
           };
         });
+      return [...scheduledRows, ...(gpsScheduleStats.unscheduledTrips || [])]
+        .sort((a, b) => tableSortMs(a) - tableSortMs(b));
     }
 
     function terminalTable(terminal, trips, allTrips) {
@@ -1030,12 +1082,16 @@
       return `${trip.direction || ''}:${trip.scheduledDepartureMs || ''}`;
     }
 
+    function tableSortMs(trip) {
+      return trip.scheduledDepartureMs || trip.actualDepartureMs || 0;
+    }
+
     function actualDepartureMs(trip) {
       return Number.isFinite(trip?.actualDepartureMs) ? trip.actualDepartureMs : null;
     }
 
     function actualArrivalMs(trip) {
-      return trip?.arrivalBasis === 'observed-at-dock' && Number.isFinite(trip?.arrivalMs)
+      return ['observed-at-dock', 'gps-observed-terminal'].includes(trip?.arrivalBasis) && Number.isFinite(trip?.arrivalMs)
         ? trip.arrivalMs
         : null;
     }
@@ -1063,6 +1119,7 @@
     function arrivalBasisText(basis) {
       return ({
         'observed-at-dock': 'arrival observed at dock',
+        'gps-observed-terminal': 'arrival observed by GPS',
         'wsf-eta': 'arrival from WSF ETA',
         'scheduled-estimate': 'arrival estimated',
       })[basis] || 'arrival estimated';
