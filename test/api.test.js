@@ -966,6 +966,12 @@ test('ferry/departures endpoint — GPS vessel state forecasts destination depar
   assert.equal(status.status, 'underway-to-mukilteo', 'classifies the vessel as inbound to Mukilteo from GPS motion');
   assert.equal(status.availableTerminalId, 14, 'the next availability is the Mukilteo terminal');
   assert.equal(status.availableMs, expectedDepartureMs, 'availability is GPS ETA plus ten minutes');
+  assert.equal(status.destinationTerminalId, 14, 'server exposes the destination terminal in vessel state');
+  assert.equal(status.estimatedDockArrivalMs, status.etaMs, 'server exposes the estimated dock arrival');
+  assert.equal(status.estimatedDockDepartureMs, expectedDepartureMs, 'server exposes the estimated departure after turnaround');
+  assert.equal(typeof status.position.distanceToDestinationMeters, 'number',
+    'server exposes terminal distance for the client instead of making the client infer it');
+  assert.deepEqual(d.vesselStates, d.vesselStatuses, 'server also exposes vesselStates as the explicit state payload');
   const prediction = d.predictedDepartures[`14:${m1605}`];
   assert.equal(prediction.projectedDepartureMs, expectedDepartureMs, 'forecasts the Mukilteo departure from vessel-state availability');
   assert.equal(prediction.scheduledReferenceMs, m1605, 'maps the projection to the closest prior scheduled slot');
@@ -1003,8 +1009,48 @@ test('ferry/departures endpoint — approach-zone vessel is not available until 
   assert.equal(status.etaMs, expectedEtaMs, 'uses GPS motion to estimate remaining approach time');
   assert.equal(status.availableMs, expectedDepartureMs,
     'availability waits for ETA plus the terminal turnaround instead of using now');
+  assert.equal(status.estimatedDockArrivalMs, expectedEtaMs,
+    'approach-zone vessel state exposes estimated dock arrival');
+  assert.equal(status.estimatedDockDepartureMs, expectedDepartureMs,
+    'approach-zone vessel state exposes ETA plus expected docked time');
   assert.equal(d.predictedDepartures[`14:${m1605}`].projectedDepartureMs, expectedDepartureMs,
     'does not project the Mukilteo departure at the raw scheduled time before docking');
+});
+
+test('ferry/departures endpoint — newly docked vessel waits for terminal turnaround before availability', async () => {
+  const historyDate = '2026-06-26';
+  const sampledAtMs = Date.UTC(2026, 5, 26, 16, 0);
+  const dockArrivalMs = Date.UTC(2026, 5, 26, 15, 58);
+  const m1605 = Date.UTC(2026, 5, 26, 16, 5);
+  const expectedDepartureMs = dockArrivalMs + 10 * 60 * 1000;
+  const historyDir = join(dataDir, 'ferry-history');
+  await mkdir(historyDir, { recursive: true });
+  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+    date: historyDate,
+    generatedAt: new Date(sampledAtMs).toISOString(),
+    sampledAtMs,
+    trips: [
+      ferryTestTrip(historyDate, 'mukilteo-to-clinton', 14, 5, m1605),
+    ],
+    vesselSamples: [
+      ferryTestSample(Date.UTC(2026, 5, 26, 15, 54), 'Tokitae', 68, 0.94, { arrivingTerminalId: 14, atDock: false }),
+      ferryTestSample(dockArrivalMs, 'Tokitae', 68, 1, { arrivingTerminalId: 14, atDock: true }),
+      ferryTestSample(sampledAtMs, 'Tokitae', 68, 1, { arrivingTerminalId: 14, atDock: true }),
+    ],
+    currentVessels: [],
+  }, null, 2));
+
+  const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
+  const status = Object.values(d.vesselStatuses).find(v => v.vesselName === 'Tokitae');
+  assert.equal(status.status, 'at-mukilteo-dock', 'classifies the vessel as docked only once docked');
+  assert.equal(status.dockedTerminalId, 14, 'server exposes the docked terminal');
+  assert.equal(status.dockArrivalMs, dockArrivalMs, 'server exposes when the current docked period began');
+  assert.equal(status.estimatedDockDepartureMs, expectedDepartureMs,
+    'server estimates the end of the docked load/unload cycle');
+  assert.equal(status.availableMs, expectedDepartureMs,
+    'a newly docked vessel is not immediately available for a departure forecast');
+  assert.equal(d.predictedDepartures[`14:${m1605}`].projectedDepartureMs, expectedDepartureMs,
+    'forecast waits for the docked turnaround instead of using the scheduled time');
 });
 
 test('ferry/departures endpoint — inbound vessel forecast uses recent same-terminal docked time', async () => {

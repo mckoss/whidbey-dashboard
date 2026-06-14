@@ -1568,6 +1568,66 @@ function ferryGpsDockTerminalZone(pct) {
   return '';
 }
 
+function ferryDockTerminalNameForPoint(point) {
+  if (!point) return '';
+  if (point.atDock === false) return '';
+  if (point.atDock === true) return ferryGpsTerminalZone(point.pct);
+  return ferryGpsDockTerminalZone(point.pct);
+}
+
+function ferryTerminalCoordinatesForId(terminalId) {
+  if (terminalId === CONFIG.wsfDepartingTerminal) return CLINTON_TERMINAL;
+  if (terminalId === CONFIG.wsfArrivingTerminal) return MUKILTEO_TERMINAL;
+  return null;
+}
+
+function ferryDistanceMeters(a, b) {
+  if (!a || !b ||
+      !Number.isFinite(a.latitude) ||
+      !Number.isFinite(a.longitude) ||
+      !Number.isFinite(b.lat) ||
+      !Number.isFinite(b.lon)) {
+    return null;
+  }
+  const radiusMeters = 6371000;
+  const toRadians = degrees => degrees * Math.PI / 180;
+  const dLat = toRadians(b.lat - a.latitude);
+  const dLon = toRadians(b.lon - a.longitude);
+  const lat1 = toRadians(a.latitude);
+  const lat2 = toRadians(b.lat);
+  const h = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return Math.round(2 * radiusMeters * Math.asin(Math.sqrt(h)));
+}
+
+function ferryDistanceToTerminalMeters(point, terminalId) {
+  return ferryDistanceMeters(point, ferryTerminalCoordinatesForId(terminalId));
+}
+
+function ferryTrackDockArrivalMs(track, terminalId, nowMs) {
+  let arrivalMs = null;
+  for (let i = track.points.length - 1; i >= 0; i -= 1) {
+    const point = track.points[i];
+    if (point.ms > nowMs) continue;
+    const pointTerminalId = terminalIdForName(ferryDockTerminalNameForPoint(point));
+    if (pointTerminalId !== terminalId) break;
+    arrivalMs = point.ms;
+  }
+  return arrivalMs;
+}
+
+function ferryVesselPositionState(latest, terminalId = null, destinationTerminalId = null) {
+  return {
+    latitude: latest.latitude,
+    longitude: latest.longitude,
+    progressPct: latest.pct,
+    distanceFromClintonMeters: ferryDistanceToTerminalMeters(latest, CONFIG.wsfDepartingTerminal),
+    distanceFromMukilteoMeters: ferryDistanceToTerminalMeters(latest, CONFIG.wsfArrivingTerminal),
+    distanceFromDockMeters: terminalId ? ferryDistanceToTerminalMeters(latest, terminalId) : null,
+    distanceToDestinationMeters: destinationTerminalId ? ferryDistanceToTerminalMeters(latest, destinationTerminalId) : null,
+  };
+}
+
 function ferryTerminalProgress(lat, lon) {
   const ax = CLINTON_TERMINAL.lon;
   const ay = CLINTON_TERMINAL.lat;
@@ -1692,24 +1752,36 @@ function ferryVesselStatusSummary(day, nowMs = Date.now(), terminalTurnarounds =
       .slice(-FERRY_GPS_STATE_SAMPLE_COUNT);
     if (!recent.length) continue;
     const latest = recent[recent.length - 1];
-    const terminalName = latest.atDock === false
-      ? ''
-      : (latest.atDock === true ? ferryGpsTerminalZone(latest.pct) : ferryGpsDockTerminalZone(latest.pct));
+    const terminalName = ferryDockTerminalNameForPoint(latest);
     const latestTerminalId = terminalIdForName(terminalName);
     const vesselId = track.id || track.name || 'Unknown';
     if (oneBoatMode.active && !oneBoatMode.vesselIds.has(vesselId)) continue;
 
     if (latestTerminalId) {
+      const turnaround = ferryTerminalTurnaroundEstimate(terminalTurnarounds, latestTerminalId);
+      const dockArrivalMs = ferryTrackDockArrivalMs(track, latestTerminalId, nowMs);
+      const dockDepartureEstimateMs = Number.isFinite(dockArrivalMs)
+        ? dockArrivalMs + turnaround.turnaroundMs
+        : nowMs;
+      const availableMs = Math.max(nowMs, dockDepartureEstimateMs);
       statuses[track.key] = {
         vesselName: track.name,
         vesselId: track.id,
         status: latestTerminalId === CONFIG.wsfDepartingTerminal ? 'at-clinton-dock' : 'at-mukilteo-dock',
         terminalId: latestTerminalId,
         terminalName: terminalNameForId(latestTerminalId),
+        dockedTerminalId: latestTerminalId,
+        dockedTerminalName: terminalNameForId(latestTerminalId),
+        dockArrivalMs,
+        estimatedTurnaroundMs: turnaround.turnaroundMs,
+        estimatedTurnaroundBasis: turnaround.basis,
+        estimatedDockDepartureMs: dockDepartureEstimateMs,
+        estimatedRemainingDockMs: Math.max(0, dockDepartureEstimateMs - nowMs),
         availableTerminalId: latestTerminalId,
-        availableMs: nowMs,
+        availableMs,
         observedAtMs: latest.ms,
         progressPct: latest.pct,
+        position: ferryVesselPositionState(latest, latestTerminalId),
         basis: 'gps-vessel-state',
       };
       continue;
@@ -1747,6 +1819,7 @@ function ferryVesselStatusSummary(day, nowMs = Date.now(), terminalTurnarounds =
     const remainingProgress = motionSign > 0 ? 1 - latest.pct : latest.pct;
     const etaMs = latest.ms + Math.round((remainingProgress / Math.abs(progressPerMinute)) * 60000);
     const turnaround = ferryTerminalTurnaroundEstimate(terminalTurnarounds, destinationTerminalId);
+    const availableMs = etaMs + turnaround.turnaroundMs;
     statuses[track.key] = {
       vesselName: track.name,
       vesselId: track.id,
@@ -1757,13 +1830,18 @@ function ferryVesselStatusSummary(day, nowMs = Date.now(), terminalTurnarounds =
       destinationTerminalName: terminalNameForId(destinationTerminalId),
       availableTerminalId: destinationTerminalId,
       etaMs,
-      availableMs: etaMs + turnaround.turnaroundMs,
+      estimatedDockArrivalMs: etaMs,
+      estimatedTurnaroundMs: turnaround.turnaroundMs,
+      estimatedTurnaroundBasis: turnaround.basis,
+      estimatedDockDepartureMs: availableMs,
+      availableMs,
       turnaroundMs: turnaround.turnaroundMs,
       turnaroundBasis: turnaround.basis,
       turnaroundSourceDepartureMs: turnaround.departureMs || null,
       observedAtMs: latest.ms,
       progressPct: latest.pct,
       progressPerMinute,
+      position: ferryVesselPositionState(latest, null, destinationTerminalId),
       basis: 'gps-vessel-state',
     };
   }
@@ -1792,6 +1870,7 @@ function ferryReturningStatus(track, latest, reason) {
     availableMs: null,
     observedAtMs: latest.ms,
     progressPct: latest.pct,
+    position: ferryVesselPositionState(latest, null, expectedTerminalId),
     basis: 'gps-vessel-state',
     reason,
   };
@@ -1881,8 +1960,7 @@ function ferryOperationalPredictions(day, nowMs = Date.now(), vesselStatuses = f
     }
     usedKeys.add(key);
     state.nextFromTerminalId = referenceTrip.toTerminalId;
-    const nextTurnaround = ferryTerminalTurnaroundEstimate(terminalTurnarounds, referenceTrip.toTerminalId);
-    state.availableMs = projectedDepartureMs + FERRY_CROSSING_ESTIMATE_MS + nextTurnaround.turnaroundMs;
+    state.availableMs = projectedDepartureMs + FERRY_OPERATIONAL_INTERVAL_MS;
     state.sourceStatus = 'operational-chain';
     states.push(state);
   }
@@ -1963,8 +2041,7 @@ function ferryPredictedDepartureSummary(day, nowMs = Date.now()) {
     };
 
     state.nextFromTerminalId = trip.toTerminalId;
-    state.availableMs = projectedDepartureMs + FERRY_CROSSING_ESTIMATE_MS +
-      ferryTerminalTurnaroundEstimate(terminalTurnarounds, trip.toTerminalId).turnaroundMs;
+    state.availableMs = projectedDepartureMs + FERRY_OPERATIONAL_INTERVAL_MS;
     state.sourceScheduledDepartureMs = trip.scheduledDepartureMs;
     state.sourceActualDepartureMs = projectedDepartureMs;
   }
@@ -2543,6 +2620,7 @@ app.get('/api/ferry/departures', async (req, res) => {
       missedDepartures,
       vesselCorrections,
       vesselStatuses,
+      vesselStates: vesselStatuses,
       terminalTurnarounds,
       predictedDepartures,
       resolvedVessels,
@@ -2568,6 +2646,7 @@ app.get('/api/ferry/departures', async (req, res) => {
       missedDepartures,
       vesselCorrections,
       vesselStatuses,
+      vesselStates: vesselStatuses,
       terminalTurnarounds,
       predictedDepartures,
       resolvedVessels,
