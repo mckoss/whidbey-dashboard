@@ -524,72 +524,6 @@ test('ferry/departures endpoint — GPS-chain corrections never assign one vesse
     'the correction chain may continue only at the next later scheduled time');
 });
 
-test('ferry/departures endpoint — predicts future vessel chain from observed availability', async () => {
-  const historyDate = '2026-06-13';
-  const sampledAtMs = Date.UTC(2026, 5, 13, 3, 0);
-  const m135 = Date.UTC(2026, 5, 13, 1, 35);
-  const m205 = Date.UTC(2026, 5, 13, 2, 5);
-  const c215 = Date.UTC(2026, 5, 13, 2, 15);
-  const m305 = Date.UTC(2026, 5, 13, 3, 5);
-  const c315 = Date.UTC(2026, 5, 13, 3, 15);
-  const m335 = Date.UTC(2026, 5, 13, 3, 35);
-  const trip = (direction, fromTerminalId, toTerminalId, scheduledDepartureMs, actualDepartureMs, vesselName, vesselId) => ({
-    id: `${historyDate}:${direction}:${scheduledDepartureMs}`,
-    date: historyDate,
-    direction,
-    fromTerminalId,
-    toTerminalId,
-    fromTerminalName: fromTerminalId === 5 ? 'Clinton' : 'Mukilteo',
-    toTerminalName: toTerminalId === 5 ? 'Clinton' : 'Mukilteo',
-    scheduledDepartureMs,
-    actualDepartureMs,
-    arrivalMs: (actualDepartureMs || scheduledDepartureMs) + 20 * 60 * 1000,
-    arrivalBasis: actualDepartureMs ? 'scheduled-estimate' : 'scheduled-estimate',
-    vesselName,
-    vesselId,
-    observations: [],
-  });
-  const historyDir = join(dataDir, 'ferry-history');
-  await mkdir(historyDir, { recursive: true });
-  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
-    date: historyDate,
-    generatedAt: new Date(sampledAtMs).toISOString(),
-    sampledAtMs,
-    trips: [
-      trip('mukilteo-to-clinton', 14, 5, m135, m135 + 20 * 60 * 1000, 'Suquamish', 75),
-      trip('mukilteo-to-clinton', 14, 5, m205, m205 + 38 * 60 * 1000, 'Tokitae', 68),
-      trip('clinton-to-mukilteo', 5, 14, c215, c215 + 35 * 60 * 1000, 'Suquamish', 75),
-      trip('mukilteo-to-clinton', 14, 5, m305, null, 'Tokitae', 68),
-      trip('clinton-to-mukilteo', 5, 14, c315, null, 'Suquamish', 75),
-      trip('mukilteo-to-clinton', 14, 5, m335, null, 'Tokitae', 68),
-    ],
-    currentVessels: [],
-  }, null, 2));
-
-  const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
-  assert.equal(d.routeDelays['14'].delayMs, 29 * 60 * 1000, 'Mukilteo→Clinton delay is the recent median');
-  assert.equal(d.predictedDepartures[`14:${m305}`].vesselName, 'Suquamish',
-    'the next Mukilteo sailing goes to the vessel that can physically be back at Mukilteo');
-  assert.equal(d.resolvedVessels[`14:${m305}`].vesselName, 'Suquamish',
-    'the server-resolved display vessel follows the regenerated forecast');
-  assert.equal(d.resolvedVessels[`14:${m305}`].source, 'predicted-departure',
-    'the resolved vessel source makes the server-side interpretation explicit');
-  assert.equal(d.resolvedSailings[`14:${m305}`].status, 'projected',
-    'the server resolves the chip status');
-  assert.equal(d.resolvedSailings[`14:${m305}`].effectiveDepartureMs, Date.UTC(2026, 5, 13, 3, 20),
-    'the server resolves the chip from vessel availability instead of route-level median delay');
-  assert.equal(d.resolvedSailings[`14:${m305}`].vesselName, 'Suquamish',
-    'the server resolves the chip vessel label');
-  assert.equal(d.predictedDepartures[`14:${m305}`].projectedDepartureMs, Date.UTC(2026, 5, 13, 3, 20),
-    'the predicted chain uses the vessel availability for the next sailing');
-  assert.equal(d.predictedDepartures[`5:${c315}`].vesselName, 'Tokitae',
-    'the other vessel is chained through the opposite terminal before it can return');
-  assert.equal(d.predictedDepartures[`14:${m335}`].vesselName, 'Tokitae',
-    'Tokitae may be assigned later only after the forecast has carried it back across');
-  assert.ok(d.predictedDepartures[`14:${m335}`].projectedDepartureMs >= Date.UTC(2026, 5, 13, 3, 45),
-    'the 8:35-style slot is delayed to the vessel availability, not shown as on-time');
-});
-
 test('ferry/departures endpoint — exposes GPS-observed departures and missed schedule slots', async () => {
   const historyDate = '2026-06-07';
   const firstMs = Date.UTC(2026, 5, 7, 14, 30);
@@ -897,6 +831,39 @@ test('ferry/departures endpoint — modest repeated lateness is diagnostic witho
   assert.equal(d.predictedDepartures[`5:${nextMs}`], undefined, 'recent lateness alone does not forecast a chip without vessel availability');
   assert.equal(d.resolvedSailings[`5:${nextMs}`].status, 'scheduled', 'next chip stays scheduled until an inbound vessel forecast exists');
   assert.equal(d.resolvedSailings[`5:${nextMs}`].effectiveDepartureMs, nextMs, 'next chip does not project by route delay alone');
+});
+
+test('ferry/departures endpoint — prior departures do not create schedule-derived arrival forecasts', async () => {
+  const historyDate = '2026-06-27';
+  const sampledAtMs = Date.UTC(2026, 5, 27, 16, 0);
+  const c1535 = Date.UTC(2026, 5, 27, 15, 35);
+  const m1605 = Date.UTC(2026, 5, 27, 16, 5);
+  const historyDir = join(dataDir, 'ferry-history');
+  await mkdir(historyDir, { recursive: true });
+  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+    date: historyDate,
+    generatedAt: new Date(sampledAtMs).toISOString(),
+    sampledAtMs,
+    trips: [
+      ferryTestTrip(historyDate, 'clinton-to-mukilteo', 5, 14, c1535, {
+        actualDepartureMs: c1535 + 5 * 60 * 1000,
+        arrivalMs: c1535 + 25 * 60 * 1000,
+        arrivalBasis: 'scheduled-estimate',
+        vesselName: 'Tokitae',
+        vesselId: 68,
+      }),
+      ferryTestTrip(historyDate, 'mukilteo-to-clinton', 14, 5, m1605),
+    ],
+    vesselSamples: [],
+    currentVessels: [],
+  }, null, 2));
+
+  const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
+  assert.deepEqual(d.vesselStatuses, {}, 'without current GPS state there is no server vessel availability');
+  assert.equal(d.predictedDepartures[`14:${m1605}`], undefined,
+    'does not infer the next departure from actual departure plus a standard crossing estimate');
+  assert.equal(d.resolvedSailings[`14:${m1605}`].status, 'scheduled',
+    'the chip remains scheduled instead of pretending the prior boat arrival is known');
 });
 
 function ferryTestTrip(historyDate, direction, fromTerminalId, toTerminalId, scheduledDepartureMs, overrides = {}) {
