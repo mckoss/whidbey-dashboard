@@ -553,7 +553,7 @@
       summaryEl.textContent = 'Loading ferry history...';
       diagramEl.innerHTML = '';
       legendEl.innerHTML = '';
-      tablesEl.innerHTML = '<div class="terminal-table"><div class="table-wrap"><table><tbody><tr><td colspan="5" class="empty">Loading ferry history...</td></tr></tbody></table></div></div>';
+      tablesEl.innerHTML = '<div class="terminal-table"><div class="table-wrap"><table><tbody><tr><td colspan="6" class="empty">Loading ferry history...</td></tr></tbody></table></div></div>';
       errorEl.hidden = true;
     }
 
@@ -585,7 +585,7 @@
       summaryEl.textContent = `Error: ${message}`;
       diagramEl.innerHTML = '';
       legendEl.innerHTML = '';
-      tablesEl.innerHTML = '<div class="terminal-table"><div class="table-wrap"><table><tbody><tr><td colspan="5" class="empty">No ferry history is available.</td></tr></tbody></table></div></div>';
+      tablesEl.innerHTML = '<div class="terminal-table"><div class="table-wrap"><table><tbody><tr><td colspan="6" class="empty">No ferry history is available.</td></tr></tbody></table></div></div>';
       errorEl.hidden = false;
       errorEl.textContent = message;
     }
@@ -854,6 +854,7 @@
         actualDepartureMs: departure.ms,
         arrivalMs: departure.arrivalMs || null,
         arrivalBasis: departure.arrivalMs ? 'gps-observed-terminal' : '',
+        space: scheduledTrip?.space || null,
         vesselName: departure.vesselName || scheduledTrip?.vesselName || 'Unknown',
         vesselKey: departure.vesselKey || '',
         gpsOnly: true,
@@ -964,7 +965,7 @@
     function renderRows(trips, gpsScheduleStats = {}) {
       const tableTrips = tableTripRows(gpsScheduleStats);
       if (!tableTrips.length) {
-        tablesEl.innerHTML = '<div class="terminal-table"><div class="table-wrap"><table><tbody><tr><td colspan="5" class="empty">No GPS-observed departures have been recorded for this date yet.</td></tr></tbody></table></div></div>';
+        tablesEl.innerHTML = '<div class="terminal-table"><div class="table-wrap"><table><tbody><tr><td colspan="6" class="empty">No GPS-observed departures have been recorded for this date yet.</td></tr></tbody></table></div></div>';
         return;
       }
       const terminalOrder = ['Mukilteo', 'Clinton'];
@@ -980,7 +981,7 @@
       const rows = trips.filter(trip => trip.fromTerminalName === terminal);
       const rowHtml = rows.length
         ? rows.map(trip => tableRow(trip, allTrips)).join('')
-        : '<tr><td colspan="5" class="empty">No scheduled departures.</td></tr>';
+        : '<tr><td colspan="6" class="empty">No GPS-observed departures.</td></tr>';
       return `<div class="terminal-table" data-terminal="${escapeHtml(terminal)}">
         <div class="terminal-heading">
           <span>${escapeHtml(terminal)}</span>
@@ -994,6 +995,7 @@
                 <th>Actual</th>
                 <th>Travel</th>
                 <th>Docked</th>
+                <th>Cars</th>
               </tr>
             </thead>
             <tbody>${rowHtml}</tbody>
@@ -1011,6 +1013,7 @@
         <td>${tripCell(trip)}</td>
         <td class="duration" title="${escapeHtml(travelBasisText(trip))}">${formatMinutes(tripDurationMs(trip))}</td>
         <td class="duration">${formatMinutes(dockMs)}</td>
+        <td class="duration" title="${escapeHtml(carLoadTitle(trip))}">${formatCarLoad(trip)}</td>
       </tr>`;
     }
 
@@ -1093,6 +1096,26 @@
 
     function formatMinutes(ms) {
       return ms == null ? '--' : (ms / 60000).toFixed(1);
+    }
+
+    function carLoad(trip) {
+      const max = Number(trip?.space?.maxSpaces);
+      const open = Number(trip?.space?.driveUpSpaces);
+      if (!Number.isFinite(max) || max <= 0 || !Number.isFinite(open)) return null;
+      return {
+        carried: Math.max(0, Math.min(max, max - open)),
+        max,
+      };
+    }
+
+    function formatCarLoad(trip) {
+      const load = carLoad(trip);
+      return load ? `${load.carried} / ${load.max}` : '--';
+    }
+
+    function carLoadTitle(trip) {
+      const load = carLoad(trip);
+      return load ? `${load.carried} of ${load.max} vehicle spaces filled at scheduled departure` : 'vehicle space count unavailable';
     }
 
     function addDays(date, days) {

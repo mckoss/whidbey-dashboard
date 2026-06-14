@@ -308,6 +308,8 @@ test('ferry/history endpoint — returns a dated trip log shell and validates da
   assert.match(source, /operationalDay: ferryHistoryOperationalDay\(date\)/, 'history files are self-describing about their day span');
   assert.match(source, /tripBelongsToFerryHistoryDate\(scheduledDepartureMs, date\)/, 'assigns trips by 2 AM history-day window');
   assert.match(source, /req\.query\.date \|\| ferryHistoryDateForMs\(\)/, 'history API default date follows the 2 AM boundary');
+  assert.match(source, /function mergeTripSpace/, 'preserves captured WSF vehicle-space counts in history rows');
+  assert.match(source, /space: mergeTripSpace\(existing\.space, next\.space\)/, 'does not wipe old non-null space counts when the WSF space feed drops past sailings');
 });
 
 test('ferry/history endpoint — ignores impossible early actual departures from stale vessel matches', async () => {
@@ -1322,6 +1324,10 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /<th>Actual<\/th>/, 'has actual departure column');
   assert.match(html, /<th>Travel<\/th>/, 'has travel duration column');
   assert.match(html, /<th>Docked<\/th>/, 'has dock duration column');
+  assert.match(html, /<th>Cars<\/th>/, 'has vehicle load column');
+  assert.match(html, /function formatCarLoad/, 'formats filled vehicle spaces from WSF space data');
+  assert.match(html, /max - open/, 'computes cars carried from max spaces minus open drive-up spaces');
+  assert.match(html, /space:\s*scheduledTrip\?\.space/, 'carries matched schedule space data onto GPS-observed table rows');
   assert.match(html, /actual-sailing/, 'uses row background color for actual sailings');
   assert.doesNotMatch(html, /scheduled-sailing/, 'does not render schedule-only rows in the lower tables');
   assert.doesNotMatch(html, /missed-sailing/, 'does not render missed schedule slots as lower-table rows');
