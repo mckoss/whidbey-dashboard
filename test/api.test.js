@@ -1025,7 +1025,7 @@ test('ferry/departures endpoint — still-docked vessel keeps a future departure
   const sampledAtMs = Date.UTC(2026, 5, 28, 16, 0);
   const dockArrivalMs = Date.UTC(2026, 5, 28, 15, 40);
   const m1545 = Date.UTC(2026, 5, 28, 15, 45);
-  const expectedDepartureMs = sampledAtMs + 2 * 60 * 1000;
+  const expectedDepartureMs = sampledAtMs + 60 * 1000;
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
   await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
