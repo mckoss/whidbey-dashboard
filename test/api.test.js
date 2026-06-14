@@ -1320,6 +1320,16 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.doesNotMatch(html, /metric\('Date'/, 'summary does not duplicate the selected date');
   assert.doesNotMatch(html, /id="gps-track-toggle"/, 'GPS track is the only chart mode now');
   assert.match(html, /\/api\/ferry\/history\?date=/, 'loads history API by URL date');
+  assert.match(html, /<h2>Vehicle Loads<\/h2>/, 'adds vehicle-load charts below the GPS tracks');
+  assert.match(html, /id="load-charts"/, 'renders vehicle-load charts into their own container');
+  assert.match(html, /\.load-charts\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/, 'shows the two terminal load charts side by side on wider screens');
+  assert.match(html, /@media \(max-width:\s*760px\)[\s\S]*?\.load-charts\s*\{[\s\S]*?grid-template-columns:\s*1fr/, 'stacks load charts on mobile');
+  assert.match(html, /function renderVehicleLoadCharts/, 'renders vehicle load charts from observed table trips');
+  assert.match(html, /vehicleLoadChart\(terminal,\s*chartTrips,\s*vessels,\s*bounds,\s*day\.date\)/, 'renders one vehicle chart per departure terminal');
+  assert.match(html, /const chartTrips = trips\.filter\(trip => actualDepartureMs\(trip\) && carLoad\(trip\)\)/, 'only charts recorded departures with vehicle-load data');
+  assert.match(html, /const bounds = timeBounds\(day\)/, 'uses the whole history operational day as the chart extent');
+  assert.match(html, /vehicleLoadSvg\(terminal, rows, vessels, bounds, maxCapacity, dayDate\)/, 'labels load chart day boundaries using the history date');
+  assert.match(html, /colorFor\(trip\.vesselName, vessels\)/, 'uses the same vessel colors as the GPS track legend');
   assert.match(html, /id="trip-tables"/, 'renders trip tables into a grouped container');
   assert.match(html, /function terminalTable/, 'renders separate history tables by departure terminal');
   assert.match(html, /const terminalOrder = \['Mukilteo', 'Clinton'\]/, 'renders Mukilteo departures then Clinton departures');

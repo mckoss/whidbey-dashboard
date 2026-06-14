@@ -272,6 +272,58 @@
       flex: 0 0 auto;
     }
 
+    .load-charts {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.75rem;
+      padding: 0.75rem;
+      background: var(--panel2);
+    }
+
+    .load-chart {
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 0.45rem;
+      background: var(--panel);
+    }
+
+    .load-chart-heading {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.55rem 0.7rem;
+      border-bottom: 1px solid var(--border);
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .load-chart-heading .meta {
+      font-size: 0.76rem;
+    }
+
+    .load-chart-wrap {
+      padding: 0.6rem 0.7rem 0.55rem;
+    }
+
+    .load-axis,
+    .load-grid {
+      stroke: rgba(148, 163, 184, 0.28);
+      stroke-width: 1;
+    }
+
+    .load-bar {
+      opacity: 0.92;
+      rx: 2;
+      ry: 2;
+    }
+
+    .load-label {
+      fill: var(--dim);
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+    }
+
     .table-wrap {
       overflow-x: auto;
     }
@@ -370,6 +422,12 @@
       input[type="date"] { width: 7.8rem; }
       .text-link { font-size: 0.76rem; }
       .diagram-wrap { padding: 0.5rem; }
+      .load-charts {
+        grid-template-columns: 1fr;
+        padding: 0.5rem;
+        gap: 0.6rem;
+      }
+      .load-chart-wrap { padding: 0.45rem 0.5rem 0.5rem; }
       th,
       td { padding: 0.42rem 0.28rem; }
       table { font-size: 0.76rem; }
@@ -423,6 +481,14 @@
 
     <section>
       <div class="section-head">
+        <h2>Vehicle Loads</h2>
+        <div class="meta" id="load-meta"></div>
+      </div>
+      <div class="load-charts" id="load-charts"></div>
+    </section>
+
+    <section>
+      <div class="section-head">
         <h2>Trip Table</h2>
         <div class="meta" id="table-meta"></div>
       </div>
@@ -449,10 +515,12 @@
     const summaryEl = document.getElementById('summary');
     const diagramEl = document.getElementById('diagram');
     const legendEl = document.getElementById('legend');
+    const loadChartsEl = document.getElementById('load-charts');
     const tablesEl = document.getElementById('trip-tables');
     const dateInput = document.getElementById('date-input');
     const errorEl = document.getElementById('error');
     const diagramMetaEl = document.getElementById('diagram-meta');
+    const loadMetaEl = document.getElementById('load-meta');
     const tableMetaEl = document.getElementById('table-meta');
     const versionEl = document.getElementById('version');
     const clockEl = document.getElementById('clock');
@@ -553,6 +621,8 @@
       summaryEl.textContent = 'Loading ferry history...';
       diagramEl.innerHTML = '';
       legendEl.innerHTML = '';
+      loadChartsEl.innerHTML = '<div class="load-chart"><div class="load-chart-wrap empty">Loading ferry history...</div></div>';
+      loadMetaEl.textContent = '';
       tablesEl.innerHTML = '<div class="terminal-table"><div class="table-wrap"><table><tbody><tr><td colspan="6" class="empty">Loading ferry history...</td></tr></tbody></table></div></div>';
       errorEl.hidden = true;
     }
@@ -578,13 +648,17 @@
 
       renderDiagram(day, trips, vessels, { gpsTracks });
       renderLegend(vessels);
-      renderRows(trips, gpsScheduleStats);
+      const tableTrips = tableTripRows(gpsScheduleStats);
+      renderVehicleLoadCharts(day, tableTrips, vessels);
+      renderRows(tableTrips);
     }
 
     function renderError(message) {
       summaryEl.textContent = `Error: ${message}`;
       diagramEl.innerHTML = '';
       legendEl.innerHTML = '';
+      loadChartsEl.innerHTML = '<div class="load-chart"><div class="load-chart-wrap empty">No vehicle load history is available.</div></div>';
+      loadMetaEl.textContent = '';
       tablesEl.innerHTML = '<div class="terminal-table"><div class="table-wrap"><table><tbody><tr><td colspan="6" class="empty">No ferry history is available.</td></tr></tbody></table></div></div>';
       errorEl.hidden = false;
       errorEl.textContent = message;
@@ -965,8 +1039,7 @@
       return { startMs: start, endMs: start + 24 * HOUR_MS };
     }
 
-    function renderRows(trips, gpsScheduleStats = {}) {
-      const tableTrips = tableTripRows(gpsScheduleStats);
+    function renderRows(tableTrips) {
       if (!tableTrips.length) {
         tablesEl.innerHTML = '<div class="terminal-table"><div class="table-wrap"><table><tbody><tr><td colspan="6" class="empty">No GPS-observed departures have been recorded for this date yet.</td></tr></tbody></table></div></div>';
         return;
@@ -978,6 +1051,70 @@
     function tableTripRows(gpsScheduleStats = {}) {
       return [...(gpsScheduleStats.observedTrips || [])]
         .sort((a, b) => tableSortMs(a) - tableSortMs(b));
+    }
+
+    function renderVehicleLoadCharts(day, trips, vessels) {
+      const bounds = timeBounds(day);
+      const terminalOrder = ['Mukilteo', 'Clinton'];
+      const chartTrips = trips.filter(trip => actualDepartureMs(trip) && carLoad(trip));
+      loadMetaEl.textContent = chartTrips.length ? `${chartTrips.length} recorded loads` : 'no vehicle load snapshots';
+      loadChartsEl.innerHTML = terminalOrder.map(terminal =>
+        vehicleLoadChart(terminal, chartTrips, vessels, bounds, day.date)
+      ).join('');
+    }
+
+    function vehicleLoadChart(terminal, trips, vessels, bounds, dayDate) {
+      const rows = trips
+        .filter(trip => trip.fromTerminalName === terminal)
+        .sort((a, b) => actualDepartureMs(a) - actualDepartureMs(b));
+      const maxCapacity = Math.max(1, ...trips.map(trip => carLoad(trip)?.max || 0));
+      const rowHtml = rows.length
+        ? vehicleLoadSvg(terminal, rows, vessels, bounds, maxCapacity, dayDate)
+        : '<div class="load-chart-wrap empty">No recorded vehicle loads.</div>';
+      return `<div class="load-chart" data-terminal="${escapeHtml(terminal)}">
+        <div class="load-chart-heading">
+          <span>${escapeHtml(terminal)}</span>
+          <span class="meta">${rows.length} departures</span>
+        </div>
+        ${rowHtml}
+      </div>`;
+    }
+
+    function vehicleLoadSvg(terminal, trips, vessels, bounds, maxCapacity, dayDate) {
+      const width = 500;
+      const height = 190;
+      const pad = { top: 16, right: 16, bottom: 30, left: 38 };
+      const chartW = width - pad.left - pad.right;
+      const chartH = height - pad.top - pad.bottom;
+      const barWidth = Math.max(5, Math.min(16, chartW / 72));
+      const grid = [0.5, 1].map(pct => {
+        const y = pad.top + chartH * (1 - pct);
+        const label = Math.round(maxCapacity * pct);
+        return `<line class="load-grid" x1="${pad.left}" x2="${width - pad.right}" y1="${y}" y2="${y}"></line>
+          <text class="load-label" x="${pad.left - 6}" y="${y + 4}" text-anchor="end">${label}</text>`;
+      }).join('');
+      const bars = trips.map(trip => {
+        const load = carLoad(trip);
+        const x = pad.left + ((actualDepartureMs(trip) - bounds.startMs) / (bounds.endMs - bounds.startMs)) * chartW;
+        const barH = chartH * (load.carried / maxCapacity);
+        const y = pad.top + chartH - barH;
+        const color = colorFor(trip.vesselName, vessels);
+        return `<rect class="load-bar" x="${x - barWidth / 2}" y="${y}" width="${barWidth}" height="${Math.max(1, barH)}" fill="${color}">
+          <title>${escapeHtml(trip.vesselName || 'Unknown')} ${escapeHtml(terminal)} ${formatTableTimeMs(actualDepartureMs(trip))}: ${load.carried} of ${load.max} vehicles</title>
+        </rect>`;
+      }).join('');
+      const startLabel = formatGraphTimeMs(bounds.startMs, '');
+      const endLabel = formatGraphTimeMs(bounds.endMs, dayDate);
+      return `<div class="load-chart-wrap">
+        <svg viewBox="0 0 ${width} ${height}" style="aspect-ratio:${width} / ${height}" role="img" aria-label="${escapeHtml(terminal)} vehicle loads by observed departure">
+          ${grid}
+          <line class="load-axis" x1="${pad.left}" x2="${width - pad.right}" y1="${height - pad.bottom}" y2="${height - pad.bottom}"></line>
+          <line class="load-axis" x1="${pad.left}" x2="${pad.left}" y1="${pad.top}" y2="${height - pad.bottom}"></line>
+          ${bars}
+          <text class="load-label" x="${pad.left}" y="${height - 8}" text-anchor="start">${startLabel}</text>
+          <text class="load-label" x="${width - pad.right}" y="${height - 8}" text-anchor="end">${endLabel}</text>
+        </svg>
+      </div>`;
     }
 
     function terminalTable(terminal, trips, allTrips) {
