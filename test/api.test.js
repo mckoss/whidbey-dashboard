@@ -1333,9 +1333,9 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /<th>Cars<\/th>/, 'has vehicle load column');
   assert.match(html, /function formatCarLoad/, 'formats filled vehicle spaces from WSF space data');
   assert.match(html, /max - open/, 'computes cars carried from max spaces minus open drive-up spaces');
-  assert.match(html, /departureSpace:\s*scheduledTrip\?\.departureSpace/, 'carries frozen departure-time space data onto GPS-observed table rows');
-  assert.match(html, /space:\s*scheduledTrip\?\.departureSpace\s*\|\|\s*scheduledTrip\?\.space/, 'uses frozen departure-space before falling back to matched schedule space');
-  assert.match(html, /trip\?\.departureSpace\s*\|\|\s*trip\?\.space/, 'formats vehicle load from frozen departure-space when present');
+  assert.match(html, /const departureSpace = usableVehicleSpace\(scheduledTrip\?\.departureSpace\)/, 'ignores empty frozen departure-space objects');
+  assert.match(html, /space: departureSpace \|\| scheduleSpace \|\| null/, 'uses frozen departure-space before falling back to matched schedule space');
+  assert.match(html, /usableVehicleSpace\(trip\?\.departureSpace\) \|\| usableVehicleSpace\(trip\?\.space\)/, 'formats vehicle load from usable frozen departure-space when present');
   assert.match(html, /actual-sailing/, 'uses row background color for actual sailings');
   assert.doesNotMatch(html, /scheduled-sailing/, 'does not render schedule-only rows in the lower tables');
   assert.doesNotMatch(html, /missed-sailing/, 'does not render missed schedule slots as lower-table rows');

@@ -844,6 +844,8 @@
     }
 
     function tableTripFromGpsDeparture(departure, scheduledTrip = null) {
+      const departureSpace = usableVehicleSpace(scheduledTrip?.departureSpace);
+      const scheduleSpace = usableVehicleSpace(scheduledTrip?.space);
       return {
         direction: departure.direction,
         fromTerminalName: departure.fromTerminal,
@@ -854,8 +856,8 @@
         actualDepartureMs: departure.ms,
         arrivalMs: departure.arrivalMs || null,
         arrivalBasis: departure.arrivalMs ? 'gps-observed-terminal' : '',
-        departureSpace: scheduledTrip?.departureSpace || null,
-        space: scheduledTrip?.departureSpace || scheduledTrip?.space || null,
+        departureSpace,
+        space: departureSpace || scheduleSpace || null,
         vesselName: departure.vesselName || scheduledTrip?.vesselName || 'Unknown',
         vesselKey: departure.vesselKey || '',
         gpsOnly: true,
@@ -1100,7 +1102,7 @@
     }
 
     function carLoad(trip) {
-      const space = trip?.departureSpace || trip?.space || {};
+      const space = usableVehicleSpace(trip?.departureSpace) || usableVehicleSpace(trip?.space) || {};
       const max = Number(space.maxSpaces);
       const open = Number(space.driveUpSpaces);
       if (!Number.isFinite(max) || max <= 0 || !Number.isFinite(open)) return null;
@@ -1118,6 +1120,14 @@
     function carLoadTitle(trip) {
       const load = carLoad(trip);
       return load ? `${load.carried} of ${load.max} vehicle spaces filled at observed departure` : 'vehicle space count unavailable';
+    }
+
+    function usableVehicleSpace(space) {
+      return space && (
+        Number.isFinite(space.driveUpSpaces) ||
+        Number.isFinite(space.maxSpaces) ||
+        space.hexColor
+      ) ? space : null;
     }
 
     function addDays(date, days) {

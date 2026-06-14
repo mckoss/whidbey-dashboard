@@ -2321,11 +2321,11 @@ function mergeTripSpace(existing = {}, next = {}) {
   return hasNextSpace ? next : (existing || next || {});
 }
 
-function mergeTripDepartureSpace(existing = {}, existingSpace = {}, nextSpace = {}, actualDepartureMs = null) {
+function mergeTripDepartureSpace(existing = null, existingSpace = {}, nextSpace = {}, actualDepartureMs = null) {
   if (hasTripSpace(existing)) return existing;
-  if (!actualDepartureMs) return existing || {};
+  if (!actualDepartureMs) return null;
   const candidate = hasTripSpace(existingSpace) ? existingSpace : nextSpace;
-  return hasTripSpace(candidate) ? { ...candidate } : (existing || {});
+  return hasTripSpace(candidate) ? { ...candidate } : null;
 }
 
 function applyGpsDepartureSpaceSnapshots(day) {
