@@ -1715,6 +1715,72 @@ test('ferry history page — atDock false starts an observed departure before le
   assert.equal(departures[0].toTerminal, 'Clinton');
 });
 
+test('ferry history page — matched WSF actual departure can beat GPS departure sample', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'ferry-history.html'), 'utf8');
+  const script = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+
+  const element = {
+    style: {},
+    hidden: false,
+    textContent: '',
+    innerHTML: '',
+    value: '',
+    addEventListener: () => {},
+  };
+  const context = {
+    console,
+    Date,
+    URL,
+    URLSearchParams,
+    setInterval: () => 0,
+    setTimeout: () => 0,
+    clearInterval: () => {},
+    fetch: () => Promise.resolve({ ok: true, json: () => Promise.resolve({}) }),
+    document: {
+      hidden: false,
+      addEventListener: () => {},
+      getElementById: () => element,
+    },
+    window: {
+      location: {
+        search: '',
+        href: 'https://example.test/ferry-history',
+      },
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(script + `\nthis.__historyTest = { gpsObservedScheduleStats, tableTripRows };`, context);
+
+  const scheduledMs = Date.UTC(2026, 5, 14, 22, 35);
+  const wsfActualMs = Date.UTC(2026, 5, 14, 22, 53, 52);
+  const gpsActualMs = Date.UTC(2026, 5, 14, 22, 54, 26);
+  const stats = context.__historyTest.gpsObservedScheduleStats([{
+    key: '68:Tokitae',
+    name: 'Tokitae',
+    points: [
+      { ms: Date.UTC(2026, 5, 14, 22, 53, 26), pct: 0.99, atDock: true },
+      { ms: gpsActualMs, pct: 0.99, atDock: false },
+      { ms: Date.UTC(2026, 5, 14, 23, 10, 0), pct: 0.03, atDock: true },
+    ],
+  }], [{
+    direction: 'mukilteo-to-clinton',
+    fromTerminalName: 'Mukilteo',
+    toTerminalName: 'Clinton',
+    scheduledDepartureMs: scheduledMs,
+    actualDepartureMs: wsfActualMs,
+    vesselName: 'Tokitae',
+  }]);
+  const rows = context.__historyTest.tableTripRows(stats);
+
+  assert.equal(rows.length, 1, 'builds one table row for the observed trip');
+  assert.equal(rows[0].actualDepartureMs, wsfActualMs,
+    'uses the earlier server-confirmed WSF actual departure over the later GPS sample');
+});
+
 test('config example — documents runtime and Google admin auth configuration', async () => {
   const { readFileSync } = await import('fs');
   const { dirname: dn, join: jn } = await import('path');

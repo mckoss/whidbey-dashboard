@@ -933,6 +933,10 @@
     function tableTripFromGpsDeparture(departure, scheduledTrip = null) {
       const departureSpace = usableVehicleSpace(scheduledTrip?.departureSpace);
       const scheduleSpace = usableVehicleSpace(scheduledTrip?.space);
+      const scheduledActualMs = actualDepartureMs(scheduledTrip);
+      const departureMs = scheduledActualMs
+        ? Math.min(scheduledActualMs, departure.ms)
+        : departure.ms;
       return {
         direction: departure.direction,
         fromTerminalName: departure.fromTerminal,
@@ -940,7 +944,7 @@
         fromTerminalId: departure.fromTerminal === 'Clinton' ? 5 : 14,
         toTerminalId: departure.toTerminal === 'Clinton' ? 5 : 14,
         scheduledDepartureMs: scheduledTrip?.scheduledDepartureMs || null,
-        actualDepartureMs: departure.ms,
+        actualDepartureMs: departureMs,
         arrivalMs: departure.arrivalMs || null,
         arrivalBasis: departure.arrivalMs ? 'gps-observed-terminal' : '',
         departureSpace,
