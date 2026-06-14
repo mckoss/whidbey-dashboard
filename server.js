@@ -1189,23 +1189,27 @@ function normalizeFerryHistoryDay(day) {
     operationalDay,
     vesselSamples: Array.isArray(day.vesselSamples) ? day.vesselSamples : [],
     trips: (day.trips || []).map(trip => {
-      if (!trip.actualDepartureMs ||
-          trip.actualDepartureMs >= trip.scheduledDepartureMs - FERRY_HISTORY_DEPARTURE_MATCH_MS) {
-        const observedVessel = observedVesselForTrip(trip, trip.actualDepartureMs);
+      const cleanTrip = {
+        ...trip,
+        departureSpace: hasTripSpace(trip.departureSpace) ? trip.departureSpace : null,
+      };
+      if (!cleanTrip.actualDepartureMs ||
+          cleanTrip.actualDepartureMs >= cleanTrip.scheduledDepartureMs - FERRY_HISTORY_DEPARTURE_MATCH_MS) {
+        const observedVessel = observedVesselForTrip(cleanTrip, cleanTrip.actualDepartureMs);
         const normalized = observedVessel ? {
-          ...trip,
+          ...cleanTrip,
           vesselName: observedVessel.vesselName,
           vesselId: observedVessel.vesselId,
-        } : trip;
+        } : cleanTrip;
         return {
           ...normalized,
           status: ferryHistoryTripStatus(normalized, null, reportMs),
         };
       }
       const normalized = {
-        ...trip,
+        ...cleanTrip,
         actualDepartureMs: null,
-        arrivalMs: trip.scheduledDepartureMs + FERRY_CROSSING_ESTIMATE_MS,
+        arrivalMs: cleanTrip.scheduledDepartureMs + FERRY_CROSSING_ESTIMATE_MS,
         arrivalBasis: 'scheduled-estimate',
       };
       return {

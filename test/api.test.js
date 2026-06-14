@@ -312,6 +312,7 @@ test('ferry/history endpoint — returns a dated trip log shell and validates da
   assert.match(source, /space: mergeTripSpace\(existing\.space, next\.space\)/, 'does not wipe old non-null space counts when the WSF space feed drops past sailings');
   assert.match(source, /function mergeTripDepartureSpace/, 'freezes vehicle-space data once a departure is observed');
   assert.match(source, /departureSpace: mergeTripDepartureSpace\(existing\.departureSpace, existing\.space, next\.space, actualDepartureMs\)/, 'persists a departure-time space snapshot separately from the latest schedule space');
+  assert.match(source, /departureSpace: hasTripSpace\(trip\.departureSpace\) \? trip\.departureSpace : null/, 'normalizes empty departure-space snapshots away');
   assert.match(source, /function applyGpsDepartureSpaceSnapshots/, 'freezes vehicle-space data from GPS-observed table departures');
   assert.match(source, /const observations = ferryGpsScheduleObservations\(day\)/, 'uses the same GPS schedule allocation path for departure-space snapshots');
   assert.match(source, /observedDepartureMs: departure\.ms/, 'stores the GPS-observed departure time with the frozen vehicle-space snapshot');
