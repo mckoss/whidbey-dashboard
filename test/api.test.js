@@ -973,6 +973,40 @@ test('ferry/departures endpoint — GPS vessel state forecasts destination depar
   assert.equal(d.resolvedSailings[`14:${m1605}`].timingSource, 'gps-vessel-state', 'resolved sailings identify the new forecast basis');
 });
 
+test('ferry/departures endpoint — approach-zone vessel is not available until docked or ETA plus turnaround', async () => {
+  const historyDate = '2026-06-25';
+  const sampledAtMs = Date.UTC(2026, 5, 25, 16, 0);
+  const m1605 = Date.UTC(2026, 5, 25, 16, 5);
+  const expectedEtaMs = Date.UTC(2026, 5, 25, 16, 2, 49, 231);
+  const expectedDepartureMs = expectedEtaMs + 10 * 60 * 1000;
+  const historyDir = join(dataDir, 'ferry-history');
+  await mkdir(historyDir, { recursive: true });
+  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+    date: historyDate,
+    generatedAt: new Date(sampledAtMs).toISOString(),
+    sampledAtMs,
+    trips: [
+      ferryTestTrip(historyDate, 'mukilteo-to-clinton', 14, 5, m1605),
+    ],
+    vesselSamples: [
+      ferryTestSample(Date.UTC(2026, 5, 25, 15, 50), 'Tokitae', 68, 0.90, { arrivingTerminalId: 14, atDock: false }),
+      ferryTestSample(Date.UTC(2026, 5, 25, 15, 55), 'Tokitae', 68, 0.95, { arrivingTerminalId: 14, atDock: false }),
+      ferryTestSample(sampledAtMs, 'Tokitae', 68, 0.978, { arrivingTerminalId: 14, atDock: false }),
+    ],
+    currentVessels: [],
+  }, null, 2));
+
+  const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
+  const status = Object.values(d.vesselStatuses).find(v => v.vesselName === 'Tokitae');
+  assert.equal(status.status, 'underway-to-mukilteo',
+    'a vessel inside the broad approach zone but not docked is still underway');
+  assert.equal(status.etaMs, expectedEtaMs, 'uses GPS motion to estimate remaining approach time');
+  assert.equal(status.availableMs, expectedDepartureMs,
+    'availability waits for ETA plus the terminal turnaround instead of using now');
+  assert.equal(d.predictedDepartures[`14:${m1605}`].projectedDepartureMs, expectedDepartureMs,
+    'does not project the Mukilteo departure at the raw scheduled time before docking');
+});
+
 test('ferry/departures endpoint — inbound vessel forecast uses recent same-terminal docked time', async () => {
   const historyDate = '2026-06-21';
   const sampledAtMs = Date.UTC(2026, 5, 21, 18, 0);

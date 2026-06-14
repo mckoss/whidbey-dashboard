@@ -1090,6 +1090,7 @@ const FERRY_VESSEL_CORRECTION_LOOKAHEAD_MS = 4 * 60 * 60 * 1000;
 const FERRY_VESSEL_CORRECTION_RECENCY_MS = 2 * 60 * 60 * 1000;
 const FERRY_MIN_SAME_VESSEL_GAP_MS = 55 * 60 * 1000;
 const FERRY_GPS_TERMINAL_ZONE_PCT = 0.12;
+const FERRY_GPS_DOCK_ZONE_PCT = 0.04;
 const FERRY_GPS_STARTUP_IGNORE_MS = 10 * 60 * 1000;
 const FERRY_GPS_FIRST_DEPARTURE_GRACE_MS = 15 * 60 * 1000;
 const FERRY_GPS_TRAILING_MISSED_GRACE_MS = 10 * 60 * 1000;
@@ -1561,6 +1562,12 @@ function ferryGpsTerminalZone(pct) {
   return '';
 }
 
+function ferryGpsDockTerminalZone(pct) {
+  if (pct <= FERRY_GPS_DOCK_ZONE_PCT) return 'Clinton';
+  if (pct >= 1 - FERRY_GPS_DOCK_ZONE_PCT) return 'Mukilteo';
+  return '';
+}
+
 function ferryTerminalProgress(lat, lon) {
   const ax = CLINTON_TERMINAL.lon;
   const ay = CLINTON_TERMINAL.lat;
@@ -1685,7 +1692,9 @@ function ferryVesselStatusSummary(day, nowMs = Date.now(), terminalTurnarounds =
       .slice(-FERRY_GPS_STATE_SAMPLE_COUNT);
     if (!recent.length) continue;
     const latest = recent[recent.length - 1];
-    const terminalName = ferryGpsTerminalZone(latest.pct);
+    const terminalName = latest.atDock === false
+      ? ''
+      : (latest.atDock === true ? ferryGpsTerminalZone(latest.pct) : ferryGpsDockTerminalZone(latest.pct));
     const latestTerminalId = terminalIdForName(terminalName);
     const vesselId = track.id || track.name || 'Unknown';
     if (oneBoatMode.active && !oneBoatMode.vesselIds.has(vesselId)) continue;
