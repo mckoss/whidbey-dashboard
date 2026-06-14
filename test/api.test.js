@@ -312,6 +312,10 @@ test('ferry/history endpoint — returns a dated trip log shell and validates da
   assert.match(source, /space: mergeTripSpace\(existing\.space, next\.space\)/, 'does not wipe old non-null space counts when the WSF space feed drops past sailings');
   assert.match(source, /function mergeTripDepartureSpace/, 'freezes vehicle-space data once a departure is observed');
   assert.match(source, /departureSpace: mergeTripDepartureSpace\(existing\.departureSpace, existing\.space, next\.space, actualDepartureMs\)/, 'persists a departure-time space snapshot separately from the latest schedule space');
+  assert.match(source, /function applyGpsDepartureSpaceSnapshots/, 'freezes vehicle-space data from GPS-observed table departures');
+  assert.match(source, /const observations = ferryGpsScheduleObservations\(day\)/, 'uses the same GPS schedule allocation path for departure-space snapshots');
+  assert.match(source, /observedDepartureMs: departure\.ms/, 'stores the GPS-observed departure time with the frozen vehicle-space snapshot');
+  assert.match(source, /applyGpsDepartureSpaceSnapshots\(day\)/, 'applies departure-space snapshots before writing history files');
 });
 
 test('ferry/history endpoint — ignores impossible early actual departures from stale vessel matches', async () => {
@@ -372,7 +376,7 @@ test('ferry/history recorder — matches swapped underway vessels with blank WSF
   assert.match(source, /a\.priority - b\.priority \|\| a\.score - b\.score/,
     'moving left-dock GPS evidence outranks a scheduled vessel still sitting at the dock');
   assert.match(source, /function mergeFerryVesselSamples/, 'persists raw vessel GPS samples outside scheduled trips');
-  assert.match(source, /vesselSamples: mergeFerryVesselSamples\(existing\.vesselSamples, vessels, nowMs\)/,
+  assert.match(source, /const vesselSamples = mergeFerryVesselSamples\(existing\.vesselSamples, vessels, nowMs\)/,
     'records raw vessel GPS samples for the history graph independent of trip matching');
   assert.match(source, /!vessel\.atDock &&[\s\S]*?vessel\.leftDockMs &&[\s\S]*?!vessel\.arrivingTerminalId/,
     'allows underway vessels with blank arriving terminal to match by departure terminal and left-dock time');

@@ -2328,6 +2328,18 @@ function mergeTripDepartureSpace(existing = {}, existingSpace = {}, nextSpace = 
   return hasTripSpace(candidate) ? { ...candidate } : (existing || {});
 }
 
+function applyGpsDepartureSpaceSnapshots(day) {
+  const observations = ferryGpsScheduleObservations(day);
+  for (const { trip, departure } of observations.matched || []) {
+    if (hasTripSpace(trip.departureSpace) || !hasTripSpace(trip.space)) continue;
+    trip.departureSpace = {
+      ...trip.space,
+      observedDepartureMs: departure.ms,
+      observedDepartureAt: new Date(departure.ms).toISOString(),
+    };
+  }
+}
+
 function hasTripSpace(space = {}) {
   return Boolean(space) &&
     (Number.isFinite(space.driveUpSpaces) ||
@@ -2399,21 +2411,25 @@ async function recordFerryHistoryDay(date = ferryHistoryDateForMs(), nowMs = Dat
     byId.set(scheduled.id, mergeTripObservation(existingTrip, scheduled, vessel, nowMs));
   }
 
+  const vesselSamples = mergeFerryVesselSamples(existing.vesselSamples, vessels, nowMs);
+  const trips = [...byId.values()]
+    .filter(trip => trip.date === date)
+    .sort((a, b) => a.scheduledDepartureMs - b.scheduledDepartureMs || a.direction.localeCompare(b.direction));
+
   const day = {
     date,
     operationalDay: ferryHistoryOperationalDay(date),
     generatedAt: new Date(nowMs).toISOString(),
     sampledAtMs: nowMs,
     retentionDays: FERRY_HISTORY_RETENTION_DAYS,
-    trips: [...byId.values()]
-      .filter(trip => trip.date === date)
-      .sort((a, b) => a.scheduledDepartureMs - b.scheduledDepartureMs || a.direction.localeCompare(b.direction)),
+    trips,
     currentVessels: vessels,
-    vesselSamples: mergeFerryVesselSamples(existing.vesselSamples, vessels, nowMs),
+    vesselSamples,
     errors: [clintonSchedule, clintonSpace, mukilteoSchedule, mukilteoSpace, vesselData]
       .map(value => value?.error)
       .filter(Boolean),
   };
+  applyGpsDepartureSpaceSnapshots(day);
   writeFerryHistoryDay(day);
   pruneFerryHistory(nowMs);
   return day;
