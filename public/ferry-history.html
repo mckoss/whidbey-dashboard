@@ -336,13 +336,6 @@
     tbody tr.scheduled-sailing:hover { background: rgba(251, 191, 36, 0.12); }
     tbody tr.missed-sailing { background: rgba(248, 113, 113, 0.08); }
     tbody tr.missed-sailing:hover { background: rgba(248, 113, 113, 0.13); }
-    .direction {
-      width: 2.4rem;
-      color: var(--accent);
-      font-size: 1.15rem;
-      line-height: 1;
-      text-align: center;
-    }
     .vessel { font-weight: 600; }
     .sched,
     .duration { text-align: right; }
@@ -391,10 +384,6 @@
       th {
         font-size: 0.58rem;
         letter-spacing: 0;
-      }
-      .direction {
-        width: 1.35rem;
-        font-size: 1rem;
       }
       .table-wrap { overflow-x: hidden; }
       .terminal-tables { padding: 0.5rem; gap: 0.6rem; }
@@ -573,7 +562,7 @@
       summaryEl.textContent = 'Loading ferry history...';
       diagramEl.innerHTML = '';
       legendEl.innerHTML = '';
-      tablesEl.innerHTML = '<div class="terminal-table"><div class="table-wrap"><table><tbody><tr><td colspan="6" class="empty">Loading ferry history...</td></tr></tbody></table></div></div>';
+      tablesEl.innerHTML = '<div class="terminal-table"><div class="table-wrap"><table><tbody><tr><td colspan="5" class="empty">Loading ferry history...</td></tr></tbody></table></div></div>';
       errorEl.hidden = true;
     }
 
@@ -605,7 +594,7 @@
       summaryEl.textContent = `Error: ${message}`;
       diagramEl.innerHTML = '';
       legendEl.innerHTML = '';
-      tablesEl.innerHTML = '<div class="terminal-table"><div class="table-wrap"><table><tbody><tr><td colspan="6" class="empty">No ferry history is available.</td></tr></tbody></table></div></div>';
+      tablesEl.innerHTML = '<div class="terminal-table"><div class="table-wrap"><table><tbody><tr><td colspan="5" class="empty">No ferry history is available.</td></tr></tbody></table></div></div>';
       errorEl.hidden = false;
       errorEl.textContent = message;
     }
@@ -960,7 +949,7 @@
 
     function renderRows(trips, gpsScheduleStats = {}) {
       if (!trips.length) {
-        tablesEl.innerHTML = '<div class="terminal-table"><div class="table-wrap"><table><tbody><tr><td colspan="6" class="empty">No trips have been recorded for this date yet.</td></tr></tbody></table></div></div>';
+        tablesEl.innerHTML = '<div class="terminal-table"><div class="table-wrap"><table><tbody><tr><td colspan="5" class="empty">No trips have been recorded for this date yet.</td></tr></tbody></table></div></div>';
         return;
       }
       const tableTrips = tableTripRows(trips, gpsScheduleStats);
@@ -990,20 +979,17 @@
 
     function terminalTable(terminal, trips, allTrips) {
       const rows = trips.filter(trip => trip.fromTerminalName === terminal);
-      const title = `${terminal} departures`;
       const rowHtml = rows.length
         ? rows.map(trip => tableRow(trip, allTrips)).join('')
-        : '<tr><td colspan="6" class="empty">No scheduled departures.</td></tr>';
+        : '<tr><td colspan="5" class="empty">No scheduled departures.</td></tr>';
       return `<div class="terminal-table" data-terminal="${escapeHtml(terminal)}">
         <div class="terminal-heading">
-          <span>${escapeHtml(title)}</span>
-          <span class="meta">${rows.length} scheduled</span>
+          <span>${escapeHtml(terminal)}</span>
         </div>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th aria-label="Direction"></th>
                 <th>Vessel</th>
                 <th>Sched</th>
                 <th>Actual</th>
@@ -1022,10 +1008,8 @@
         actual: 'actual-sailing',
         missed: 'missed-sailing',
       }[trip.tableStatus] || 'scheduled-sailing';
-      const direction = directionGlyph(trip);
       const dockMs = dockDurationMs(trip, allTrips);
       return `<tr class="${rowClass}">
-        <td class="direction" title="${escapeHtml(trip.fromTerminalName)} to ${escapeHtml(trip.toTerminalName)}">${direction}</td>
         <td class="vessel">${escapeHtml(trip.vesselName || 'Unknown')}</td>
         <td class="sched" title="${formatTimeMs(trip.scheduledDepartureMs)}">${formatTableTimeMs(trip.scheduledDepartureMs)}</td>
         <td>${tripCell(trip)}</td>
@@ -1040,10 +1024,6 @@
       if (!departed) return '<span class="empty">--</span>';
       const late = departed - trip.scheduledDepartureMs > 5 * 60 * 1000;
       return `<span class="actual ${late ? 'late' : 'ok'}" title="Departed ${formatTimeMs(departed)}">${formatTableTimeMs(departed)}</span>`;
-    }
-
-    function directionGlyph(trip) {
-      return trip.direction === 'mukilteo-to-clinton' ? '&larr;' : '&rarr;';
     }
 
     function tripKey(trip) {
