@@ -1426,7 +1426,8 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.doesNotMatch(html, /actual departures/, 'does not describe LeftDock matches as actual departures');
   assert.match(html, /const GPS_TERMINAL_ZONE_PCT = 0\.12/, 'uses a stable terminal zone threshold for GPS crossing counts');
   assert.match(html, /const GPS_ARRIVAL_TERMINAL_ZONE_PCT = 0\.04/, 'uses a tighter GPS threshold before filling actual arrival and travel time');
-  assert.match(html, /arrivalTerminal === pendingDeparture\.toTerminal/, 'requires dock-side GPS confirmation before closing an in-progress crossing');
+  assert.match(html, /atDock: sample\.atDock \?\? null/, 'carries WSF dock state into client-side GPS track points');
+  assert.match(html, /arrivalTerminal === pendingDeparture\.toTerminal && point\.atDock !== false/, 'requires dock-side GPS confirmation before closing an in-progress crossing');
   assert.match(html, /function gpsTerminalZone/, 'classifies terminal zones for GPS crossing counts');
   assert.match(html, /clipStart = Math\.max\(departMs, segment\.startMs\)/, 'clips schedule fallback lines at the start of each half-day segment');
   assert.match(html, /clipEnd = Math\.min\(arriveMs, segment\.endMs\)/, 'clips schedule fallback lines at the end of each half-day segment');

@@ -808,6 +808,7 @@
         track.points.push({
           ms,
           pct: terminalProgress(sample.latitude, sample.longitude),
+          atDock: sample.atDock ?? null,
         });
       }
       byVessel.set(key, track);
@@ -863,7 +864,7 @@
         const currentTerminal = gpsTerminalZone(point.pct);
         const arrivalTerminal = gpsTerminalZone(point.pct, GPS_ARRIVAL_TERMINAL_ZONE_PCT);
         if (pendingDeparture) {
-          if (arrivalTerminal === pendingDeparture.toTerminal) {
+          if (arrivalTerminal === pendingDeparture.toTerminal && point.atDock !== false) {
             pendingDeparture.arrivalMs = point.ms;
             departures.push(pendingDeparture);
             pendingDeparture = null;
