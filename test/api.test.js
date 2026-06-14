@@ -1020,6 +1020,39 @@ test('ferry/departures endpoint — newly docked vessel waits for terminal turna
     'forecast waits for the docked turnaround instead of using the scheduled time');
 });
 
+test('ferry/departures endpoint — still-docked vessel keeps a future departure floor after dwell estimate expires', async () => {
+  const historyDate = '2026-06-28';
+  const sampledAtMs = Date.UTC(2026, 5, 28, 16, 0);
+  const dockArrivalMs = Date.UTC(2026, 5, 28, 15, 40);
+  const m1545 = Date.UTC(2026, 5, 28, 15, 45);
+  const expectedDepartureMs = sampledAtMs + 2 * 60 * 1000;
+  const historyDir = join(dataDir, 'ferry-history');
+  await mkdir(historyDir, { recursive: true });
+  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+    date: historyDate,
+    generatedAt: new Date(sampledAtMs).toISOString(),
+    sampledAtMs,
+    vesselSamples: [
+      ferryTestSample(dockArrivalMs, 'Tokitae', 68, 1, { arrivingTerminalId: 14, atDock: true }),
+      ferryTestSample(Date.UTC(2026, 5, 28, 15, 50), 'Tokitae', 68, 1, { arrivingTerminalId: 14, atDock: true }),
+      ferryTestSample(sampledAtMs, 'Tokitae', 68, 1, { arrivingTerminalId: 14, atDock: true }),
+    ],
+    currentVessels: [],
+    trips: [
+      ferryTestTrip(historyDate, 'mukilteo-to-clinton', 14, 5, m1545),
+    ],
+  }, null, 2));
+
+  const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
+  const status = Object.values(d.vesselStatuses).find(v => v.vesselName === 'Tokitae');
+  assert.equal(status.estimatedDwellCompleteMs, dockArrivalMs + 10 * 60 * 1000,
+    'keeps the learned dwell target for diagnostics');
+  assert.equal(status.availableMs, expectedDepartureMs,
+    'a vessel still reported at dock is projected slightly into the future after dwell expires');
+  assert.equal(d.predictedDepartures[`14:${m1545}`].projectedDepartureMs, expectedDepartureMs,
+    'the chip does not show an at-dock vessel as departed before GPS confirms departure');
+});
+
 test('ferry/departures endpoint — inbound vessel forecast uses recent same-terminal docked time', async () => {
   const historyDate = '2026-06-21';
   const sampledAtMs = Date.UTC(2026, 5, 21, 18, 0);

@@ -1084,6 +1084,7 @@ const FERRY_TURNAROUND_ESTIMATE_MS = 15 * 60 * 1000;
 const FERRY_OPERATIONAL_TURNAROUND_MS = 10 * 60 * 1000;
 const FERRY_MIN_TURNAROUND_OBSERVATION_MS = 3 * 60 * 1000;
 const FERRY_MAX_TURNAROUND_OBSERVATION_MS = 45 * 60 * 1000;
+const FERRY_DOCKED_ACTIVE_LOADING_BUFFER_MS = 2 * 60 * 1000;
 const FERRY_OPERATIONAL_INTERVAL_MS = 30 * 60 * 1000;
 const FERRY_HISTORY_DEPARTURE_MATCH_MS = 20 * 60 * 1000;
 const FERRY_VESSEL_CORRECTION_LOOKAHEAD_MS = 4 * 60 * 60 * 1000;
@@ -1760,10 +1761,13 @@ function ferryVesselStatusSummary(day, nowMs = Date.now(), terminalTurnarounds =
     if (latestTerminalId) {
       const turnaround = ferryTerminalTurnaroundEstimate(terminalTurnarounds, latestTerminalId);
       const dockArrivalMs = ferryTrackDockArrivalMs(track, latestTerminalId, nowMs);
-      const dockDepartureEstimateMs = Number.isFinite(dockArrivalMs)
+      const dwellCompleteMs = Number.isFinite(dockArrivalMs)
         ? dockArrivalMs + turnaround.turnaroundMs
         : nowMs;
-      const availableMs = Math.max(nowMs, dockDepartureEstimateMs);
+      const stillDockedDepartureFloorMs = latest.atDock === true
+        ? nowMs + FERRY_DOCKED_ACTIVE_LOADING_BUFFER_MS
+        : nowMs;
+      const availableMs = Math.max(dwellCompleteMs, stillDockedDepartureFloorMs);
       statuses[track.key] = {
         vesselName: track.name,
         vesselId: track.id,
@@ -1775,8 +1779,9 @@ function ferryVesselStatusSummary(day, nowMs = Date.now(), terminalTurnarounds =
         dockArrivalMs,
         estimatedTurnaroundMs: turnaround.turnaroundMs,
         estimatedTurnaroundBasis: turnaround.basis,
-        estimatedDockDepartureMs: dockDepartureEstimateMs,
-        estimatedRemainingDockMs: Math.max(0, dockDepartureEstimateMs - nowMs),
+        estimatedDwellCompleteMs: dwellCompleteMs,
+        estimatedDockDepartureMs: availableMs,
+        estimatedRemainingDockMs: Math.max(0, availableMs - nowMs),
         availableTerminalId: latestTerminalId,
         availableMs,
         observedAtMs: latest.ms,
