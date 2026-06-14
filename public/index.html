@@ -1271,14 +1271,7 @@ function buildVesselMap(vesselData, departureData = null) {
     resolvedVessels: legacy.resolvedVessels || {},
     resolvedSailings: departureData?.resolvedSailings || {},
     vesselStatuses: departureData?.vesselStatuses || {},
-    routeDelays: legacy.routeDelays || {},
   };
-}
-
-function routeDelayForTerminal(vesselMap, fromTerminalId) {
-  const delays = vesselMap?.routeDelays;
-  if (!delays) return null;
-  return delays[fromTerminalId] || delays[String(fromTerminalId)] || null;
 }
 
 function serverDepartureForSailing(s, vesselMap, fromTerminalId) {
@@ -1454,8 +1447,6 @@ function getRawSailingTiming(s, vesselMap, fromTerminalId, parsedSailings = null
 
 function computeSailingTimings(parsedSailings, vesselMap = {}, fromTerminalId = 5) {
   const now = Date.now();
-  const routeDelay = routeDelayForTerminal(vesselMap, fromTerminalId);
-  const routeDelayMs = routeDelay && routeDelay.delayMs > LATE_THRESHOLD_MS ? routeDelay.delayMs : 0;
   return parsedSailings.map(s => {
     const resolved = resolvedSailingForSailing(s, vesselMap, fromTerminalId);
     if (resolved) {
@@ -1486,15 +1477,11 @@ function computeSailingTimings(parsedSailings, vesselMap = {}, fromTerminalId = 
 
     const raw = getRawSailingTiming(s, vesselMap, fromTerminalId, parsedSailings);
     const predictedDeparture = predictedDepartureForSailing(s, vesselMap, fromTerminalId);
-    // Inferred route delay applies only to sailings that have no direct signal
-    // of their own (no confirmed/observed departure, no live vessel signal) and
-    // that would still be departing in the future at the route's current delay.
-    // A schedule-only WSF vessel assignment is not direct evidence; once the
-    // route is slipping, those labels can be stale by a whole sailing. Server
-    // predictions, when present, carry the regenerated vessel chain forward.
+    // Server predictions, when present, carry the regenerated vessel chain
+    // forward from GPS-confirmed vessel availability.
     const predictedDelayMs = Math.max(0, predictedDeparture?.delayMs || 0);
-    const projectedDelayMs = Math.max(routeDelayMs, predictedDelayMs);
-    const projectedMs = predictedDeparture?.projectedDepartureMs || (raw.scheduledMs + projectedDelayMs);
+    const projectedDelayMs = predictedDelayMs;
+    const projectedMs = predictedDeparture?.projectedDepartureMs || raw.scheduledMs;
     const eligible = projectedDelayMs > 0 &&
       projectedMs >= now &&
       !raw.serverDeparture &&
@@ -1511,9 +1498,8 @@ function computeSailingTimings(parsedSailings, vesselMap = {}, fromTerminalId = 
         ? {
             projectedDepartureMs: projectedMs,
             delayMs: propagatedDelayMs,
-            sampleCount: routeDelay?.sampleCount || null,
             vesselName: predictedDeparture?.vesselName || '',
-            basis: predictedDeparture?.basis || routeDelay?.basis || 'recent-observed-departures',
+            basis: predictedDeparture?.basis || 'gps-vessel-forecast',
           }
         : null,
     };

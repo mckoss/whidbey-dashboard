@@ -541,17 +541,17 @@ test('ferry/departures endpoint — predicts future vessel chain from observed a
     'the resolved vessel source makes the server-side interpretation explicit');
   assert.equal(d.resolvedSailings[`14:${m305}`].status, 'projected',
     'the server resolves the chip status');
-  assert.equal(d.resolvedSailings[`14:${m305}`].effectiveDepartureMs, m305 + 29 * 60 * 1000,
-    'the server resolves the chip effective time');
+  assert.equal(d.resolvedSailings[`14:${m305}`].effectiveDepartureMs, Date.UTC(2026, 5, 13, 3, 20),
+    'the server resolves the chip from vessel availability instead of route-level median delay');
   assert.equal(d.resolvedSailings[`14:${m305}`].vesselName, 'Suquamish',
     'the server resolves the chip vessel label');
-  assert.equal(d.predictedDepartures[`14:${m305}`].projectedDepartureMs, m305 + 29 * 60 * 1000,
-    'the predicted chain uses the route delay for the next sailing');
+  assert.equal(d.predictedDepartures[`14:${m305}`].projectedDepartureMs, Date.UTC(2026, 5, 13, 3, 20),
+    'the predicted chain uses the vessel availability for the next sailing');
   assert.equal(d.predictedDepartures[`5:${c315}`].vesselName, 'Tokitae',
     'the other vessel is chained through the opposite terminal before it can return');
   assert.equal(d.predictedDepartures[`14:${m335}`].vesselName, 'Tokitae',
     'Tokitae may be assigned later only after the forecast has carried it back across');
-  assert.ok(d.predictedDepartures[`14:${m335}`].projectedDepartureMs >= m335 + 29 * 60 * 1000,
+  assert.ok(d.predictedDepartures[`14:${m335}`].projectedDepartureMs >= Date.UTC(2026, 5, 13, 3, 45),
     'the 8:35-style slot is delayed to the vessel availability, not shown as on-time');
 });
 
@@ -833,7 +833,7 @@ test('ferry/departures endpoint — a single late departure is not enough to cla
   assert.equal(d.routeDelays['5'], undefined, 'one late departure alone does not establish a route delay');
 });
 
-test('ferry/departures endpoint — modest repeated lateness projects the route delay', async () => {
+test('ferry/departures endpoint — modest repeated lateness is diagnostic without an inbound vessel forecast', async () => {
   const historyDate = '2026-06-20';
   const sampledAtMs = Date.UTC(2026, 5, 20, 18, 0);
   const recent = [
@@ -859,8 +859,9 @@ test('ferry/departures endpoint — modest repeated lateness projects the route 
 
   const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
   assert.equal(d.routeDelays['5'].delayMs, 5 * 60 * 1000, 'two five-minute late departures establish a modest route delay');
-  assert.equal(d.resolvedSailings[`5:${nextMs}`].status, 'projected', 'next chip is projected instead of stuck on the scheduled time');
-  assert.equal(d.resolvedSailings[`5:${nextMs}`].effectiveDepartureMs, nextMs + 5 * 60 * 1000, 'next chip projects the repeated five-minute delay');
+  assert.equal(d.predictedDepartures[`5:${nextMs}`], undefined, 'recent lateness alone does not forecast a chip without vessel availability');
+  assert.equal(d.resolvedSailings[`5:${nextMs}`].status, 'scheduled', 'next chip stays scheduled until an inbound vessel forecast exists');
+  assert.equal(d.resolvedSailings[`5:${nextMs}`].effectiveDepartureMs, nextMs, 'next chip does not project by route delay alone');
 });
 
 function ferryTestTrip(historyDate, direction, fromTerminalId, toTerminalId, scheduledDepartureMs, overrides = {}) {
@@ -935,6 +936,63 @@ test('ferry/departures endpoint — GPS vessel state forecasts destination depar
   assert.equal(prediction.scheduledReferenceMs, m1605, 'maps the projection to the closest prior scheduled slot');
   assert.equal(d.resolvedSailings[`14:${m1605}`].displayScheduledMs, m1605, 'resolved sailings expose the scheduled display context');
   assert.equal(d.resolvedSailings[`14:${m1605}`].timingSource, 'gps-vessel-state', 'resolved sailings identify the new forecast basis');
+});
+
+test('ferry/departures endpoint — inbound vessel forecast uses recent same-terminal docked time', async () => {
+  const historyDate = '2026-06-21';
+  const sampledAtMs = Date.UTC(2026, 5, 21, 18, 0);
+  const m1630 = Date.UTC(2026, 5, 21, 16, 30);
+  const c1700 = Date.UTC(2026, 5, 21, 17, 0);
+  const m1725 = Date.UTC(2026, 5, 21, 17, 25);
+  const c1800 = Date.UTC(2026, 5, 21, 18, 0);
+  const historyDir = join(dataDir, 'ferry-history');
+  await mkdir(historyDir, { recursive: true });
+  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+    date: historyDate,
+    generatedAt: new Date(sampledAtMs).toISOString(),
+    sampledAtMs,
+    trips: [
+      ferryTestTrip(historyDate, 'mukilteo-to-clinton', 14, 5, m1630, {
+        actualDepartureMs: Date.UTC(2026, 5, 21, 16, 40),
+        arrivalMs: Date.UTC(2026, 5, 21, 16, 58),
+        arrivalBasis: 'observed-at-dock',
+        vesselName: 'Suquamish',
+        vesselId: 75,
+      }),
+      ferryTestTrip(historyDate, 'clinton-to-mukilteo', 5, 14, c1700, {
+        actualDepartureMs: c1700 + 10 * 60 * 1000,
+        arrivalMs: Date.UTC(2026, 5, 21, 17, 30),
+        arrivalBasis: 'observed-at-dock',
+        vesselName: 'Suquamish',
+        vesselId: 75,
+      }),
+      ferryTestTrip(historyDate, 'mukilteo-to-clinton', 14, 5, m1725, {
+        actualDepartureMs: Date.UTC(2026, 5, 21, 17, 42),
+        arrivalMs: Date.UTC(2026, 5, 21, 18, 0),
+        arrivalBasis: 'scheduled-estimate',
+        vesselName: 'Suquamish',
+        vesselId: 75,
+      }),
+      ferryTestTrip(historyDate, 'clinton-to-mukilteo', 5, 14, c1800),
+    ],
+    vesselSamples: [
+      ferryTestSample(Date.UTC(2026, 5, 21, 17, 50), 'Tokitae', 68, 0.35, { arrivingTerminalId: 5 }),
+      ferryTestSample(Date.UTC(2026, 5, 21, 17, 55), 'Tokitae', 68, 0.25, { arrivingTerminalId: 5 }),
+      ferryTestSample(sampledAtMs, 'Tokitae', 68, 0.15, { arrivingTerminalId: 5 }),
+    ],
+    currentVessels: [],
+  }, null, 2));
+
+  const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
+  assert.equal(d.terminalTurnarounds['5'].turnaroundMs, 12 * 60 * 1000,
+    'learns Clinton turnaround from the last vessel that arrived then departed there');
+  const status = Object.values(d.vesselStatuses).find(v => v.vesselName === 'Tokitae');
+  assert.equal(status.status, 'underway-to-clinton', 'detects the next scheduled vessel inbound to Clinton');
+  assert.equal(status.turnaroundMs, 12 * 60 * 1000, 'underway availability uses the learned Clinton docked time');
+  assert.equal(d.predictedDepartures[`5:${c1800}`].projectedDepartureMs, Date.UTC(2026, 5, 21, 18, 19, 30),
+    'projects the next Clinton departure as GPS arrival ETA plus learned docked time');
+  assert.equal(d.resolvedSailings[`5:${c1800}`].timingSource, 'gps-vessel-state',
+    'the chip labels the forecast as vessel-state based');
 });
 
 test('ferry/departures endpoint — operational forecast chains every 30 minutes and stops after close', async () => {
@@ -2241,7 +2299,7 @@ test('late ferry logic — overtaken missed slot does not propagate lateness to 
   assert.doesNotMatch(nextCard, /sail-time-est|sail-time-sched|was 9:00 AM/, 'following chip does not inherit the prior lateness');
 });
 
-test('late ferry logic — inferred route delay projects onto upcoming chips with no direct signal', async () => {
+test('late ferry logic — vessel forecast projects onto upcoming chips with no direct signal', async () => {
   const { readFileSync } = await import('fs');
   const { dirname: dn, join: jn } = await import('path');
   const { fileURLToPath: fu } = await import('url');
@@ -2313,13 +2371,26 @@ test('late ferry logic — inferred route delay projects onto upcoming chips wit
         scheduledDepartureMs: missedMs,
       },
     },
-    routeDelays: {
-      '5': {
-        fromTerminalId: 5,
+    predictedDepartures: {
+      [`5:${nextMs}`]: {
         direction: 'clinton-to-mukilteo',
+        fromTerminalId: 5,
+        toTerminalId: 14,
+        scheduledDepartureMs: nextMs,
+        projectedDepartureMs: nextMs + 20 * 60 * 1000,
         delayMs: 20 * 60 * 1000,
-        sampleCount: 2,
-        basis: 'recent-observed-departures',
+        vesselName: '',
+        basis: 'gps-vessel-state',
+      },
+      [`5:${laterMs}`]: {
+        direction: 'clinton-to-mukilteo',
+        fromTerminalId: 5,
+        toTerminalId: 14,
+        scheduledDepartureMs: laterMs,
+        projectedDepartureMs: laterMs + 20 * 60 * 1000,
+        delayMs: 20 * 60 * 1000,
+        vesselName: '',
+        basis: 'gps-vessel-state',
       },
     },
   });
@@ -2327,17 +2398,17 @@ test('late ferry logic — inferred route delay projects onto upcoming chips wit
   const timings = context.__lateTest.computeSailingTimings(sailings, vesselMap, 5);
   const byMs = ms => timings.find(t => t.scheduledMs === ms);
 
-  assert.equal(byMs(nextMs).propagatedDelayMs, 20 * 60 * 1000, 'upcoming chip inherits the inferred route delay');
+  assert.equal(byMs(nextMs).propagatedDelayMs, 20 * 60 * 1000, 'upcoming chip uses the vessel forecast delay');
   assert.equal(byMs(nextMs).effectiveMs, nextMs + 20 * 60 * 1000, 'projected departure pushes the effective (countdown) time out');
-  assert.equal(byMs(nextMs).routeDelayInfo.delayMs, 20 * 60 * 1000, 'exposes the inferred delay for display');
+  assert.equal(byMs(nextMs).routeDelayInfo.delayMs, 20 * 60 * 1000, 'exposes the vessel forecast delay for display');
   assert.equal(byMs(nextMs).hasDirectVesselSignal, false, 'a schedule-only WSF vessel assignment is not direct evidence');
-  assert.equal(byMs(laterMs).propagatedDelayMs, 20 * 60 * 1000, 'all upcoming chips reflect the current route condition');
+  assert.equal(byMs(laterMs).propagatedDelayMs, 20 * 60 * 1000, 'later predicted chips use their own vessel forecast entries');
   assert.equal(byMs(departedMs).propagatedDelayMs, 0, 'a chip with a confirmed departure is not overwritten by the inferred delay');
   assert.equal(byMs(departedMs).effectiveMs, departedMs + 20 * 60 * 1000, 'departed chip keeps its actual departure time');
   assert.equal(byMs(missedMs).propagatedDelayMs, 0, 'a server-confirmed missed slot is never reframed as a late upcoming boat');
 
   const nextCard = context.__lateTest.sailingCard(sailings[2], sailings, {}, vesselMap, 5);
-  assert.match(nextCard, /class="sail-time-est-route"/, 'inferred-delay time uses the amber route-delay style, not the red confirmed-late style');
+  assert.match(nextCard, /class="sail-time-est-route"/, 'forecast time uses the amber projected style, not the red confirmed-late style');
   assert.match(nextCard, /~8:55 AM/, 'shows the projected (tilde) departure time');
   assert.doesNotMatch(nextCard, /sail-route-delay|~20m late/, 'does not add a separate delay label');
   assert.match(nextCard, /\(sched 8:35 AM\)/, 'keeps the scheduled time visible for reference');
@@ -2350,9 +2421,9 @@ test('late ferry logic — inferred route delay projects onto upcoming chips wit
 });
 
 // Regression for the screenshot bug: WSF's space rows labeled three consecutive
-// half-hour Mukilteo→Clinton departures (7:35 / 8:05 / 8:35) all "Tokitae" while
-// the route delay projected later times. One vessel cannot make three back-to-back
-// same-direction crossings, so those low-confidence labels must not all render.
+// half-hour Mukilteo→Clinton departures (7:35 / 8:05 / 8:35) all "Tokitae".
+// One vessel cannot make three back-to-back same-direction crossings, so those
+// low-confidence labels must not all render.
 test('late ferry logic — a repeated space-row vessel is not shown on consecutive same-direction sailings', async () => {
   const { readFileSync } = await import('fs');
   const { dirname: dn, join: jn } = await import('path');
@@ -2416,13 +2487,16 @@ test('late ferry logic — a repeated space-row vessel is not shown on consecuti
         vesselId: 1,
       },
     },
-    routeDelays: {
-      '14': {
+    predictedDepartures: {
+      [`14:${s735}`]: {
         fromTerminalId: 14,
+        toTerminalId: 5,
         direction: 'mukilteo-to-clinton',
+        scheduledDepartureMs: s735,
+        projectedDepartureMs: s735 + 8 * 60 * 1000,
         delayMs: 8 * 60 * 1000,
-        sampleCount: 3,
-        basis: 'recent-observed-departures',
+        vesselName: '',
+        basis: 'gps-vessel-state',
       },
     },
   });
@@ -2433,10 +2507,10 @@ test('late ferry logic — a repeated space-row vessel is not shown on consecuti
   // The confirmed departure keeps its real, directly-observed identity.
   assert.match(departedCard, /sail-vessel">Suquamish</, 'confirmed departed sailing keeps its real vessel name');
 
-  // The inferred route delay is surfaced by the amber projected time, not a
-  // separate "N min late" status label.
-  assert.match(c735, /class="sail-time-est-route"/, 'upcoming chip still shows the inferred route delay through the projected time');
-  assert.doesNotMatch(c735, /sail-route-delay|~8m late/, 'upcoming chip does not show a separate inferred-delay label');
+  // The forecast is surfaced by the amber projected time, not a separate "N min
+  // late" status label.
+  assert.match(c735, /class="sail-time-est-route"/, 'upcoming chip still shows the forecast through the projected time');
+  assert.doesNotMatch(c735, /sail-route-delay|~8m late/, 'upcoming chip does not show a separate forecast-delay label');
 
   // The bug: Tokitae must not be stamped on every consecutive upcoming sailing.
   const tokitaeCount = [c735, c805, c835].filter(card => /sail-vessel">Tokitae</.test(card)).length;
