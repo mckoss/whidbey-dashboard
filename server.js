@@ -1341,7 +1341,7 @@ function ferryRecentTerminalTurnarounds(day, nowMs = Date.now()) {
         candidate.toTerminalId === departure.fromTerminalId &&
         Number.isFinite(candidate.arrivalMs) &&
         candidate.arrivalMs < departure.actualDepartureMs &&
-        candidate.arrivalBasis === 'observed-at-dock' &&
+        candidate.arrivalBasis !== 'scheduled-estimate' &&
         sameFerryVessel(candidate, departure)
       )
       .sort((a, b) => b.arrivalMs - a.arrivalMs)[0];
@@ -1356,6 +1356,7 @@ function ferryRecentTerminalTurnarounds(day, nowMs = Date.now()) {
       terminalName: terminalNameForId(departure.fromTerminalId),
       turnaroundMs,
       arrivalMs: arrival.arrivalMs,
+      arrivalBasis: arrival.arrivalBasis || null,
       departureMs: departure.actualDepartureMs,
       vesselName: departure.vesselName || arrival.vesselName || '',
       vesselId: departure.vesselId || arrival.vesselId || null,
