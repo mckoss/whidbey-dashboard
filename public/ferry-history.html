@@ -276,6 +276,35 @@
       overflow-x: auto;
     }
 
+    .terminal-tables {
+      display: grid;
+      gap: 0.85rem;
+      padding: 0.75rem;
+      background: var(--panel2);
+    }
+
+    .terminal-table {
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 0.45rem;
+      background: var(--panel);
+    }
+
+    .terminal-heading {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.55rem 0.7rem;
+      border-bottom: 1px solid var(--border);
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .terminal-heading .meta {
+      font-size: 0.76rem;
+    }
+
     table {
       width: 100%;
       border-collapse: collapse;
@@ -305,6 +334,8 @@
     tbody tr.actual-sailing:hover { background: rgba(52, 211, 153, 0.13); }
     tbody tr.scheduled-sailing { background: rgba(251, 191, 36, 0.07); }
     tbody tr.scheduled-sailing:hover { background: rgba(251, 191, 36, 0.12); }
+    tbody tr.missed-sailing { background: rgba(248, 113, 113, 0.08); }
+    tbody tr.missed-sailing:hover { background: rgba(248, 113, 113, 0.13); }
     .direction {
       width: 2.4rem;
       color: var(--accent);
@@ -317,10 +348,9 @@
     .duration { text-align: right; }
     .empty { color: var(--dim); }
     .actual { color: var(--text); }
-    .basis {
-      color: var(--dim);
-      font-size: 0.78rem;
-      margin-top: 0.16rem;
+    .missed {
+      color: var(--danger);
+      font-weight: 600;
     }
     .late { color: var(--danger); }
     .ok { color: var(--accent2); }
@@ -367,6 +397,7 @@
         font-size: 1rem;
       }
       .table-wrap { overflow-x: hidden; }
+      .terminal-tables { padding: 0.5rem; gap: 0.6rem; }
     }
   </style>
 </head>
@@ -414,21 +445,7 @@
         <h2>Trip Table</h2>
         <div class="meta" id="table-meta"></div>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th aria-label="Direction"></th>
-              <th>Vessel</th>
-              <th>Sched</th>
-              <th>Actual</th>
-              <th>Travel</th>
-              <th>Docked</th>
-            </tr>
-          </thead>
-          <tbody id="trip-rows"></tbody>
-        </table>
-      </div>
+      <div class="terminal-tables" id="trip-tables"></div>
     </section>
   </main>
 
@@ -452,7 +469,7 @@
     const summaryEl = document.getElementById('summary');
     const diagramEl = document.getElementById('diagram');
     const legendEl = document.getElementById('legend');
-    const rowsEl = document.getElementById('trip-rows');
+    const tablesEl = document.getElementById('trip-tables');
     const dateInput = document.getElementById('date-input');
     const errorEl = document.getElementById('error');
     const diagramMetaEl = document.getElementById('diagram-meta');
@@ -556,7 +573,7 @@
       summaryEl.textContent = 'Loading ferry history...';
       diagramEl.innerHTML = '';
       legendEl.innerHTML = '';
-      rowsEl.innerHTML = '<tr><td colspan="6" class="empty">Loading ferry history...</td></tr>';
+      tablesEl.innerHTML = '<div class="terminal-table"><div class="table-wrap"><table><tbody><tr><td colspan="6" class="empty">Loading ferry history...</td></tr></tbody></table></div></div>';
       errorEl.hidden = true;
     }
 
@@ -581,14 +598,14 @@
 
       renderDiagram(day, trips, vessels, { gpsTracks });
       renderLegend(vessels);
-      renderRows(trips);
+      renderRows(trips, gpsScheduleStats);
     }
 
     function renderError(message) {
       summaryEl.textContent = `Error: ${message}`;
       diagramEl.innerHTML = '';
       legendEl.innerHTML = '';
-      rowsEl.innerHTML = '<tr><td colspan="6" class="empty">No ferry history is available.</td></tr>';
+      tablesEl.innerHTML = '<div class="terminal-table"><div class="table-wrap"><table><tbody><tr><td colspan="6" class="empty">No ferry history is available.</td></tr></tbody></table></div></div>';
       errorEl.hidden = false;
       errorEl.textContent = message;
     }
@@ -766,7 +783,7 @@
       const scheduledTrips = trips
         .filter(trip => Number.isFinite(trip?.scheduledDepartureMs) && trip.direction)
         .sort((a, b) => a.scheduledDepartureMs - b.scheduledDepartureMs);
-      if (!scheduledTrips.length) return { matched: 0, missed: 0 };
+      if (!scheduledTrips.length) return { matched: 0, missed: 0, missedTrips: [] };
       const firstScheduledMs = scheduledTrips[0].scheduledDepartureMs;
       const serviceDepartures = gpsObservedDepartures(tracks)
         .filter(departure => departure.ms >= firstScheduledMs - GPS_STARTUP_IGNORE_MS);
@@ -791,6 +808,8 @@
             ms: point.ms,
             fromTerminal: terminal,
             toTerminal: terminal === 'Clinton' ? 'Mukilteo' : 'Clinton',
+            vesselName: track.name,
+            vesselKey: track.key,
           };
         }
         if (!currentTerminal) continue;
@@ -813,6 +832,7 @@
       const nextTripIndexByDirection = new Map();
       let matched = 0;
       let missed = 0;
+      const missedTrips = [];
       for (const departure of departures) {
         const directionTrips = tripsByDirection.get(departure.direction) || [];
         let tripIndex = nextTripIndexByDirection.get(departure.direction) || 0;
@@ -821,6 +841,12 @@
         if (tripIndex === 0 && departure.ms < trip.scheduledDepartureMs - GPS_FIRST_DEPARTURE_GRACE_MS) continue;
         while (tripIndex + 1 < directionTrips.length &&
                departure.ms >= directionTrips[tripIndex + 1].scheduledDepartureMs) {
+          missedTrips.push({
+            ...trip,
+            tableStatus: 'missed',
+            vesselName: trip.vesselName || departure.vesselName || '',
+            vesselKey: departure.vesselKey || '',
+          });
           missed += 1;
           tripIndex += 1;
           trip = directionTrips[tripIndex];
@@ -828,7 +854,7 @@
         nextTripIndexByDirection.set(departure.direction, tripIndex + 1);
         matched += 1;
       }
-      return { matched, missed };
+      return { matched, missed, missedTrips };
     }
 
     function gpsTerminalZone(pct) {
@@ -932,64 +958,126 @@
       return { startMs: start, endMs: start + 24 * HOUR_MS };
     }
 
-    function renderRows(trips) {
+    function renderRows(trips, gpsScheduleStats = {}) {
       if (!trips.length) {
-        rowsEl.innerHTML = '<tr><td colspan="6" class="empty">No trips have been recorded for this date yet.</td></tr>';
+        tablesEl.innerHTML = '<div class="terminal-table"><div class="table-wrap"><table><tbody><tr><td colspan="6" class="empty">No trips have been recorded for this date yet.</td></tr></tbody></table></div></div>';
         return;
       }
-      rowsEl.innerHTML = trips.map(trip => {
-        const actual = Boolean(trip.actualDepartureMs);
-        const direction = directionGlyph(trip);
-        const dockMs = dockDurationMs(trip, trips);
-        return `<tr class="${actual ? 'actual-sailing' : 'scheduled-sailing'}">
-          <td class="direction" title="${escapeHtml(trip.fromTerminalName)} to ${escapeHtml(trip.toTerminalName)}">${direction}</td>
-          <td class="vessel">${escapeHtml(trip.vesselName || 'Unknown')}</td>
-          <td class="sched" title="${formatTimeMs(trip.scheduledDepartureMs)}">${formatTableTimeMs(trip.scheduledDepartureMs)}</td>
-          <td>${tripCell(trip)}</td>
-          <td class="duration" title="${escapeHtml(travelBasisText(trip))}">${formatMinutes(tripDurationMs(trip))}</td>
-          <td class="duration">${formatMinutes(dockMs)}</td>
-        </tr>`;
-      }).join('');
+      const tableTrips = tableTripRows(trips, gpsScheduleStats);
+      const terminalOrder = ['Mukilteo', 'Clinton'];
+      tablesEl.innerHTML = terminalOrder.map(terminal => terminalTable(terminal, tableTrips, trips)).join('');
+    }
+
+    function tableTripRows(trips, gpsScheduleStats = {}) {
+      const missedByKey = new Map((gpsScheduleStats.missedTrips || []).map(trip => [tripKey(trip), trip]));
+      return [...trips]
+        .sort((a, b) => (a.scheduledDepartureMs || 0) - (b.scheduledDepartureMs || 0))
+        .map(trip => {
+          const missed = !trip.actualDepartureMs && missedByKey.get(tripKey(trip));
+          if (missed) {
+            return {
+              ...trip,
+              tableStatus: 'missed',
+              vesselName: missed.vesselName || trip.vesselName || '',
+            };
+          }
+          return {
+            ...trip,
+            tableStatus: trip.actualDepartureMs ? 'actual' : 'scheduled',
+          };
+        });
+    }
+
+    function terminalTable(terminal, trips, allTrips) {
+      const rows = trips.filter(trip => trip.fromTerminalName === terminal);
+      const title = `${terminal} departures`;
+      const rowHtml = rows.length
+        ? rows.map(trip => tableRow(trip, allTrips)).join('')
+        : '<tr><td colspan="6" class="empty">No scheduled departures.</td></tr>';
+      return `<div class="terminal-table" data-terminal="${escapeHtml(terminal)}">
+        <div class="terminal-heading">
+          <span>${escapeHtml(title)}</span>
+          <span class="meta">${rows.length} scheduled</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th aria-label="Direction"></th>
+                <th>Vessel</th>
+                <th>Sched</th>
+                <th>Actual</th>
+                <th>Travel</th>
+                <th>Docked</th>
+              </tr>
+            </thead>
+            <tbody>${rowHtml}</tbody>
+          </table>
+        </div>
+      </div>`;
+    }
+
+    function tableRow(trip, allTrips) {
+      const rowClass = {
+        actual: 'actual-sailing',
+        missed: 'missed-sailing',
+      }[trip.tableStatus] || 'scheduled-sailing';
+      const direction = directionGlyph(trip);
+      const dockMs = dockDurationMs(trip, allTrips);
+      return `<tr class="${rowClass}">
+        <td class="direction" title="${escapeHtml(trip.fromTerminalName)} to ${escapeHtml(trip.toTerminalName)}">${direction}</td>
+        <td class="vessel">${escapeHtml(trip.vesselName || 'Unknown')}</td>
+        <td class="sched" title="${formatTimeMs(trip.scheduledDepartureMs)}">${formatTableTimeMs(trip.scheduledDepartureMs)}</td>
+        <td>${tripCell(trip)}</td>
+        <td class="duration" title="${escapeHtml(travelBasisText(trip))}">${formatMinutes(tripDurationMs(trip))}</td>
+        <td class="duration">${formatMinutes(dockMs)}</td>
+      </tr>`;
     }
 
     function tripCell(trip) {
-      const departed = trip.actualDepartureMs || trip.scheduledDepartureMs;
-      const arrived = trip.arrivalMs || departed + 20 * 60 * 1000;
-      const late = trip.actualDepartureMs && trip.actualDepartureMs - trip.scheduledDepartureMs > 5 * 60 * 1000;
-      return `<span class="actual ${late ? 'late' : 'ok'}" title="${formatTimeMs(departed)}-${formatTimeMs(arrived)}; ${escapeHtml(arrivalBasisText(trip.arrivalBasis))}">${formatTableTimeMs(departed)}-${formatTableTimeMs(arrived)}</span>`;
+      if (trip.tableStatus === 'missed') return '<span class="missed">Missed</span>';
+      const departed = actualDepartureMs(trip);
+      if (!departed) return '<span class="empty">--</span>';
+      const late = departed - trip.scheduledDepartureMs > 5 * 60 * 1000;
+      return `<span class="actual ${late ? 'late' : 'ok'}" title="Departed ${formatTimeMs(departed)}">${formatTableTimeMs(departed)}</span>`;
     }
 
     function directionGlyph(trip) {
       return trip.direction === 'mukilteo-to-clinton' ? '&larr;' : '&rarr;';
     }
 
-    function tripStartMs(trip) {
-      return trip.actualDepartureMs || trip.scheduledDepartureMs || null;
+    function tripKey(trip) {
+      return `${trip.direction || ''}:${trip.scheduledDepartureMs || ''}`;
     }
 
-    function tripEndMs(trip) {
-      const departed = tripStartMs(trip);
-      return trip.arrivalMs || (departed ? departed + 20 * 60 * 1000 : null);
+    function actualDepartureMs(trip) {
+      return Number.isFinite(trip?.actualDepartureMs) ? trip.actualDepartureMs : null;
+    }
+
+    function actualArrivalMs(trip) {
+      return trip?.arrivalBasis === 'observed-at-dock' && Number.isFinite(trip?.arrivalMs)
+        ? trip.arrivalMs
+        : null;
     }
 
     function tripDurationMs(trip) {
-      const departed = tripStartMs(trip);
-      const arrived = tripEndMs(trip);
+      const departed = actualDepartureMs(trip);
+      const arrived = actualArrivalMs(trip);
       return departed && arrived && arrived > departed ? arrived - departed : null;
     }
 
     function dockDurationMs(trip, trips) {
-      const arrived = tripEndMs(trip);
+      const arrived = actualArrivalMs(trip);
       if (!arrived || !trip.vesselName || !trip.toTerminalId) return null;
       const next = trips
         .filter(candidate =>
           candidate !== trip &&
           candidate.vesselName === trip.vesselName &&
           candidate.fromTerminalId === trip.toTerminalId &&
-          tripStartMs(candidate) > arrived)
-        .sort((a, b) => tripStartMs(a) - tripStartMs(b))[0];
+          actualDepartureMs(candidate) > arrived)
+        .sort((a, b) => actualDepartureMs(a) - actualDepartureMs(b))[0];
       if (!next) return null;
-      return tripStartMs(next) - arrived;
+      return actualDepartureMs(next) - arrived;
     }
 
     function arrivalBasisText(basis) {
@@ -1001,8 +1089,10 @@
     }
 
     function travelBasisText(trip) {
-      const departure = trip.actualDepartureMs ? 'actual departure' : 'scheduled departure';
-      return `${departure}, ${arrivalBasisText(trip.arrivalBasis)}`;
+      if (trip.tableStatus === 'missed') return 'missed scheduled departure';
+      if (!actualDepartureMs(trip)) return 'no confirmed departure';
+      if (!actualArrivalMs(trip)) return 'no observed dock arrival';
+      return `actual departure, ${arrivalBasisText(trip.arrivalBasis)}`;
     }
 
     function formatClock(value) {
