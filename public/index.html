@@ -1464,7 +1464,7 @@ function computeSailingTimings(parsedSailings, vesselMap = {}, fromTerminalId = 
         lateInfo: resolved.isDeparted && delayMs > LATE_THRESHOLD_MS
           ? { estimatedDepartureMs: effectiveMs, delayMs, atDock: false }
           : null,
-        routeDelayInfo: resolved.isProjected && delayMs > 0
+        routeDelayInfo: resolved.isProjected && delayMs > LATE_THRESHOLD_MS
           ? {
               projectedDepartureMs: effectiveMs,
               delayMs,
@@ -1487,7 +1487,7 @@ function computeSailingTimings(parsedSailings, vesselMap = {}, fromTerminalId = 
       !raw.serverDeparture &&
       !raw.hasDirectVesselSignal &&
       !missedDepartureForSailing(s, vesselMap, fromTerminalId);
-    const propagatedDelayMs = eligible ? projectedDelayMs : 0;
+    const propagatedDelayMs = eligible && projectedDelayMs > LATE_THRESHOLD_MS ? projectedDelayMs : 0;
     return {
       ...raw,
       effectiveMs: propagatedDelayMs ? Math.max(raw.effectiveMs, projectedMs) : raw.effectiveMs,

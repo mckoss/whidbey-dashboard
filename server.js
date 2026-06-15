@@ -1792,10 +1792,7 @@ function ferryVesselStatusSummary(day, nowMs = Date.now(), terminalTurnarounds =
       continue;
     }
 
-    if (recent.length < 2) {
-      statuses[track.key] = ferryReturningStatus(track, latest, 'insufficient-gps-motion');
-      continue;
-    }
+    if (recent.length < 2) continue;
 
     const first = recent[0];
     const elapsedMinutes = (latest.ms - first.ms) / 60000;
@@ -1814,11 +1811,11 @@ function ferryVesselStatusSummary(day, nowMs = Date.now(), terminalTurnarounds =
       (expectedTerminalId === CONFIG.wsfArrivingTerminal ? 1 : 0);
     const motionSign = Math.abs(progressPerMinute) >= FERRY_GPS_MIN_PROGRESS_PER_MINUTE ? Math.sign(progressPerMinute) : 0;
     if (reversed ||
-        motionSign === 0 ||
-        (expectedSign && motionSign !== expectedSign)) {
+        (expectedSign && motionSign !== 0 && motionSign !== expectedSign)) {
       statuses[track.key] = ferryReturningStatus(track, latest, reversed ? 'gps-motion-reversal' : 'not-making-way-to-expected-dock');
       continue;
     }
+    if (motionSign === 0) continue;
 
     const destinationTerminalId = motionSign > 0 ? CONFIG.wsfArrivingTerminal : CONFIG.wsfDepartingTerminal;
     const remainingProgress = motionSign > 0 ? 1 - latest.pct : latest.pct;

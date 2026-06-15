@@ -388,6 +388,12 @@ test('ferry/history recorder — matches swapped underway vessels with blank WSF
     'uses live left-dock telemetry to replace stale schedule-assigned vessel names');
   assert.match(source, /observedVesselForTrip\(existing, actualDepartureMs\)/,
     'keeps the observed vessel name on later samples so live dots can attach to trail lines');
+  assert.doesNotMatch(source, /ferryReturningStatus\(track, latest, 'insufficient-gps-motion'\)/,
+    'does not label a vessel returning just because recent GPS motion is missing');
+  assert.match(source, /expectedSign && motionSign !== 0 && motionSign !== expectedSign/,
+    'returning requires active motion away from the expected destination');
+  assert.match(source, /if \(motionSign === 0\) continue;/,
+    'idle or dock-adjacent vessels are not treated as returning');
 });
 
 test('ferry/history endpoint — normalizes stale scheduled vessel names from observations', async () => {
@@ -2805,6 +2811,75 @@ test('late ferry logic — vessel forecast projects onto upcoming chips with no 
   const missedCard = context.__lateTest.sailingCard(sailings[1], sailings, {}, vesselMap, 5);
   assert.match(missedCard, /<div class="sail-status">Missed<\/div>/, 'missed slot still renders as missed, with no route-delay note');
   assert.doesNotMatch(missedCard, /sail-route-delay/, 'missed slot does not show an inferred delay note');
+});
+
+test('late ferry logic — small projected departure drift renders as normal schedule time', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
+  const script = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+
+  const fixedNow = Date.UTC(2026, 5, 10, 15, 30); // 8:30 AM PDT
+  class FakeDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [fixedNow])); }
+    static now() { return fixedNow; }
+  }
+  Object.assign(FakeDate, Date);
+
+  const nullEl = { style: {}, className: '', textContent: '', innerHTML: '', querySelector: () => null };
+  const context = {
+    console,
+    Date: FakeDate,
+    setInterval: () => 0,
+    setTimeout: () => 0,
+    clearInterval: () => {},
+    fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
+    document: {
+      getElementById: () => nullEl,
+      querySelector: () => nullEl,
+      createElement: () => ({}),
+      head: { appendChild: () => {} },
+    },
+    window: {},
+  };
+  vm.createContext(context);
+  vm.runInContext(script + `\nthis.__lateTest = { buildVesselMap, computeSailingTimings, sailingCard };`, context);
+
+  const sailingMs = Date.UTC(2026, 5, 10, 15, 35); // 8:35 AM PDT
+  const projectedMs = sailingMs + 4 * 60 * 1000;
+  const sailing = {
+    sailTime: new Date(sailingMs),
+    DepartingTime: `/Date(${sailingMs})/`,
+  };
+  const vesselMap = context.__lateTest.buildVesselMap(null, {
+    resolvedSailings: {
+      [`5:${sailingMs}`]: {
+        scheduledDepartureMs: sailingMs,
+        effectiveDepartureMs: projectedMs,
+        delayMs: projectedMs - sailingMs,
+        status: 'projected',
+        timingSource: 'gps-vessel-state',
+        isProjected: true,
+        isDeparted: false,
+        isMissed: false,
+        isUnknown: false,
+        vesselName: 'Suquamish',
+        vesselId: 75,
+        vesselSource: 'predicted-departure',
+      },
+    },
+  });
+
+  const [timing] = context.__lateTest.computeSailingTimings([sailing], vesselMap, 5);
+  assert.equal(timing.routeDelayInfo, null, 'sub-5-minute projected drift is not exposed for display');
+
+  const card = context.__lateTest.sailingCard(sailing, [sailing], {}, vesselMap, 5);
+  assert.match(card, /<div class="sail-time">8:35 AM<\/div>/, 'renders the scheduled time normally');
+  assert.match(card, /sail-vessel">Suquamish<\/div>/, 'keeps the vessel name visible');
+  assert.doesNotMatch(card, /sail-time-est-route|~8:39 AM|\(sched 8:35 AM\)/,
+    'does not spend chip space on a small projected estimate');
 });
 
 // Regression for the screenshot bug: WSF's space rows labeled three consecutive
