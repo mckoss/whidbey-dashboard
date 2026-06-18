@@ -777,6 +777,36 @@ function routeHasBothTerminals(value = {}, route = DEFAULT_FERRY_ROUTE) {
   return terminals.has(route.primary.id) && terminals.has(route.secondary.id);
 }
 
+function numericTerminalId(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const id = Number(value);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+function ferrySampleTerminalIds(sample = {}) {
+  return [
+    sample.DepartingTerminalID,
+    sample.ArrivingTerminalID,
+    sample.departingTerminalId,
+    sample.arrivingTerminalId,
+  ]
+    .map(numericTerminalId)
+    .filter(id => id !== null);
+}
+
+function ferrySampleAppliesToRoute(sample = {}, route = DEFAULT_FERRY_ROUTE) {
+  const sampleTerminalIds = ferrySampleTerminalIds(sample);
+  if (!sampleTerminalIds.length) return true;
+  const routeTerminalIds = new Set([route.primary.id, route.secondary.id]);
+  return sampleTerminalIds.every(id => routeTerminalIds.has(id));
+}
+
+function filterFerrySamplesForRoute(samples, route = DEFAULT_FERRY_ROUTE) {
+  return Array.isArray(samples)
+    ? samples.filter(sample => ferrySampleAppliesToRoute(sample, route))
+    : [];
+}
+
 // ── Tides (hi/lo, 3 days) ─────────────────────────────────────────────
 function tidesEndpoint(route = DEFAULT_FERRY_ROUTE) {
   return cachedEndpoint(route.tides.cacheKey, 2 * 60 * 60 * 1000, async () => {
@@ -1298,7 +1328,7 @@ function normalizeFerryHistoryDay(day) {
     routeKey: route.key,
     route: ferryRouteClientConfig(route),
     operationalDay,
-    vesselSamples: Array.isArray(day.vesselSamples) ? day.vesselSamples : [],
+    vesselSamples: filterFerrySamplesForRoute(day.vesselSamples, route),
     trips: (day.trips || []).map(trip => {
       const cleanTrip = {
         ...trip,
@@ -1524,7 +1554,8 @@ function ferryGpsTracks(day) {
 }
 
 function compatibleFerryGpsSamples(day) {
-  const rawSamples = Array.isArray(day?.vesselSamples) ? day.vesselSamples : [];
+  const route = ferryRouteForDay(day);
+  const rawSamples = filterFerrySamplesForRoute(day?.vesselSamples, route);
   if (!rawSamples.length) return legacyFerryGpsSamples(day);
   const firstRawMs = Math.min(...rawSamples
     .map(sample => Date.parse(sample?.observedAt || ''))

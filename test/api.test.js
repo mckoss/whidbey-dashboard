@@ -347,6 +347,50 @@ test('bainbridge ferry endpoints — use separate route metadata and history sto
   assert.match(source, /\.filter\(v => routeHasBothTerminals\(v, route\)\)/, 'Bainbridge vessel state cannot admit Seattle-Bremerton boats that only share Seattle');
 });
 
+test('bainbridge ferry history — excludes saved Bremerton vessel samples', async () => {
+  const historyDate = '2026-07-01';
+  const sampledAtMs = Date.UTC(2026, 6, 1, 16, 0);
+  const historyDir = join(dataDir, 'ferry-history-bainbridge');
+  await mkdir(historyDir, { recursive: true });
+  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+    date: historyDate,
+    routeKey: 'bainbridge',
+    generatedAt: new Date(sampledAtMs).toISOString(),
+    sampledAtMs,
+    trips: [],
+    currentVessels: [],
+    vesselSamples: [
+      ferryTestSample(Date.UTC(2026, 6, 1, 15, 50), 'Tacoma', 37, 0.35, {
+        departingTerminalId: 3,
+        arrivingTerminalId: 7,
+      }),
+      ferryTestSample(Date.UTC(2026, 6, 1, 15, 55), 'Tacoma', 37, 0.45, {
+        departingTerminalId: 3,
+        arrivingTerminalId: 7,
+      }),
+      ferryTestSample(Date.UTC(2026, 6, 1, 15, 50), 'Puyallup', 30, 0.35, {
+        departingTerminalId: 4,
+        arrivingTerminalId: 7,
+      }),
+      ferryTestSample(Date.UTC(2026, 6, 1, 15, 55), 'Chimacum', 32, 0.45, {
+        departingTerminalId: 7,
+        arrivingTerminalId: 4,
+      }),
+    ],
+  }, null, 2));
+
+  const d = await getJson(`/api/bainbridge/ferry/history?date=${historyDate}`);
+  const vesselNames = new Set(d.vesselSamples.map(sample => sample.vesselName));
+  assert.ok(vesselNames.has('Tacoma'), 'keeps saved Seattle-Bainbridge vessel samples');
+  assert.ok(!vesselNames.has('Puyallup'), 'drops saved Seattle-Bremerton vessel samples from Bainbridge history');
+  assert.ok(!vesselNames.has('Chimacum'), 'drops saved Seattle-Bremerton vessel samples from Bainbridge legend data');
+
+  const source = await readFile(join(__dirname, '../server.js'), 'utf8');
+  assert.match(source, /function filterFerrySamplesForRoute/, 'normalizes historical vessel samples through route filtering');
+  assert.match(source, /vesselSamples: filterFerrySamplesForRoute\(day\.vesselSamples, route\)/,
+    'history responses do not expose saved off-route vessel samples to the legend');
+});
+
 test('ferry/history endpoint — ignores impossible early actual departures from stale vessel matches', async () => {
   const historyDate = '2026-06-08';
   const scheduledDepartureMs = Date.UTC(2026, 5, 8, 20, 0);
