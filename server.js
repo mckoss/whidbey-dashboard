@@ -54,7 +54,6 @@ const FERRY_ROUTES = {
     dashboardPath: '/',
     historyPath: '/ferry-history',
     routeId: CONFIG.wsfRouteId,
-    includeAllRouteAlerts: true,
     historyDir: CONFIG.ferryHistoryDir,
     crossingEstimateMs: 20 * 60 * 1000,
     weather: { label: 'Clinton, WA', lat: CONFIG.lat, lon: CONFIG.lon, cacheKey: 'weather' },
@@ -70,7 +69,6 @@ const FERRY_ROUTES = {
     dashboardPath: '/bainbridge',
     historyPath: '/bainbridge/ferry-history',
     routeId: 5,
-    includeAllRouteAlerts: false,
     historyDir: join(dataDir, 'ferry-history-bainbridge'),
     crossingEstimateMs: 35 * 60 * 1000,
     weather: { label: 'Bainbridge Island, WA', lat: 47.6262, lon: -122.5212, cacheKey: 'weather_bainbridge' },
@@ -1086,7 +1084,7 @@ function ferryAlertsEndpoint(route = DEFAULT_FERRY_ROUTE) {
 }
 
 function alertAppliesToRoute(alert = {}, route = DEFAULT_FERRY_ROUTE) {
-  if (alert.AllRoutesFlag) return route.includeAllRouteAlerts !== false;
+  if (alert.AllRoutesFlag) return true;
   const routeIds = Array.isArray(alert.AffectedRouteIDs) ? alert.AffectedRouteIDs : [];
   return routeIds.includes(route.routeId);
 }

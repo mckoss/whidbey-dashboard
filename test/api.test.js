@@ -345,9 +345,10 @@ test('bainbridge ferry endpoints — use separate route metadata and history sto
   const source = await readFile(join(__dirname, '../server.js'), 'utf8');
   assert.match(source, /function routeHasBothTerminals/, 'filters ferry vessels by both route terminals');
   assert.match(source, /\.filter\(v => routeHasBothTerminals\(v, route\)\)/, 'Bainbridge vessel state cannot admit Seattle-Bremerton boats that only share Seattle');
-  assert.match(source, /includeAllRouteAlerts: false/, 'Bainbridge suppresses all-routes WSF alerts in favor of route-specific notices');
-  assert.match(source, /if \(alert\.AllRoutesFlag\) return route\.includeAllRouteAlerts !== false;/,
-    'route alert filtering can keep all-routes notices for Whidbey while excluding them from Bainbridge');
+  assert.match(source, /if \(alert\.AllRoutesFlag\) return true;/,
+    'all-routes WSF alerts still appear on both ferry dashboards');
+  assert.match(source, /return routeIds\.includes\(route\.routeId\);/,
+    'route-specific WSF alerts only appear on dashboards for that WSF route');
 });
 
 test('bainbridge ferry history — excludes saved Bremerton vessel samples', async () => {
