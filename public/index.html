@@ -695,7 +695,7 @@
 
 <header>
   <div class="title-block">
-    <h1>🌊 South Whidbey Island <span id="version"></span></h1>
+    <h1>🌊 <span id="page-title">South Whidbey Island</span> <span id="version"></span></h1>
     <a class="text-link" id="history-link" href="/ferry-history">History</a>
   </div>
   <div class="header-meta">
@@ -725,6 +725,22 @@
 <div id="ferry-alert-ticker"></div>
 
 <script type="module">
+
+const FERRY_ROUTE = window.__FERRY_ROUTE__ || {
+  key: 'whidbey',
+  title: 'South Whidbey Island',
+  historyPath: '/ferry-history',
+  apiPrefix: '/api/ferry',
+  terminals: {
+    primary: { slug: 'clinton', name: 'Clinton', id: 5 },
+    secondary: { slug: 'mukilteo', name: 'Mukilteo', id: 14 },
+  },
+};
+const PRIMARY_TERMINAL = FERRY_ROUTE.terminals.primary;
+const SECONDARY_TERMINAL = FERRY_ROUTE.terminals.secondary;
+document.title = `${FERRY_ROUTE.title} Dashboard`;
+document.getElementById('page-title').textContent = FERRY_ROUTE.title;
+document.getElementById('history-link').href = FERRY_ROUTE.historyPath;
 
 // ── Clock ──────────────────────────────────────────────────────────────
 const TZ = 'America/Los_Angeles'; // All displays use Pacific time regardless of client timezone
@@ -1948,13 +1964,13 @@ function renderFerryPanel(panelId, countdownId, routeLabel, parsedSailings, spac
 // ── Ferry loader ───────────────────────────────────────────────────────
 async function loadFerry() {
   const [clintonSched, clintonSpace, mukilteoSched, mukilteoSpace, ferryAlerts, userMessages, departureRes] = await Promise.allSettled([
-    fetch('/api/ferry/clinton').then(r => r.json()),
-    fetch('/api/ferry/clinton/space').then(r => r.json()),
-    fetch('/api/ferry/mukilteo').then(r => r.json()),
-    fetch('/api/ferry/mukilteo/space').then(r => r.json()),
-    fetch('/api/ferry/alerts').then(r => r.json()),
+    fetch(`${FERRY_ROUTE.apiPrefix}/${PRIMARY_TERMINAL.slug}`).then(r => r.json()),
+    fetch(`${FERRY_ROUTE.apiPrefix}/${PRIMARY_TERMINAL.slug}/space`).then(r => r.json()),
+    fetch(`${FERRY_ROUTE.apiPrefix}/${SECONDARY_TERMINAL.slug}`).then(r => r.json()),
+    fetch(`${FERRY_ROUTE.apiPrefix}/${SECONDARY_TERMINAL.slug}/space`).then(r => r.json()),
+    fetch(`${FERRY_ROUTE.apiPrefix}/alerts`).then(r => r.json()),
     fetch('/api/messages').then(r => r.json()),
-    fetch('/api/ferry/departures', { cache: 'no-store' }).then(r => r.json()),
+    fetch(`${FERRY_ROUTE.apiPrefix}/departures`, { cache: 'no-store' }).then(r => r.json()),
   ]);
 
   const clintonData  = clintonSched.status  === 'fulfilled' ? clintonSched.value  : null;
@@ -1979,16 +1995,16 @@ async function loadFerry() {
   }
 
   if (mukilteoData && !mukilteoData.error) {
-    if (!mukilteoData._stale) markFresh('ferry-mukilteo');
-    renderFerryPanel('ferry-mukilteo', 'countdown-mukilteo', 'Mukilteo → Clinton', parseSailings(mukilteoData), mukilteoSp, mukilteoData, mukilteoSpaceMissing, vesselMap, 14);
+    if (!mukilteoData._stale) markFresh(`ferry-${SECONDARY_TERMINAL.slug}`);
+    renderFerryPanel('ferry-mukilteo', 'countdown-mukilteo', `${SECONDARY_TERMINAL.name} → ${PRIMARY_TERMINAL.name}`, parseSailings(mukilteoData), mukilteoSp, mukilteoData, mukilteoSpaceMissing, vesselMap, SECONDARY_TERMINAL.id);
   } else if (!mukilteoData || mukilteoData.error) {
-    delete dataUpdatedAt['ferry-mukilteo'];
+    delete dataUpdatedAt[`ferry-${SECONDARY_TERMINAL.slug}`];
   }
   if (clintonData && !clintonData.error) {
-    if (!clintonData._stale) markFresh('ferry-clinton');
-    renderFerryPanel('ferry-clinton',  'countdown-clinton',  'Clinton → Mukilteo',  parseSailings(clintonData),  clintonSp,  clintonData, clintonSpaceMissing, vesselMap, 5);
+    if (!clintonData._stale) markFresh(`ferry-${PRIMARY_TERMINAL.slug}`);
+    renderFerryPanel('ferry-clinton',  'countdown-clinton',  `${PRIMARY_TERMINAL.name} → ${SECONDARY_TERMINAL.name}`,  parseSailings(clintonData),  clintonSp,  clintonData, clintonSpaceMissing, vesselMap, PRIMARY_TERMINAL.id);
   } else if (!clintonData || clintonData.error) {
-    delete dataUpdatedAt['ferry-clinton'];
+    delete dataUpdatedAt[`ferry-${PRIMARY_TERMINAL.slug}`];
   }
 }
 

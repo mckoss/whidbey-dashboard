@@ -322,6 +322,21 @@ test('ferry/history endpoint — returns a dated trip log shell and validates da
   assert.match(source, /renameSync\(tmpFile, file\)/, 'atomically replaces the durable history file after the write completes');
 });
 
+test('bainbridge ferry endpoints — use separate route metadata and history storage', async () => {
+  const historyDate = '2026-06-30';
+  const d = await getJson(`/api/bainbridge/ferry/history?date=${historyDate}`);
+
+  assert.equal(d.date, historyDate, 'Bainbridge history date matches request');
+  assert.equal(d.routeKey, 'bainbridge', 'Bainbridge history is tagged with the experimental route');
+  assert.equal(d.route.apiPrefix, '/api/bainbridge/ferry', 'Bainbridge history points clients at the Bainbridge API');
+  assert.equal(d.route.terminals.primary.name, 'Seattle', 'Bainbridge primary terminal is Seattle');
+  assert.equal(d.route.terminals.secondary.name, 'Bainbridge Island', 'Bainbridge secondary terminal is Bainbridge Island');
+
+  const departures = await getJson(`/api/bainbridge/ferry/departures?date=${historyDate}`);
+  assert.equal(departures.date, historyDate, 'Bainbridge departures date matches request');
+  assert.deepEqual(departures.departures, {}, 'empty Bainbridge history has no observed departures');
+});
+
 test('ferry/history endpoint — ignores impossible early actual departures from stale vessel matches', async () => {
   const historyDate = '2026-06-08';
   const scheduledDepartureMs = Date.UTC(2026, 5, 8, 20, 0);
@@ -1225,10 +1240,10 @@ test('ferry/departures endpoint — one-boat operation does not invent the missi
 });
 
 test('ferry/departures endpoint — GPS reversal is surfaced as returning without a departure', async () => {
-  const historyDate = '2026-06-18';
-  const sampledAtMs = Date.UTC(2026, 5, 18, 16, 0);
-  const c1550 = Date.UTC(2026, 5, 18, 15, 50);
-  const m1605 = Date.UTC(2026, 5, 18, 16, 5);
+  const historyDate = '2026-06-29';
+  const sampledAtMs = Date.UTC(2026, 5, 29, 16, 0);
+  const c1550 = Date.UTC(2026, 5, 29, 15, 50);
+  const m1605 = Date.UTC(2026, 5, 29, 16, 5);
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
   await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
@@ -1240,8 +1255,8 @@ test('ferry/departures endpoint — GPS reversal is surfaced as returning withou
       ferryTestTrip(historyDate, 'mukilteo-to-clinton', 14, 5, m1605),
     ],
     vesselSamples: [
-      ferryTestSample(Date.UTC(2026, 5, 18, 15, 50), 'Tokitae', 68, 0.2, { arrivingTerminalId: 14 }),
-      ferryTestSample(Date.UTC(2026, 5, 18, 15, 55), 'Tokitae', 68, 0.35, { arrivingTerminalId: 14 }),
+      ferryTestSample(Date.UTC(2026, 5, 29, 15, 50), 'Tokitae', 68, 0.2, { arrivingTerminalId: 14 }),
+      ferryTestSample(Date.UTC(2026, 5, 29, 15, 55), 'Tokitae', 68, 0.35, { arrivingTerminalId: 14 }),
       ferryTestSample(sampledAtMs, 'Tokitae', 68, 0.28, { arrivingTerminalId: 14 }),
     ],
     currentVessels: [],
@@ -1464,6 +1479,25 @@ test('static HTML — index.html contains required elements', async () => {
   assert.ok(html.includes('Whidbey'), 'mentions Whidbey');
 });
 
+test('bainbridge pages — serve the shared dashboard with Bainbridge route config', async () => {
+  const dashboardRes = await fetch(`${BASE}/bainbridge`);
+  assert.ok(dashboardRes.ok, 'Bainbridge dashboard responds OK');
+  const dashboardHtml = await dashboardRes.text();
+  assert.match(dashboardHtml, /window\.__FERRY_ROUTE__=/, 'Bainbridge dashboard injects route config');
+  assert.match(dashboardHtml, /"key":"bainbridge"/, 'Bainbridge dashboard route key is injected');
+  assert.match(dashboardHtml, /"apiPrefix":"\/api\/bainbridge\/ferry"/, 'Bainbridge dashboard uses Bainbridge ferry API');
+  assert.match(dashboardHtml, /"historyPath":"\/bainbridge\/ferry-history"/, 'Bainbridge dashboard links to Bainbridge history');
+  assert.match(dashboardHtml, /"name":"Seattle"/, 'Bainbridge dashboard includes Seattle terminal');
+  assert.match(dashboardHtml, /"name":"Bainbridge Island"/, 'Bainbridge dashboard includes Bainbridge terminal');
+
+  const historyRes = await fetch(`${BASE}/bainbridge/ferry-history`);
+  assert.ok(historyRes.ok, 'Bainbridge history page responds OK');
+  const historyHtml = await historyRes.text();
+  assert.match(historyHtml, /window\.__FERRY_ROUTE__=/, 'Bainbridge history injects route config');
+  assert.match(historyHtml, /"historyTitle":"Bainbridge Ferry History"/, 'Bainbridge history title is injected');
+  assert.match(historyHtml, /"dashboardPath":"\/bainbridge"/, 'Bainbridge history links back to Bainbridge dashboard');
+});
+
 test('admin page — serves Google-authenticated admin surface', async () => {
   const res = await fetch(`${BASE}/admin`);
   assert.ok(res.ok, 'admin page responds OK');
@@ -1528,7 +1562,7 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.doesNotMatch(html, /function metric/, 'summary no longer renders large metric chips');
   assert.doesNotMatch(html, /metric\('Date'/, 'summary does not duplicate the selected date');
   assert.doesNotMatch(html, /id="gps-track-toggle"/, 'GPS track is the only chart mode now');
-  assert.match(html, /\/api\/ferry\/history\?date=/, 'loads history API by URL date');
+  assert.match(html, /\$\{FERRY_ROUTE\.apiPrefix\}\/history\?date=/, 'loads history API by URL date from the active route');
   assert.match(html, /<h2>Vehicle Loads<\/h2>/, 'adds vehicle-load charts below the GPS tracks');
   assert.match(html, /id="load-charts"/, 'renders vehicle-load charts into their own container');
   assert.match(html, /\.load-charts\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/, 'shows the two terminal load charts side by side on wider screens');
@@ -1541,7 +1575,7 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /colorFor\(trip\.vesselName, vessels\)/, 'uses the same vessel colors as the GPS track legend');
   assert.match(html, /id="trip-tables"/, 'renders trip tables into a grouped container');
   assert.match(html, /function terminalTable/, 'renders separate history tables by departure terminal');
-  assert.match(html, /const terminalOrder = \['Mukilteo', 'Clinton'\]/, 'renders Mukilteo departures then Clinton departures');
+  assert.match(html, /const TERMINAL_ORDER = \[SECONDARY_TERMINAL\.name, PRIMARY_TERMINAL\.name\]/, 'renders secondary departures then primary departures');
   assert.match(html, /<span>\$\{escapeHtml\(terminal\)\}<\/span>/, 'labels each terminal table with just the terminal name');
   assert.match(html, /fromTerminalName === terminal/, 'groups rows by departure terminal');
   assert.doesNotMatch(html, /vesselTable|vessel-heading/, 'does not group the lower history table by vessel');
@@ -1616,7 +1650,7 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /const HALF_HOUR_MS = 30 \* 60 \* 1000/, 'defines half-hour grid interval');
   assert.match(html, /schedule-departure-tick/, 'draws yellow scheduled departure ticks outside the terminal axes');
   assert.match(html, /scheduledDepartureTick\(trip, segment, height, pad\)/, 'renders scheduled departure ticks per split timeline segment');
-  assert.match(html, /trip\.fromTerminalName === 'Clinton'/, 'places Clinton and Mukilteo departure ticks on opposite outside edges');
+  assert.match(html, /trip\.fromTerminalName === PRIMARY_TERMINAL\.name/, 'places route terminals on opposite outside edges');
   assert.match(html, /Array\.from\(\{ length: TIMELINE_COLUMN_COUNT \}/, 'builds timeline columns from the configured count');
   assert.match(html, /index \* TIMELINE_COLUMN_HOURS \* HOUR_MS/, 'splits graph columns into fixed 6-hour periods');
   assert.match(html, /return \{ startMs, endMs \}/, 'uses the history file span as graph bounds');

@@ -451,7 +451,7 @@
           <path d="M18 32h6M29 32h6M40 32h6" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
           <path d="M6 54c5 3 10 3 15 0s10-3 15 0 10 3 15 0" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
         </svg>
-        Ferry History <span id="version"></span>
+        <span id="page-title">Ferry History</span> <span id="version"></span>
       </h1>
       <a class="text-link" id="main-link" href="/">Dashboard</a>
     </div>
@@ -497,6 +497,25 @@
   </main>
 
   <script>
+    const FERRY_ROUTE = window.__FERRY_ROUTE__ || {
+      key: 'whidbey',
+      title: 'South Whidbey Island',
+      historyTitle: 'Ferry History',
+      dashboardPath: '/',
+      apiPrefix: '/api/ferry',
+      crossingEstimateMs: 20 * 60 * 1000,
+      terminals: {
+        primary: { slug: 'clinton', name: 'Clinton', id: 5, lat: 47.9755, lon: -122.3493 },
+        secondary: { slug: 'mukilteo', name: 'Mukilteo', id: 14, lat: 47.9485, lon: -122.3046 },
+      },
+    };
+    const PRIMARY_TERMINAL = FERRY_ROUTE.terminals.primary;
+    const SECONDARY_TERMINAL = FERRY_ROUTE.terminals.secondary;
+    const TERMINAL_ORDER = [SECONDARY_TERMINAL.name, PRIMARY_TERMINAL.name];
+    document.title = FERRY_ROUTE.historyTitle;
+    document.getElementById('page-title').textContent = FERRY_ROUTE.historyTitle;
+    document.getElementById('main-link').href = FERRY_ROUTE.dashboardPath;
+
     const COLORS = ['#f87171', '#34d399', '#38bdf8', '#fbbf24', '#a78bfa', '#fb923c', '#22d3ee', '#f472b6'];
     const HOUR_MS = 60 * 60 * 1000;
     const HALF_HOUR_MS = 30 * 60 * 1000;
@@ -510,8 +529,6 @@
     const GPS_FIRST_DEPARTURE_GRACE_MS = 15 * 60 * 1000;
     const LEGACY_OPERATIONAL_DAY_START_HOUR = 2;
     const TZ = 'America/Los_Angeles';
-    const CLINTON = { name: 'Clinton', lat: 47.9755, lon: -122.3493 };
-    const MUKILTEO = { name: 'Mukilteo', lat: 47.9485, lon: -122.3046 };
 
     const summaryEl = document.getElementById('summary');
     const diagramEl = document.getElementById('diagram');
@@ -605,11 +622,11 @@
       if (options.showLoading) renderLoading(date);
       try {
         const url = date
-          ? `/api/ferry/history?date=${encodeURIComponent(date)}`
-          : '/api/ferry/history';
+          ? `${FERRY_ROUTE.apiPrefix}/history?date=${encodeURIComponent(date)}`
+          : `${FERRY_ROUTE.apiPrefix}/history`;
         const departuresUrl = date
-          ? `/api/ferry/departures?date=${encodeURIComponent(date)}`
-          : '/api/ferry/departures';
+          ? `${FERRY_ROUTE.apiPrefix}/departures?date=${encodeURIComponent(date)}`
+          : `${FERRY_ROUTE.apiPrefix}/departures`;
         const [res, departuresRes] = await Promise.all([
           fetch(url, { cache: 'no-store' }),
           fetch(departuresUrl, { cache: 'no-store' }),
@@ -715,8 +732,8 @@
       const axes = segments.map(segment => `
           <line class="axis" x1="${segment.leftX}" y1="${pad.top}" x2="${segment.leftX}" y2="${height - pad.bottom}"></line>
           <line class="axis" x1="${segment.rightX}" y1="${pad.top}" x2="${segment.rightX}" y2="${height - pad.bottom}"></line>
-          <text class="terminal-label" x="${segment.leftX}" y="22" text-anchor="middle">Clinton</text>
-          <text class="terminal-label" x="${segment.rightX}" y="22" text-anchor="middle">Mukilteo</text>
+          <text class="terminal-label" x="${segment.leftX}" y="22" text-anchor="middle">${escapeHtml(PRIMARY_TERMINAL.name)}</text>
+          <text class="terminal-label" x="${segment.rightX}" y="22" text-anchor="middle">${escapeHtml(SECONDARY_TERMINAL.name)}</text>
           <text class="tick-label" x="${(segment.panelLeft + segment.panelRight) / 2}" y="40" text-anchor="middle">${formatGraphTimeMs(segment.startMs, day.date)} - ${formatGraphTimeMs(segment.endMs, day.date)}</text>
         `).join('');
 
@@ -732,7 +749,7 @@
 
     function scheduleContextLine(trip, segment, height, pad) {
       const departMs = trip.scheduledDepartureMs;
-      const arriveMs = trip.arrivalMs || trip.actualArrivalMs || (departMs + 20 * 60 * 1000);
+      const arriveMs = trip.arrivalMs || trip.actualArrivalMs || (departMs + FERRY_ROUTE.crossingEstimateMs);
       if (!departMs || !arriveMs) return '';
       const clipStart = Math.max(departMs, segment.startMs);
       const clipEnd = Math.min(arriveMs, segment.endMs);
@@ -886,10 +903,10 @@
         const dockDeparture = terminal && currentTerminal === terminal && point.atDock === false;
         if (terminal && (!currentTerminal || dockDeparture) && !pendingDeparture) {
           pendingDeparture = {
-            direction: terminal === 'Clinton' ? 'clinton-to-mukilteo' : 'mukilteo-to-clinton',
+            direction: terminal === PRIMARY_TERMINAL.name ? `${PRIMARY_TERMINAL.slug}-to-${SECONDARY_TERMINAL.slug}` : `${SECONDARY_TERMINAL.slug}-to-${PRIMARY_TERMINAL.slug}`,
             ms: point.ms,
             fromTerminal: terminal,
-            toTerminal: terminal === 'Clinton' ? 'Mukilteo' : 'Clinton',
+            toTerminal: terminal === PRIMARY_TERMINAL.name ? SECONDARY_TERMINAL.name : PRIMARY_TERMINAL.name,
             vesselName: track.name,
             vesselKey: track.key,
           };
@@ -948,8 +965,8 @@
         direction: departure.direction,
         fromTerminalName: departure.fromTerminal,
         toTerminalName: departure.toTerminal,
-        fromTerminalId: departure.fromTerminal === 'Clinton' ? 5 : 14,
-        toTerminalId: departure.toTerminal === 'Clinton' ? 5 : 14,
+        fromTerminalId: departure.fromTerminal === PRIMARY_TERMINAL.name ? PRIMARY_TERMINAL.id : SECONDARY_TERMINAL.id,
+        toTerminalId: departure.toTerminal === PRIMARY_TERMINAL.name ? PRIMARY_TERMINAL.id : SECONDARY_TERMINAL.id,
         scheduledDepartureMs: scheduledTrip?.scheduledDepartureMs || null,
         actualDepartureMs: departureMs,
         arrivalMs: departure.arrivalMs || null,
@@ -963,8 +980,8 @@
     }
 
     function gpsTerminalZone(pct, zonePct = GPS_TERMINAL_ZONE_PCT) {
-      if (pct <= zonePct) return 'Clinton';
-      if (pct >= 1 - zonePct) return 'Mukilteo';
+      if (pct <= zonePct) return PRIMARY_TERMINAL.name;
+      if (pct >= 1 - zonePct) return SECONDARY_TERMINAL.name;
       return '';
     }
 
@@ -1003,9 +1020,9 @@
       const ms = trip.scheduledDepartureMs;
       if (!ms || ms < segment.startMs || ms > segment.endMs) return '';
       const y = yForSegment(segment, ms, height, pad);
-      const isClintonDeparture = trip.fromTerminalName === 'Clinton';
-      const axisX = isClintonDeparture ? segment.leftX : segment.rightX;
-      const direction = isClintonDeparture ? -1 : 1;
+      const isPrimaryDeparture = trip.fromTerminalName === PRIMARY_TERMINAL.name;
+      const axisX = isPrimaryDeparture ? segment.leftX : segment.rightX;
+      const direction = isPrimaryDeparture ? -1 : 1;
       const x1 = axisX + direction * 5;
       const x2 = axisX + direction * 17;
       return `<line class="schedule-departure-tick" x1="${x1}" x2="${x2}" y1="${y}" y2="${y}"><title>${escapeHtml(trip.fromTerminalName)} scheduled departure ${formatGraphTimeMs(ms, trip.date)}</title></line>`;
@@ -1035,14 +1052,14 @@
     }
 
     function xForTerminalInSegment(name, segment) {
-      return name === 'Clinton' ? segment.leftX : segment.rightX;
+      return name === PRIMARY_TERMINAL.name ? segment.leftX : segment.rightX;
     }
 
     function terminalProgress(lat, lon) {
-      const ax = CLINTON.lon;
-      const ay = CLINTON.lat;
-      const bx = MUKILTEO.lon;
-      const by = MUKILTEO.lat;
+      const ax = PRIMARY_TERMINAL.lon;
+      const ay = PRIMARY_TERMINAL.lat;
+      const bx = SECONDARY_TERMINAL.lon;
+      const by = SECONDARY_TERMINAL.lat;
       const dx = bx - ax;
       const dy = by - ay;
       return clamp(((lon - ax) * dx + (lat - ay) * dy) / (dx * dx + dy * dy), 0, 1);
@@ -1068,8 +1085,7 @@
         tablesEl.innerHTML = '<div class="terminal-table"><div class="table-wrap"><table><tbody><tr><td colspan="6" class="empty">No GPS-observed departures have been recorded for this date yet.</td></tr></tbody></table></div></div>';
         return;
       }
-      const terminalOrder = ['Mukilteo', 'Clinton'];
-      tablesEl.innerHTML = terminalOrder.map(terminal => terminalTable(terminal, tableTrips, tableTrips)).join('');
+      tablesEl.innerHTML = TERMINAL_ORDER.map(terminal => terminalTable(terminal, tableTrips, tableTrips)).join('');
     }
 
     function tableTripRows(gpsScheduleStats = {}, resolvedSailings = {}) {
@@ -1093,10 +1109,9 @@
 
     function renderVehicleLoadCharts(day, trips, vessels) {
       const bounds = timeBounds(day);
-      const terminalOrder = ['Mukilteo', 'Clinton'];
       const chartTrips = trips.filter(trip => actualDepartureMs(trip) && carLoad(trip));
       loadMetaEl.textContent = chartTrips.length ? `${chartTrips.length} recorded loads` : 'no vehicle load snapshots';
-      loadChartsEl.innerHTML = terminalOrder.map(terminal =>
+      loadChartsEl.innerHTML = TERMINAL_ORDER.map(terminal =>
         vehicleLoadChart(terminal, chartTrips, vessels, bounds, day.date)
       ).join('');
     }
