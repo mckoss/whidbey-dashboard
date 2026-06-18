@@ -731,6 +731,11 @@ const FERRY_ROUTE = window.__FERRY_ROUTE__ || {
   title: 'South Whidbey Island',
   historyPath: '/ferry-history',
   apiPrefix: '/api/ferry',
+  weatherPath: '/api/weather',
+  tidesPath: '/api/tides',
+  tidesHourlyPath: '/api/tides/hourly',
+  weatherLabel: 'Clinton, WA',
+  tideLabel: 'Hansville',
   terminals: {
     primary: { slug: 'clinton', name: 'Clinton', id: 5 },
     secondary: { slug: 'mukilteo', name: 'Mukilteo', id: 14 },
@@ -954,7 +959,7 @@ function staleBadge(data) {
 async function loadWeather() {
   const el = document.getElementById('weather');
   try {
-    const res = await fetch('/api/weather');
+    const res = await fetch(FERRY_ROUTE.weatherPath || '/api/weather');
     const d = await res.json();
     const cur = d.current;
     const daily = d.daily;
@@ -986,7 +991,7 @@ async function loadWeather() {
       if (sunEl) sunEl.innerHTML = `<span>${sunIcon} ${riseStr}</span><span>${moonIcon} ${setStr}</span>`;
     }
     el.innerHTML = `
-      <div class="card-title">Weather · Clinton, WA ${ageTag('weather', d)}</div>
+      <div class="card-title">Weather · ${escapeHtml(FERRY_ROUTE.weatherLabel || 'Clinton, WA')} ${ageTag('weather', d)}</div>
       <div class="current-weather">
         <div class="now-icon">${weatherIcon(cur.weather_code)}</div>
         <div class="now-temp">${Math.round(cur.temperature_2m)}°F</div>
@@ -1171,15 +1176,15 @@ async function loadTides() {
   const el = document.getElementById('tides');
   try {
     const [hiloRes, hourlyRes] = await Promise.allSettled([
-      fetch('/api/tides').then(r => r.json()),
-      fetch('/api/tides/hourly').then(r => r.json()),
+      fetch(FERRY_ROUTE.tidesPath || '/api/tides').then(r => r.json()),
+      fetch(FERRY_ROUTE.tidesHourlyPath || '/api/tides/hourly').then(r => r.json()),
     ]);
 
     const hilo = hiloRes.status === 'fulfilled' ? hiloRes.value : null;
     const hourly = hourlyRes.status === 'fulfilled' ? hourlyRes.value : null;
 
     if (!hilo || !hilo.predictions) {
-      el.innerHTML = `<div class="card-title">Tides · Hansville ${tideAgeTag()}</div><div class="error-msg">${hilo?.error?.message || 'No tide data'}</div>`;
+      el.innerHTML = `<div class="card-title">Tides · ${escapeHtml(FERRY_ROUTE.tideLabel || 'Hansville')} ${tideAgeTag()}</div><div class="error-msg">${hilo?.error?.message || 'No tide data'}</div>`;
       return;
     }
 
@@ -1238,12 +1243,12 @@ async function loadTides() {
     _lastHiloPredictions   = predictions;
     _lastHourlyPredictions = hourly?.predictions || null;
     if (!hilo._stale) markFresh('tides');
-    el.innerHTML = `<div class="card-title">Tides · Hansville ${tideAgeTag()}</div>
+    el.innerHTML = `<div class="card-title">Tides · ${escapeHtml(FERRY_ROUTE.tideLabel || 'Hansville')} ${tideAgeTag()}</div>
       ${visualHtml}
       <div class="tide-list">${items}</div>`;
 
   } catch (e) {
-    el.innerHTML = `<div class="card-title">Tides · Hansville ${tideAgeTag()}</div><div class="error-msg">Failed: ${e.message}</div>`;
+    el.innerHTML = `<div class="card-title">Tides · ${escapeHtml(FERRY_ROUTE.tideLabel || 'Hansville')} ${tideAgeTag()}</div><div class="error-msg">Failed: ${e.message}</div>`;
     throw e;
   }
 }

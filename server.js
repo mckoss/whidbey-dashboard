@@ -56,6 +56,8 @@ const FERRY_ROUTES = {
     routeId: CONFIG.wsfRouteId,
     historyDir: CONFIG.ferryHistoryDir,
     crossingEstimateMs: 20 * 60 * 1000,
+    weather: { label: 'Clinton, WA', lat: CONFIG.lat, lon: CONFIG.lon, cacheKey: 'weather' },
+    tides: { label: 'Hansville', station: CONFIG.noaaStation, cacheKey: 'tides' },
     primary: { slug: 'clinton', name: 'Clinton', id: CONFIG.wsfDepartingTerminal, lat: 47.9755, lon: -122.3493 },
     secondary: { slug: 'mukilteo', name: 'Mukilteo', id: CONFIG.wsfArrivingTerminal, lat: 47.9485, lon: -122.3046 },
   },
@@ -69,7 +71,9 @@ const FERRY_ROUTES = {
     routeId: 5,
     historyDir: join(dataDir, 'ferry-history-bainbridge'),
     crossingEstimateMs: 35 * 60 * 1000,
-    primary: { slug: 'seattle', name: 'Seattle', id: 7, lat: 47.561847, lon: -122.624089 },
+    weather: { label: 'Bainbridge Island, WA', lat: 47.6262, lon: -122.5212, cacheKey: 'weather_bainbridge' },
+    tides: { label: 'Seattle', station: '9447130', cacheKey: 'tides_bainbridge' },
+    primary: { slug: 'seattle', name: 'Seattle', id: 7, lat: 47.602501, lon: -122.340472 },
     secondary: { slug: 'bainbridge', name: 'Bainbridge Island', id: 3, lat: 47.622339, lon: -122.509617 },
   },
 };
@@ -768,8 +772,14 @@ app.delete('/api/alert-contexts/:id', requireAdmin, (req, res) => {
   res.json({ ok: true, contexts: next });
 });
 
+function routeHasBothTerminals(value = {}, route = DEFAULT_FERRY_ROUTE) {
+  const terminals = new Set([value.DepartingTerminalID, value.ArrivingTerminalID]);
+  return terminals.has(route.primary.id) && terminals.has(route.secondary.id);
+}
+
 // ── Tides (hi/lo, 3 days) ─────────────────────────────────────────────
-app.get('/api/tides', cachedEndpoint('tides', 2 * 60 * 60 * 1000, async () => {
+function tidesEndpoint(route = DEFAULT_FERRY_ROUTE) {
+  return cachedEndpoint(route.tides.cacheKey, 2 * 60 * 60 * 1000, async () => {
   const today = new Date();
   // Include yesterday so early-morning displays have a previous tide event for
   // current-height/thermometer interpolation before today's first high/low.
@@ -777,7 +787,7 @@ app.get('/api/tides', cachedEndpoint('tides', 2 * 60 * 60 * 1000, async () => {
   const end = formatDate(new Date(today.getTime() + 3 * 86400000));
   const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter` +
     `?begin_date=${begin}&end_date=${end}` +
-    `&station=${CONFIG.noaaStation}` +
+    `&station=${route.tides.station}` +
     `&product=predictions&datum=MLLW&time_zone=lst_ldt` +
     `&interval=hilo&units=english&application=whidbey_dashboard&format=json`;
   const r = await fetchWithRetry(url);
@@ -787,12 +797,14 @@ app.get('/api/tides', cachedEndpoint('tides', 2 * 60 * 60 * 1000, async () => {
   const offset = pacificOffset();
   const predictions = data.predictions.map(p => ({ ...p, t: p.t.replace(' ', 'T') + ':00' + offset }));
   return { ...data, predictions };
-}));
+  });
+}
 
 // ── Tides (hourly interpolated, 48h) — for sparkline graph ──────────────
-// Station 9445526 is a subordinate station (hi/lo only).
+// Some stations are subordinate stations (hi/lo only).
 // We generate smooth hourly points via cosine interpolation between hi/lo events.
-app.get('/api/tides/hourly', cachedEndpoint('tides_hourly', 2 * 60 * 60 * 1000, async () => {
+function tidesHourlyEndpoint(route = DEFAULT_FERRY_ROUTE) {
+  return cachedEndpoint(`${route.tides.cacheKey}_hourly`, 2 * 60 * 60 * 1000, async () => {
   const today = new Date();
   // Include yesterday so the hourly interpolation has a real event before the
   // first tide of the current day instead of flattening to that first event.
@@ -800,7 +812,7 @@ app.get('/api/tides/hourly', cachedEndpoint('tides_hourly', 2 * 60 * 60 * 1000, 
   const end = formatDate(new Date(today.getTime() + 3 * 86400000));
   const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter` +
     `?begin_date=${begin}&end_date=${end}` +
-    `&station=${CONFIG.noaaStation}` +
+    `&station=${route.tides.station}` +
     `&product=predictions&datum=MLLW&time_zone=lst_ldt` +
     `&interval=hilo&units=english&application=whidbey_dashboard&format=json`;
   const r = await fetchWithRetry(url);
@@ -849,12 +861,14 @@ app.get('/api/tides/hourly', cachedEndpoint('tides_hourly', 2 * 60 * 60 * 1000, 
   }
 
   return { predictions, interpolated: true };
-}));
+  });
+}
 
 // ── Weather (Open-Meteo) ───────────────────────────────────────────────
-app.get('/api/weather', cachedEndpoint('weather', 60 * 60 * 1000, async () => {
+function weatherEndpoint(route = DEFAULT_FERRY_ROUTE) {
+  return cachedEndpoint(route.weather.cacheKey, 60 * 60 * 1000, async () => {
   const url = `https://api.open-meteo.com/v1/forecast` +
-    `?latitude=${CONFIG.lat}&longitude=${CONFIG.lon}` +
+    `?latitude=${route.weather.lat}&longitude=${route.weather.lon}` +
     `&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max,wind_direction_10m_dominant,sunrise,sunset` +
     `&hourly=temperature_2m,weather_code,wind_speed_10m` +
     `&current=temperature_2m,weather_code,wind_speed_10m,wind_direction_10m,relative_humidity_2m` +
@@ -869,7 +883,15 @@ app.get('/api/weather', cachedEndpoint('weather', 60 * 60 * 1000, async () => {
     data.daily.sunset  = data.daily.sunset.map(s  => s + ':00' + offset);
   }
   return data;
-}));
+  });
+}
+
+app.get('/api/weather', weatherEndpoint(FERRY_ROUTES.whidbey));
+app.get('/api/tides', tidesEndpoint(FERRY_ROUTES.whidbey));
+app.get('/api/tides/hourly', tidesHourlyEndpoint(FERRY_ROUTES.whidbey));
+app.get('/api/bainbridge/ferry/weather', weatherEndpoint(FERRY_ROUTES.bainbridge));
+app.get('/api/bainbridge/ferry/tides', tidesEndpoint(FERRY_ROUTES.bainbridge));
+app.get('/api/bainbridge/ferry/tides/hourly', tidesHourlyEndpoint(FERRY_ROUTES.bainbridge));
 
 // ── Ferry schedule helper (reusable for either direction) ────────────
 
@@ -907,9 +929,8 @@ async function fetchFerryVesselsData(route = DEFAULT_FERRY_ROUTE) {
   const url = `https://www.wsdot.wa.gov/ferries/api/vessels/rest/vessellocations?apiaccesscode=${CONFIG.wsfApiKey}`;
   const r = await fetchWithRetry(url, { headers: { Accept: 'application/json' } });
   const data = await r.json();
-  const routeTerminals = new Set([route.primary.id, route.secondary.id]);
   const vessels = (Array.isArray(data) ? data : [])
-    .filter(v => routeTerminals.has(v.DepartingTerminalID) || routeTerminals.has(v.ArrivingTerminalID))
+    .filter(v => routeHasBothTerminals(v, route))
     .map(v => ({
       vesselId: v.VesselID,
       vesselName: v.VesselName,
@@ -1181,6 +1202,11 @@ function ferryRouteClientConfig(route = DEFAULT_FERRY_ROUTE) {
     historyPath: route.historyPath,
     routeId: route.routeId,
     crossingEstimateMs: route.crossingEstimateMs,
+    weatherPath: route.key === DEFAULT_FERRY_ROUTE.key ? '/api/weather' : `${route.apiPrefix}/weather`,
+    tidesPath: route.key === DEFAULT_FERRY_ROUTE.key ? '/api/tides' : `${route.apiPrefix}/tides`,
+    tidesHourlyPath: route.key === DEFAULT_FERRY_ROUTE.key ? '/api/tides/hourly' : `${route.apiPrefix}/tides/hourly`,
+    weatherLabel: route.weather.label,
+    tideLabel: route.tides.label,
     terminals: {
       primary: route.primary,
       secondary: route.secondary,

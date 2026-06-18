@@ -330,11 +330,21 @@ test('bainbridge ferry endpoints — use separate route metadata and history sto
   assert.equal(d.routeKey, 'bainbridge', 'Bainbridge history is tagged with the experimental route');
   assert.equal(d.route.apiPrefix, '/api/bainbridge/ferry', 'Bainbridge history points clients at the Bainbridge API');
   assert.equal(d.route.terminals.primary.name, 'Seattle', 'Bainbridge primary terminal is Seattle');
+  assert.equal(d.route.terminals.primary.id, 7, 'Bainbridge primary terminal uses the WSF Seattle terminal ID');
+  assert.equal(d.route.terminals.primary.lat, 47.602501, 'Bainbridge primary terminal uses the Seattle terminal latitude, not Bremerton');
   assert.equal(d.route.terminals.secondary.name, 'Bainbridge Island', 'Bainbridge secondary terminal is Bainbridge Island');
+  assert.equal(d.route.weatherLabel, 'Bainbridge Island, WA', 'Bainbridge dashboard labels local weather correctly');
+  assert.equal(d.route.tideLabel, 'Seattle', 'Bainbridge dashboard labels the closest NOAA tide station');
+  assert.equal(d.route.weatherPath, '/api/bainbridge/ferry/weather', 'Bainbridge dashboard has a separate weather endpoint');
+  assert.equal(d.route.tidesPath, '/api/bainbridge/ferry/tides', 'Bainbridge dashboard has a separate tide endpoint');
 
   const departures = await getJson(`/api/bainbridge/ferry/departures?date=${historyDate}`);
   assert.equal(departures.date, historyDate, 'Bainbridge departures date matches request');
   assert.deepEqual(departures.departures, {}, 'empty Bainbridge history has no observed departures');
+
+  const source = await readFile(join(__dirname, '../server.js'), 'utf8');
+  assert.match(source, /function routeHasBothTerminals/, 'filters ferry vessels by both route terminals');
+  assert.match(source, /\.filter\(v => routeHasBothTerminals\(v, route\)\)/, 'Bainbridge vessel state cannot admit Seattle-Bremerton boats that only share Seattle');
 });
 
 test('ferry/history endpoint — ignores impossible early actual departures from stale vessel matches', async () => {
@@ -1487,8 +1497,13 @@ test('bainbridge pages — serve the shared dashboard with Bainbridge route conf
   assert.match(dashboardHtml, /"key":"bainbridge"/, 'Bainbridge dashboard route key is injected');
   assert.match(dashboardHtml, /"apiPrefix":"\/api\/bainbridge\/ferry"/, 'Bainbridge dashboard uses Bainbridge ferry API');
   assert.match(dashboardHtml, /"historyPath":"\/bainbridge\/ferry-history"/, 'Bainbridge dashboard links to Bainbridge history');
+  assert.match(dashboardHtml, /"weatherPath":"\/api\/bainbridge\/ferry\/weather"/, 'Bainbridge dashboard uses Bainbridge weather API');
+  assert.match(dashboardHtml, /"tidesPath":"\/api\/bainbridge\/ferry\/tides"/, 'Bainbridge dashboard uses Bainbridge tide API');
+  assert.match(dashboardHtml, /"weatherLabel":"Bainbridge Island, WA"/, 'Bainbridge dashboard labels local weather');
+  assert.match(dashboardHtml, /"tideLabel":"Seattle"/, 'Bainbridge dashboard labels the Seattle tide station');
   assert.match(dashboardHtml, /"name":"Seattle"/, 'Bainbridge dashboard includes Seattle terminal');
   assert.match(dashboardHtml, /"name":"Bainbridge Island"/, 'Bainbridge dashboard includes Bainbridge terminal');
+  assert.doesNotMatch(dashboardHtml, /47\.561847/, 'Bainbridge dashboard no longer carries Bremerton coordinates for Seattle');
 
   const historyRes = await fetch(`${BASE}/bainbridge/ferry-history`);
   assert.ok(historyRes.ok, 'Bainbridge history page responds OK');
