@@ -54,6 +54,7 @@ const FERRY_ROUTES = {
     dashboardPath: '/',
     historyPath: '/ferry-history',
     routeId: CONFIG.wsfRouteId,
+    includeAllRouteAlerts: true,
     historyDir: CONFIG.ferryHistoryDir,
     crossingEstimateMs: 20 * 60 * 1000,
     weather: { label: 'Clinton, WA', lat: CONFIG.lat, lon: CONFIG.lon, cacheKey: 'weather' },
@@ -69,6 +70,7 @@ const FERRY_ROUTES = {
     dashboardPath: '/bainbridge',
     historyPath: '/bainbridge/ferry-history',
     routeId: 5,
+    includeAllRouteAlerts: false,
     historyDir: join(dataDir, 'ferry-history-bainbridge'),
     crossingEstimateMs: 35 * 60 * 1000,
     weather: { label: 'Bainbridge Island, WA', lat: 47.6262, lon: -122.5212, cacheKey: 'weather_bainbridge' },
@@ -372,6 +374,7 @@ function loadUserMessages() {
         startDate: sanitizeMessageDate(m.startDate),
         endDate: sanitizeMessageDate(m.endDate),
         color: normalizeCssColor(m.color || ''),
+        routeKeys: normalizeMessageRouteKeys(m.routeKeys),
         createdAt: m.createdAt || null,
         updatedAt: m.updatedAt || null,
       }))
@@ -380,6 +383,51 @@ function loadUserMessages() {
     console.warn(`[messages] ignoring persisted messages: ${e.message}`);
     return [];
   }
+}
+
+function normalizeMessageRouteKeys(value) {
+  const allRouteKeys = Object.keys(FERRY_ROUTES);
+  if (value === null || value === undefined || value === '') return allRouteKeys;
+  const rawKeys = Array.isArray(value) ? value : String(value).split(',');
+  const keys = [...new Set(rawKeys
+    .map(key => String(key || '').trim().toLowerCase())
+    .filter(key => FERRY_ROUTES[key]))];
+  return keys.length ? keys : allRouteKeys;
+}
+
+function messageRouteKeysFromBody(body = {}) {
+  const raw = body.routeKeys ?? body.routeKey ?? body.routes;
+  if (raw === null || raw === undefined || raw === '') return Object.keys(FERRY_ROUTES);
+  const rawKeys = Array.isArray(raw) ? raw : String(raw).split(',');
+  const keys = [...new Set(rawKeys
+    .map(key => String(key || '').trim().toLowerCase())
+    .filter(Boolean))];
+  if (!keys.length) {
+    const error = new Error('At least one crawl message feed must be selected.');
+    error.statusCode = 400;
+    throw error;
+  }
+  const invalid = keys.find(key => !FERRY_ROUTES[key]);
+  if (invalid) {
+    const error = new Error(`Unknown crawl message feed: ${invalid}.`);
+    error.statusCode = 400;
+    throw error;
+  }
+  return keys;
+}
+
+function messageRouteKeyFromQuery(value) {
+  const key = String(value || '').trim().toLowerCase();
+  if (!key) return '';
+  if (FERRY_ROUTES[key]) return key;
+  const error = new Error(`Unknown crawl message feed: ${key}.`);
+  error.statusCode = 400;
+  throw error;
+}
+
+function userMessageAppliesToRoute(message = {}, routeKey = '') {
+  if (!routeKey) return true;
+  return normalizeMessageRouteKeys(message.routeKeys).includes(routeKey);
 }
 
 function sanitizeMessageDate(value) {
@@ -403,6 +451,7 @@ function messageScheduleFromBody(body = {}) {
   const startDate = sanitizeMessageDate(body.startDate);
   const endDate = sanitizeMessageDate(body.endDate);
   const color = normalizeCssColor(body.color || '');
+  const routeKeys = messageRouteKeysFromBody(body);
   if (body.startDate && !startDate) {
     const error = new Error('Start date must use YYYY-MM-DD.');
     error.statusCode = 400;
@@ -418,7 +467,7 @@ function messageScheduleFromBody(body = {}) {
     error.statusCode = 400;
     throw error;
   }
-  return { startDate, endDate, color };
+  return { startDate, endDate, color, routeKeys };
 }
 
 function formatCalendarDate(d) {
@@ -498,6 +547,9 @@ function writeAlertContexts(contexts) {
   mkdirSync(CONFIG.dataDir, { recursive: true });
   writeFileSync(CONFIG.alertContextFile, JSON.stringify(contexts, null, 2));
   clearCache('ferry_alerts');
+  for (const route of Object.values(FERRY_ROUTES)) {
+    clearCache(`${route.key}_ferry_alerts`);
+  }
 }
 
 function ferryAlertContext(...messageParts) {
@@ -646,7 +698,14 @@ app.delete('/api/admin/session', (req, res) => {
 
 app.get('/api/messages', (req, res) => {
   const respond = () => {
-    const messages = loadUserMessages();
+    let routeKey;
+    try {
+      routeKey = messageRouteKeyFromQuery(req.query.route);
+    } catch (e) {
+      return res.status(e.statusCode || 400).json({ error: e.message });
+    }
+    const messages = loadUserMessages()
+      .filter(message => userMessageAppliesToRoute(message, routeKey));
     res.json({
       messages: req.query.includeInactive ? messages : messages.filter(message => isUserMessageActive(message)),
     });
@@ -1027,7 +1086,7 @@ function ferryAlertsEndpoint(route = DEFAULT_FERRY_ROUTE) {
 }
 
 function alertAppliesToRoute(alert = {}, route = DEFAULT_FERRY_ROUTE) {
-  if (alert.AllRoutesFlag) return true;
+  if (alert.AllRoutesFlag) return route.includeAllRouteAlerts !== false;
   const routeIds = Array.isArray(alert.AffectedRouteIDs) ? alert.AffectedRouteIDs : [];
   return routeIds.includes(route.routeId);
 }

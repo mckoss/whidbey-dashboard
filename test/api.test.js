@@ -345,6 +345,9 @@ test('bainbridge ferry endpoints — use separate route metadata and history sto
   const source = await readFile(join(__dirname, '../server.js'), 'utf8');
   assert.match(source, /function routeHasBothTerminals/, 'filters ferry vessels by both route terminals');
   assert.match(source, /\.filter\(v => routeHasBothTerminals\(v, route\)\)/, 'Bainbridge vessel state cannot admit Seattle-Bremerton boats that only share Seattle');
+  assert.match(source, /includeAllRouteAlerts: false/, 'Bainbridge suppresses all-routes WSF alerts in favor of route-specific notices');
+  assert.match(source, /if \(alert\.AllRoutesFlag\) return route\.includeAllRouteAlerts !== false;/,
+    'route alert filtering can keep all-routes notices for Whidbey while excluding them from Bainbridge');
 });
 
 test('bainbridge ferry history — excludes saved Bremerton vessel samples', async () => {
@@ -1348,6 +1351,7 @@ test('messages endpoint — Google-authorized admins can add and delete crawl me
   assert.equal(created.data.message.startDate, '2000-01-01', 'stores start date');
   assert.equal(created.data.message.endDate, '2999-12-31', 'stores end date');
   assert.equal(created.data.message.color, 'oklch(80% 0.14 85)', 'stores safe CSS color text');
+  assert.deepEqual(created.data.message.routeKeys, ['whidbey', 'bainbridge'], 'defaults crawl messages to both ferry feeds');
   assert.ok(created.data.message.id, 'created message has id');
 
   const future = await sendJson('/api/messages', 'POST', {
@@ -1377,6 +1381,30 @@ test('messages endpoint — Google-authorized admins can add and delete crawl me
     'includes messages through their full Pacific end date'
   );
 
+  const bainbridgeOnly = await sendJson('/api/messages', 'POST', {
+    text: 'Bainbridge-only crawl message',
+    startDate: '2000-01-01',
+    endDate: '2999-12-31',
+    routeKeys: ['bainbridge'],
+  }, 'valid-admin-token');
+  assert.equal(bainbridgeOnly.res.status, 201, 'creates route-targeted crawl message');
+  assert.deepEqual(bainbridgeOnly.data.message.routeKeys, ['bainbridge'], 'stores selected crawl feeds');
+
+  const whidbeyMessages = await getJson('/api/messages?route=whidbey');
+  assert.ok(!whidbeyMessages.messages.some(m => m.text === 'Bainbridge-only crawl message'),
+    'Whidbey crawl excludes Bainbridge-only messages');
+  const bainbridgeMessages = await getJson('/api/messages?route=bainbridge');
+  assert.ok(bainbridgeMessages.messages.some(m => m.text === 'Bainbridge-only crawl message'),
+    'Bainbridge crawl includes Bainbridge-only messages');
+  const invalidRouteQuery = await fetch(`${BASE}/api/messages?route=bremerton`);
+  assert.equal(invalidRouteQuery.status, 400, 'rejects unknown crawl message feed query');
+  const invalidRouteBody = await sendJson('/api/messages', 'POST', {
+    text: 'Bad target',
+    routeKeys: ['bremerton'],
+  }, 'valid-admin-token');
+  assert.equal(invalidRouteBody.res.status, 400, 'rejects unknown crawl message feed on write');
+  await sendJson(`/api/messages/${bainbridgeOnly.data.message.id}`, 'DELETE', {}, 'valid-admin-token');
+
   const includeInactive = await getJsonWithToken('/api/messages?includeInactive=1', 'valid-admin-token');
   assert.equal(includeInactive.res.status, 200, 'admin can include inactive messages');
   assert.deepEqual(
@@ -1399,12 +1427,14 @@ test('messages endpoint — Google-authorized admins can add and delete crawl me
     text: '<i>Bring firewood and kindling</i>',
     endDate: '2999-11-30',
     color: 'var(--danger); background:red',
+    routeKeys: ['whidbey'],
   }, 'valid-admin-token');
   assert.equal(updated.res.status, 200, 'updates message for authorized admin');
   assert.equal(updated.data.message.text, 'Bring firewood and kindling', 'stores updated plain text only');
   assert.equal(updated.data.message.startDate, null, 'blank omitted start date clears start date');
   assert.equal(updated.data.message.endDate, '2999-11-30', 'updates end date');
   assert.equal(updated.data.message.color, '', 'drops unsafe CSS color text');
+  assert.deepEqual(updated.data.message.routeKeys, ['whidbey'], 'updates selected crawl feeds');
 
   const deleted = await sendJson(`/api/messages/${created.data.message.id}`, 'DELETE', {}, 'valid-admin-token');
   assert.equal(deleted.res.status, 200, 'deletes message for authorized admin');
@@ -1529,6 +1559,8 @@ test('static HTML — index.html contains required elements', async () => {
   assert.ok(html.includes('ferry-alert'), 'has ferry route alert styling');
   assert.match(html, /<a class="text-link" id="history-link" href="\/ferry-history">History<\/a>/, 'links to ferry history from the dashboard header');
   assert.match(html, /#ferry-alert-ticker\s*\{[\s\S]*?min-width:\s*0;/, 'ticker grid item cannot widen the dashboard');
+  assert.match(html, /\/api\/messages\?route=\$\{encodeURIComponent\(FERRY_ROUTE\.key\)\}/,
+    'dashboard fetches crawl messages for the active ferry route');
   assert.match(html, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s*minmax\(0,\s*1fr\)/, 'main grid columns can shrink to viewport');
   assert.ok(html.includes('Whidbey'), 'mentions Whidbey');
 });
@@ -1574,6 +1606,10 @@ test('admin page — serves Google-authenticated admin surface', async () => {
   assert.match(html, /Start date \(Pacific\)/, 'labels message start date as Pacific');
   assert.match(html, /End date \(Pacific\)/, 'labels message end date as Pacific');
   assert.match(html, /id="message-color"/, 'has message color field');
+  assert.match(html, /name="routeKeys"[^>]+value="whidbey"/, 'has Whidbey crawl feed targeting');
+  assert.match(html, /name="routeKeys"[^>]+value="bainbridge"/, 'has Bainbridge crawl feed targeting');
+  assert.match(html, /selectedMessageRouteKeys/, 'submits selected crawl message feeds');
+  assert.match(html, /messageRoutesText/, 'shows selected crawl message feeds in the admin list');
   assert.match(html, /includeInactive=1/, 'admin message list can include inactive scheduled messages');
   assert.match(html, /Ferry Alert Parentheticals/, 'has ferry alert parenthetical editor');
   assert.match(html, /id="alert-query"/, 'has alert query field');
@@ -1584,6 +1620,7 @@ test('admin page — serves Google-authenticated admin surface', async () => {
   assert.match(html, /Delete/, 'has delete controls');
   assert.match(html, /Edit/, 'has edit controls');
   assert.match(html, /\/api\/messages/, 'uses user message API');
+  assert.match(html, /routeKeys/, 'persists crawl message feed targeting through the admin API');
   assert.match(html, /\/api\/alert-contexts/, 'uses alert context API');
   assert.match(html, /\/api\/admin\/session/, 'uses cookie-backed admin session API');
   assert.match(html, /credentials:\s*'same-origin'/, 'sends same-origin session cookies with admin requests');

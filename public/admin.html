@@ -132,6 +132,22 @@
       grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
       gap: 0.75rem;
     }
+    .route-targets {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+    .route-targets label {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      margin: 0;
+      color: var(--text);
+      font-size: 0.9rem;
+    }
+    .route-targets input {
+      width: auto;
+    }
     .actions, .auth-row {
       display: flex;
       align-items: center;
@@ -232,6 +248,13 @@
           <label for="message-color">Color</label>
           <input id="message-color" name="color" maxlength="80" placeholder="Any CSS color, e.g. var(--accent), #38bdf8, orange">
         </div>
+        <div class="field">
+          <label>Feeds</label>
+          <div class="route-targets">
+            <label><input name="routeKeys" type="checkbox" value="whidbey" checked> Whidbey</label>
+            <label><input name="routeKeys" type="checkbox" value="bainbridge" checked> Bainbridge</label>
+          </div>
+        </div>
         <div class="actions">
           <button id="save-message" type="submit">OK</button>
           <span id="status" class="status" role="status"></span>
@@ -297,6 +320,10 @@
     const messagesPanel = document.getElementById('messages-panel');
     const alertContextPanel = document.getElementById('alert-context-panel');
     const versionEl = document.getElementById('app-version');
+    const MESSAGE_ROUTES = [
+      { key: 'whidbey', label: 'Whidbey' },
+      { key: 'bainbridge', label: 'Bainbridge' },
+    ];
 
     let googleCredential = '';
     let signedInEmail = '';
@@ -342,6 +369,32 @@
       if (start) return `Starts ${start}`;
       if (end) return `Ends ${end}`;
       return '';
+    }
+
+    function messageRouteKeys(message = {}) {
+      const keys = Array.isArray(message.routeKeys) && message.routeKeys.length
+        ? message.routeKeys
+        : MESSAGE_ROUTES.map(route => route.key);
+      return keys.filter(key => MESSAGE_ROUTES.some(route => route.key === key));
+    }
+
+    function messageRoutesText(message = {}) {
+      const labels = messageRouteKeys(message)
+        .map(key => MESSAGE_ROUTES.find(route => route.key === key)?.label)
+        .filter(Boolean);
+      return labels.length === MESSAGE_ROUTES.length ? 'Feeds: both' : `Feeds: ${labels.join(', ')}`;
+    }
+
+    function selectedMessageRouteKeys(root) {
+      return [...root.querySelectorAll('input[name="routeKeys"]:checked')]
+        .map(input => input.value);
+    }
+
+    function routeTargetsHtml(message = {}, prefix = 'message-route') {
+      const selected = new Set(messageRouteKeys(message));
+      return `<div class="route-targets">${MESSAGE_ROUTES.map(route => `
+        <label><input id="${prefix}-${escapeHtml(route.key)}" name="routeKeys" type="checkbox" value="${escapeHtml(route.key)}" ${selected.has(route.key) ? 'checked' : ''} ${signedInEmail ? '' : 'disabled'}> ${escapeHtml(route.label)}</label>
+      `).join('')}</div>`;
     }
 
     function setSignedInEmail(email) {
@@ -408,6 +461,7 @@
               <div class="message-text">${escapeHtml(message.text)}</div>
               ${messageScheduleText(message) ? `<div class="message-schedule">${escapeHtml(messageScheduleText(message))}</div>` : ''}
               ${message.color ? `<div class="message-schedule">Color: ${escapeHtml(message.color)}</div>` : ''}
+              <div class="message-schedule">${escapeHtml(messageRoutesText(message))}</div>
             </div>
             <div class="actions">
               <button class="edit" type="button" ${signedInEmail ? '' : 'disabled'}>Edit</button>
@@ -432,6 +486,10 @@
             <div class="field">
               <label for="message-color-${escapeHtml(message.id)}">Color</label>
               <input id="message-color-${escapeHtml(message.id)}" name="color" maxlength="80" value="${escapeHtml(message.color || '')}" placeholder="Any CSS color" ${signedInEmail ? '' : 'disabled'}>
+            </div>
+            <div class="field">
+              <label>Feeds</label>
+              ${routeTargetsHtml(message, `message-route-${escapeHtml(message.id)}`)}
             </div>
             <div class="actions">
               <button type="submit" ${signedInEmail ? '' : 'disabled'}>Save</button>
@@ -554,6 +612,11 @@
         setStatus('Sign in with Google first.', true);
         return;
       }
+      const routeKeys = selectedMessageRouteKeys(form);
+      if (!routeKeys.length) {
+        setStatus('Choose at least one feed.', true);
+        return;
+      }
       setStatus('Saving...');
       try {
         await jsonFetch('/api/messages', {
@@ -563,6 +626,7 @@
             startDate: messageStartDateEl.value,
             endDate: messageEndDateEl.value,
             color: messageColorEl.value,
+            routeKeys,
           }),
         });
         textEl.value = '';
@@ -612,6 +676,11 @@
       }
       const row = form.closest('.message-row');
       const formData = new FormData(form);
+      const routeKeys = selectedMessageRouteKeys(form);
+      if (!routeKeys.length) {
+        setStatus('Choose at least one feed.', true);
+        return;
+      }
       setStatus('Saving...');
       try {
         await jsonFetch(`/api/messages/${encodeURIComponent(row.dataset.id)}`, {
@@ -621,6 +690,7 @@
             startDate: formData.get('startDate'),
             endDate: formData.get('endDate'),
             color: formData.get('color'),
+            routeKeys,
           }),
         });
         setStatus('Saved.');

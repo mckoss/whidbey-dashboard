@@ -1974,7 +1974,7 @@ async function loadFerry() {
     fetch(`${FERRY_ROUTE.apiPrefix}/${SECONDARY_TERMINAL.slug}`).then(r => r.json()),
     fetch(`${FERRY_ROUTE.apiPrefix}/${SECONDARY_TERMINAL.slug}/space`).then(r => r.json()),
     fetch(`${FERRY_ROUTE.apiPrefix}/alerts`).then(r => r.json()),
-    fetch('/api/messages').then(r => r.json()),
+    fetch(`/api/messages?route=${encodeURIComponent(FERRY_ROUTE.key)}`).then(r => r.json()),
     fetch(`${FERRY_ROUTE.apiPrefix}/departures`, { cache: 'no-store' }).then(r => r.json()),
   ]);
 
