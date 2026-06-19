@@ -337,6 +337,9 @@ test('bainbridge ferry endpoints — use separate route metadata and history sto
   assert.equal(d.route.tideLabel, 'Seattle', 'Bainbridge dashboard labels the closest NOAA tide station');
   assert.equal(d.route.weatherPath, '/api/bainbridge/ferry/weather', 'Bainbridge dashboard has a separate weather endpoint');
   assert.equal(d.route.tidesPath, '/api/bainbridge/ferry/tides', 'Bainbridge dashboard has a separate tide endpoint');
+  assert.equal(d.route.historyDisplay.leftTerminalSlug, 'bainbridge', 'Bainbridge history renders west terminal on the left');
+  assert.equal(d.route.historyDisplay.rightTerminalSlug, 'seattle', 'Bainbridge history renders east terminal on the right');
+  assert.deepEqual(d.route.historyDisplay.terminalLabelLines.bainbridge, ['Bainbridge', 'Island'], 'Bainbridge Island history label wraps to two lines');
 
   const departures = await getJson(`/api/bainbridge/ferry/departures?date=${historyDate}`);
   assert.equal(departures.date, historyDate, 'Bainbridge departures date matches request');
@@ -349,6 +352,12 @@ test('bainbridge ferry endpoints — use separate route metadata and history sto
     'all-routes WSF alerts still appear on both ferry dashboards');
   assert.match(source, /return routeIds\.includes\(route\.routeId\);/,
     'route-specific WSF alerts only appear on dashboards for that WSF route');
+
+  const historyHtml = await readFile(join(__dirname, '../public/ferry-history.html'), 'utf8');
+  assert.match(historyHtml, /const LEFT_TERMINAL = TERMINALS_BY_SLUG\.get\(HISTORY_DISPLAY\.leftTerminalSlug\) \|\| PRIMARY_TERMINAL;/,
+    'history SVG supports a route-specific left terminal');
+  assert.match(historyHtml, /displayProgressPct\(point\.pct\)/,
+    'history SVG reverses GPS track coordinates when display order differs from data order');
 });
 
 test('bainbridge ferry history — excludes saved Bremerton vessel samples', async () => {
@@ -1747,7 +1756,7 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /const HALF_HOUR_MS = 30 \* 60 \* 1000/, 'defines half-hour grid interval');
   assert.match(html, /schedule-departure-tick/, 'draws yellow scheduled departure ticks outside the terminal axes');
   assert.match(html, /scheduledDepartureTick\(trip, segment, height, pad\)/, 'renders scheduled departure ticks per split timeline segment');
-  assert.match(html, /trip\.fromTerminalName === PRIMARY_TERMINAL\.name/, 'places route terminals on opposite outside edges');
+  assert.match(html, /trip\.fromTerminalName === LEFT_TERMINAL\.name/, 'places displayed route terminals on opposite outside edges');
   assert.match(html, /Array\.from\(\{ length: TIMELINE_COLUMN_COUNT \}/, 'builds timeline columns from the configured count');
   assert.match(html, /index \* TIMELINE_COLUMN_HOURS \* HOUR_MS/, 'splits graph columns into fixed 6-hour periods');
   assert.match(html, /return \{ startMs, endMs \}/, 'uses the history file span as graph bounds');

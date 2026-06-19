@@ -75,6 +75,13 @@ const FERRY_ROUTES = {
     tides: { label: 'Seattle', station: '9447130', cacheKey: 'tides_bainbridge' },
     primary: { slug: 'seattle', name: 'Seattle', id: 7, lat: 47.602501, lon: -122.340472 },
     secondary: { slug: 'bainbridge', name: 'Bainbridge Island', id: 3, lat: 47.622339, lon: -122.509617 },
+    historyDisplay: {
+      leftTerminalSlug: 'bainbridge',
+      rightTerminalSlug: 'seattle',
+      terminalLabelLines: {
+        bainbridge: ['Bainbridge', 'Island'],
+      },
+    },
   },
 };
 const DEFAULT_FERRY_ROUTE = FERRY_ROUTES.whidbey;
@@ -1294,6 +1301,7 @@ function ferryRouteClientConfig(route = DEFAULT_FERRY_ROUTE) {
     tidesHourlyPath: route.key === DEFAULT_FERRY_ROUTE.key ? '/api/tides/hourly' : `${route.apiPrefix}/tides/hourly`,
     weatherLabel: route.weather.label,
     tideLabel: route.tides.label,
+    historyDisplay: route.historyDisplay || null,
     terminals: {
       primary: route.primary,
       secondary: route.secondary,

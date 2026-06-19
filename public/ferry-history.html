@@ -511,6 +511,10 @@
     };
     const PRIMARY_TERMINAL = FERRY_ROUTE.terminals.primary;
     const SECONDARY_TERMINAL = FERRY_ROUTE.terminals.secondary;
+    const TERMINALS_BY_SLUG = new Map([PRIMARY_TERMINAL, SECONDARY_TERMINAL].map(terminal => [terminal.slug, terminal]));
+    const HISTORY_DISPLAY = FERRY_ROUTE.historyDisplay || {};
+    const LEFT_TERMINAL = TERMINALS_BY_SLUG.get(HISTORY_DISPLAY.leftTerminalSlug) || PRIMARY_TERMINAL;
+    const RIGHT_TERMINAL = TERMINALS_BY_SLUG.get(HISTORY_DISPLAY.rightTerminalSlug) || SECONDARY_TERMINAL;
     const TERMINAL_ORDER = [SECONDARY_TERMINAL.name, PRIMARY_TERMINAL.name];
     document.title = FERRY_ROUTE.historyTitle;
     document.getElementById('page-title').textContent = FERRY_ROUTE.historyTitle;
@@ -732,8 +736,8 @@
       const axes = segments.map(segment => `
           <line class="axis" x1="${segment.leftX}" y1="${pad.top}" x2="${segment.leftX}" y2="${height - pad.bottom}"></line>
           <line class="axis" x1="${segment.rightX}" y1="${pad.top}" x2="${segment.rightX}" y2="${height - pad.bottom}"></line>
-          <text class="terminal-label" x="${segment.leftX}" y="22" text-anchor="middle">${escapeHtml(PRIMARY_TERMINAL.name)}</text>
-          <text class="terminal-label" x="${segment.rightX}" y="22" text-anchor="middle">${escapeHtml(SECONDARY_TERMINAL.name)}</text>
+          ${terminalLabelSvg(LEFT_TERMINAL, segment.leftX, 18)}
+          ${terminalLabelSvg(RIGHT_TERMINAL, segment.rightX, 18)}
           <text class="tick-label" x="${(segment.panelLeft + segment.panelRight) / 2}" y="40" text-anchor="middle">${formatGraphTimeMs(segment.startMs, day.date)} - ${formatGraphTimeMs(segment.endMs, day.date)}</text>
         `).join('');
 
@@ -996,7 +1000,7 @@
         .filter(point => point.ms >= segment.startMs && point.ms <= segment.endMs)
         .map(point => ({
           ms: point.ms,
-          x: segment.leftX + (segment.rightX - segment.leftX) * point.pct,
+          x: segment.leftX + (segment.rightX - segment.leftX) * displayProgressPct(point.pct),
         }));
       if (inSegment.length < 2) return [];
       const parts = [];
@@ -1020,9 +1024,9 @@
       const ms = trip.scheduledDepartureMs;
       if (!ms || ms < segment.startMs || ms > segment.endMs) return '';
       const y = yForSegment(segment, ms, height, pad);
-      const isPrimaryDeparture = trip.fromTerminalName === PRIMARY_TERMINAL.name;
-      const axisX = isPrimaryDeparture ? segment.leftX : segment.rightX;
-      const direction = isPrimaryDeparture ? -1 : 1;
+      const isLeftDeparture = trip.fromTerminalName === LEFT_TERMINAL.name;
+      const axisX = xForTerminalInSegment(trip.fromTerminalName, segment);
+      const direction = isLeftDeparture ? -1 : 1;
       const x1 = axisX + direction * 5;
       const x2 = axisX + direction * 17;
       return `<line class="schedule-departure-tick" x1="${x1}" x2="${x2}" y1="${y}" y2="${y}"><title>${escapeHtml(trip.fromTerminalName)} scheduled departure ${formatGraphTimeMs(ms, trip.date)}</title></line>`;
@@ -1052,7 +1056,22 @@
     }
 
     function xForTerminalInSegment(name, segment) {
-      return name === PRIMARY_TERMINAL.name ? segment.leftX : segment.rightX;
+      return name === LEFT_TERMINAL.name ? segment.leftX : segment.rightX;
+    }
+
+    function displayProgressPct(pct) {
+      return LEFT_TERMINAL.name === PRIMARY_TERMINAL.name ? pct : 1 - pct;
+    }
+
+    function terminalLabelSvg(terminal, x, y) {
+      const configuredLines = HISTORY_DISPLAY.terminalLabelLines?.[terminal.slug];
+      const lines = Array.isArray(configuredLines) && configuredLines.length
+        ? configuredLines
+        : [terminal.name];
+      const tspans = lines.map((line, index) =>
+        `<tspan x="${x}" dy="${index === 0 ? 0 : 15}">${escapeHtml(line)}</tspan>`
+      ).join('');
+      return `<text class="terminal-label" x="${x}" y="${y}" text-anchor="middle">${tspans}</text>`;
     }
 
     function terminalProgress(lat, lon) {
