@@ -1256,63 +1256,18 @@ async function loadTides() {
 // ── Ferry helpers ──────────────────────────────────────────────────────
 const countdownIntervals = {};
 
-// ── Late-ferry detection ───────────────────────────────────────────────
-// If a boat has just arrived or is still inbound, assume it needs at least
-// 15 minutes at the departing dock to unload, reload, and leave again.
-const MIN_TURNAROUND_MS = 15 * 60 * 1000;
+// A departure more than this past its scheduled time is shown as late (amber
+// "~" estimate for projections, "(was …)" actual for confirmed departures).
+// Every other lateness decision is made server-side.
 const LATE_THRESHOLD_MS = 5 * 60 * 1000;
-const VESSEL_SAILING_MATCH_WINDOW_MS = 45 * 60 * 1000;
-// A single vessel cannot make two departures from the same terminal closer
-// together than one round trip. On the half-hour Mukilteo/Clinton schedule a
-// boat legitimately re-departs every ~60 min (two boats alternating), so any
-// two same-direction departures within this window cannot be the same vessel.
-const MIN_SAME_VESSEL_GAP_MS = 55 * 60 * 1000;
 
-// Build indexed ferry interpretation data. Raw vessel positions are accepted
-// only as a compatibility fallback; live chip scheduling comes from the server's
-// /api/ferry/departures resolvedSailings map.
+// The chip is a pure renderer of the server's GPS-based per-sailing model. All
+// scheduled-vs-actual reconciliation, projection, and "should have left" tick
+// selection happens server-side; the browser never re-derives or vessel-matches.
+// `vesselData` is ignored (the live dashboard passes none); kept only so the
+// existing call sites and tests can hand in `(null, departureData)` unchanged.
 function buildVesselMap(vesselData, departureData = null) {
-  const hasRawVesselData = Array.isArray(vesselData?.vessels);
-  const vessels = hasRawVesselData ? vesselData.vessels.filter(v => v?.inService) : [];
-  const byScheduled = {};
-  for (const v of vessels) {
-    if (v.scheduledDepartureMs != null) byScheduled[v.scheduledDepartureMs] = v;
-  }
-  // Keep legacy interpretation fields available only for explicit raw-vessel
-  // fallback/test callers. The live dashboard passes no raw vessel data and
-  // renders the server's resolvedSailings interpretation instead.
-  const legacy = hasRawVesselData ? departureData || {} : {};
-  return {
-    vessels,
-    byScheduled,
-    departures: legacy.departures || {},
-    missedDepartures: legacy.missedDepartures || {},
-    vesselCorrections: legacy.vesselCorrections || {},
-    predictedDepartures: legacy.predictedDepartures || {},
-    resolvedVessels: legacy.resolvedVessels || {},
-    resolvedSailings: departureData?.resolvedSailings || {},
-    vesselStatuses: departureData?.vesselStatuses || {},
-  };
-}
-
-function serverDepartureForSailing(s, vesselMap, fromTerminalId) {
-  const scheduledMs = s.sailTime.getTime();
-  return vesselMap?.departures?.[`${fromTerminalId}:${scheduledMs}`] || null;
-}
-
-function vesselCorrectionForSailing(s, vesselMap, fromTerminalId) {
-  const scheduledMs = s.sailTime.getTime();
-  return vesselMap?.vesselCorrections?.[`${fromTerminalId}:${scheduledMs}`] || null;
-}
-
-function predictedDepartureForSailing(s, vesselMap, fromTerminalId) {
-  const scheduledMs = s.sailTime.getTime();
-  return vesselMap?.predictedDepartures?.[`${fromTerminalId}:${scheduledMs}`] || null;
-}
-
-function resolvedVesselForSailing(s, vesselMap, fromTerminalId) {
-  const scheduledMs = s.sailTime.getTime();
-  return vesselMap?.resolvedVessels?.[`${fromTerminalId}:${scheduledMs}`] || null;
+  return { resolvedSailings: departureData?.resolvedSailings || {} };
 }
 
 function resolvedSailingForSailing(s, vesselMap, fromTerminalId) {
@@ -1320,250 +1275,40 @@ function resolvedSailingForSailing(s, vesselMap, fromTerminalId) {
   return vesselMap?.resolvedSailings?.[`${fromTerminalId}:${scheduledMs}`] || null;
 }
 
-function activeVesselStatusForSailing(s, resolved, vesselMap, fromTerminalId) {
-  const vesselName = resolved?.vesselName || s.VesselName || '';
-  if (!vesselName) return null;
-  return Object.values(vesselMap?.vesselStatuses || {}).find(status =>
-    status?.vesselName === vesselName &&
-    status.availableTerminalId === fromTerminalId &&
-    Number.isFinite(status.availableMs)
-  ) || null;
-}
-
-function missedDepartureForSailing(s, vesselMap, fromTerminalId) {
-  const scheduledMs = s.sailTime.getTime();
-  return vesselMap?.missedDepartures?.[`${fromTerminalId}:${scheduledMs}`] || null;
-}
-
-function findVesselForSailing(s, vesselMap, fromTerminalId, parsedSailings = null) {
-  const schedMs = s.sailTime.getTime();
-  const exact = vesselMap?.byScheduled?.[schedMs];
-
-  const vessels = vesselMap?.vessels || [];
-  const candidates = vessels.filter(v =>
-    (v.departingTerminalId === fromTerminalId || v.arrivingTerminalId === fromTerminalId) &&
-    vesselCanMatchSailing(v, fromTerminalId, schedMs, parsedSailings)
-  );
-  if (exact && exact.departingTerminalId === fromTerminalId && !candidates.includes(exact)) {
-    candidates.push(exact);
-  }
-  if (!candidates.length) return null;
-
-  // Prefer the most direct/closest vessel signal for this sailing. Delay
-  // display should not go hunting for the most pessimistic ambiguous match.
-  return candidates
-    .map(v => ({ v, estMs: estimateDepartureFromVessel(v, fromTerminalId, schedMs) }))
-    .filter(x => x.estMs != null)
-    .sort((a, b) => {
-      const aPriority = vesselMatchPriority(a.v);
-      const bPriority = vesselMatchPriority(b.v);
-      if (aPriority !== bPriority) return aPriority - bPriority;
-      const aExact = a.v.scheduledDepartureMs === schedMs ? 0 : 1;
-      const bExact = b.v.scheduledDepartureMs === schedMs ? 0 : 1;
-      if (aExact !== bExact) return aExact - bExact;
-      return Math.abs(a.estMs - schedMs) - Math.abs(b.estMs - schedMs);
-    })[0]?.v || null;
-}
-
-function vesselMatchPriority(vessel) {
-  if (!vessel) return 9;
-  if (vessel.leftDockMs && !vessel.atDock) return 0;
-  if (vessel.leftDockMs) return 1;
-  if (vessel.scheduledDepartureMs && !vessel.atDock) return 2;
-  if (vessel.etaMs && !vessel.atDock) return 3;
-  if (vessel.scheduledDepartureMs) return 4;
-  if (vessel.atDock) return 5;
-  return 8;
-}
-
-function nearestSailingMsToEstimate(parsedSailings, estimateMs) {
-  if (!parsedSailings || estimateMs == null) return null;
-  return parsedSailings
-    .map(s => s.sailTime.getTime())
-    .filter(ms => Math.abs(ms - estimateMs) <= VESSEL_SAILING_MATCH_WINDOW_MS)
-    .sort((a, b) => Math.abs(a - estimateMs) - Math.abs(b - estimateMs))[0] ?? null;
-}
-
-function vesselCanMatchSailing(vessel, fromTerminalId, schedMs, parsedSailings = null) {
-  const near = ms => ms != null && Math.abs(ms - schedMs) <= VESSEL_SAILING_MATCH_WINDOW_MS;
-  if (vessel.scheduledDepartureMs != null) return vessel.scheduledDepartureMs === schedMs;
-  if (near(vessel.leftDockMs)) {
-    const nearestMs = nearestSailingMsToEstimate(parsedSailings, vessel.leftDockMs);
-    return nearestMs != null ? nearestMs === schedMs : true;
-  }
-  if (vessel.arrivingTerminalId === fromTerminalId && vessel.etaMs) {
-    const estimatedDepartureMs = vessel.etaMs + MIN_TURNAROUND_MS;
-    const nearestMs = nearestSailingMsToEstimate(parsedSailings, estimatedDepartureMs);
-    return nearestMs != null ? nearestMs === schedMs : near(estimatedDepartureMs);
-  }
-
-  // When WSF only says a boat is at the dock, avoid applying that state to old
-  // morning sailings. It can only explain a recently missed departure.
-  if (vessel.atDock && vessel.departingTerminalId === fromTerminalId) {
-    const now = Date.now();
-    const nearestMs = nearestSailingMsToEstimate(parsedSailings, now);
-    return nearestMs != null
-      ? nearestMs === schedMs && schedMs <= now
-      : schedMs <= now && now - schedMs <= VESSEL_SAILING_MATCH_WINDOW_MS;
-  }
-
-  return false;
-}
-
-function estimateDepartureFromVessel(vessel, fromTerminalId, schedMs) {
-  if (!vessel) return null;
-
-  // Departed already: use actual left-dock time when WSF reports it.
-  if (vessel.leftDockMs && vessel.departingTerminalId === fromTerminalId) {
-    return vessel.leftDockMs;
-  }
-
-  // Inbound to the departure terminal: ETA to dock + 15 minute turn-around.
-  if (vessel.arrivingTerminalId === fromTerminalId && vessel.etaMs) {
-    return vessel.etaMs + MIN_TURNAROUND_MS;
-  }
-
-  // At the departure dock but not gone yet. Keep this estimate stable across
-  // refreshes; using Date.now() here makes countdowns drift and retriggers the
-  // slide animation even when the next scheduled sailing has not changed.
-  if (vessel.atDock && vessel.departingTerminalId === fromTerminalId) {
-    return vessel.scheduledDepartureMs || schedMs;
-  }
-
-  return vessel.scheduledDepartureMs || null;
-}
-
-function hasDirectVesselSignal(vessel, fromTerminalId, schedMs) {
-  if (!vessel) return false;
-  if (vessel.leftDockMs && vessel.departingTerminalId === fromTerminalId) return true;
-  if (vessel.arrivingTerminalId === fromTerminalId && vessel.etaMs) return true;
-  if (vessel.atDock && vessel.departingTerminalId === fromTerminalId) {
-    const now = Date.now();
-    return schedMs <= now && now - schedMs <= VESSEL_SAILING_MATCH_WINDOW_MS;
-  }
-  return false;
-}
-
-function buildLateInfo(effectiveMs, scheduledMs, vessel = null) {
-  const delayMs = effectiveMs - scheduledMs;
-  return delayMs > LATE_THRESHOLD_MS
-    ? { estimatedDepartureMs: effectiveMs, delayMs, atDock: !!vessel?.atDock }
-    : null;
-}
-
-function getRawSailingTiming(s, vesselMap, fromTerminalId, parsedSailings = null) {
-  const scheduledMs = s.sailTime.getTime();
-  const serverDeparture = serverDepartureForSailing(s, vesselMap, fromTerminalId);
-  const vessel = findVesselForSailing(s, vesselMap, fromTerminalId, parsedSailings);
-  const departureVessel = serverDeparture ? {
-    ...(vessel || {}),
-    vesselId: serverDeparture.vesselId || vessel?.vesselId || null,
-    vesselName: serverDeparture.vesselName || vessel?.vesselName || '',
-    departingTerminalId: serverDeparture.fromTerminalId,
-    arrivingTerminalId: serverDeparture.toTerminalId,
-    leftDockMs: serverDeparture.actualDepartureMs,
-  } : vessel;
-  const estimateMs = estimateDepartureFromVessel(vessel, fromTerminalId, scheduledMs);
-  const effectiveMs = serverDeparture?.actualDepartureMs ||
-    (estimateMs == null ? scheduledMs : Math.max(scheduledMs, estimateMs));
-  return {
-    scheduledMs,
-    effectiveMs,
-    vessel: departureVessel,
-    serverDeparture: serverDeparture || null,
-    hasDirectVesselSignal: !!serverDeparture || hasDirectVesselSignal(vessel, fromTerminalId, scheduledMs),
-    lateInfo: buildLateInfo(effectiveMs, scheduledMs, departureVessel),
-  };
-}
-
+// Map each scheduled sailing straight onto the server's GPS-based interpretation.
+// The server decides status, the effective (actual/projected) departure time, and
+// the "should have left" scheduled tick (displayScheduledMs, already the most
+// recent tick <= the prediction). The browser adds no projection of its own.
 function computeSailingTimings(parsedSailings, vesselMap = {}, fromTerminalId = 5) {
-  const now = Date.now();
   return parsedSailings.map(s => {
+    const scheduledMs = s.sailTime.getTime();
     const resolved = resolvedSailingForSailing(s, vesselMap, fromTerminalId);
-    if (resolved) {
-      const scheduledMs = resolved.scheduledDepartureMs || s.sailTime.getTime();
-      const vesselStatus = !resolved.isDeparted
-        ? activeVesselStatusForSailing(s, resolved, vesselMap, fromTerminalId)
-        : null;
-      const vesselProjectionMs = vesselStatus?.availableMs || null;
-      const effectiveMs = vesselProjectionMs
-        ? Math.max(scheduledMs, vesselProjectionMs)
-        : resolved.effectiveDepartureMs || scheduledMs;
-      const delayMs = Math.max(0, vesselProjectionMs ? effectiveMs - scheduledMs : resolved.delayMs || 0);
-      const shouldProjectFromVessel = vesselProjectionMs &&
-        delayMs > LATE_THRESHOLD_MS &&
-        (resolved.status === 'unknown' || resolved.status === 'scheduled' || resolved.status === 'missed');
-      const adjustedResolved = shouldProjectFromVessel
-        ? {
-            ...resolved,
-            status: 'projected',
-            timingSource: vesselStatus.basis || 'gps-vessel-state',
-            effectiveDepartureMs: effectiveMs,
-            delayMs,
-            isProjected: true,
-            isUnknown: false,
-          }
-        : resolved;
-      return {
-        scheduledMs,
-        effectiveMs,
-        displayScheduledMs: resolved.displayScheduledMs || resolved.scheduledReferenceMs || scheduledMs,
-        sailing: s,
-        serverResolved: adjustedResolved,
-        serverDeparture: adjustedResolved.isDeparted ? { actualDepartureMs: effectiveMs } : null,
-        hasDirectVesselSignal: Boolean(adjustedResolved.isDeparted || vesselProjectionMs),
-        lateInfo: adjustedResolved.isDeparted && delayMs > LATE_THRESHOLD_MS
-          ? { estimatedDepartureMs: effectiveMs, delayMs, atDock: false }
-          : null,
-        routeDelayInfo: adjustedResolved.isProjected && delayMs > LATE_THRESHOLD_MS
-          ? {
-              projectedDepartureMs: effectiveMs,
-              delayMs,
-              vesselName: adjustedResolved.vesselName || '',
-              basis: adjustedResolved.timingSource || 'server-resolved',
-            }
-          : null,
-      };
+    if (!resolved) {
+      // No server interpretation for this slot — render it at its scheduled time.
+      return { scheduledMs, effectiveMs: scheduledMs, displayScheduledMs: scheduledMs, sailing: s, serverResolved: null, lateInfo: null, routeDelayInfo: null };
     }
-
-    const raw = getRawSailingTiming(s, vesselMap, fromTerminalId, parsedSailings);
-    const predictedDeparture = predictedDepartureForSailing(s, vesselMap, fromTerminalId);
-    // Server predictions, when present, carry the regenerated vessel chain
-    // forward from GPS-confirmed vessel availability.
-    const predictedDelayMs = Math.max(0, predictedDeparture?.delayMs || 0);
-    const projectedDelayMs = predictedDelayMs;
-    const projectedMs = predictedDeparture?.projectedDepartureMs || raw.scheduledMs;
-    const eligible = projectedDelayMs > 0 &&
-      projectedMs >= now &&
-      !raw.serverDeparture &&
-      !raw.hasDirectVesselSignal &&
-      !missedDepartureForSailing(s, vesselMap, fromTerminalId);
-    const propagatedDelayMs = eligible && projectedDelayMs > LATE_THRESHOLD_MS ? projectedDelayMs : 0;
+    const effectiveMs = resolved.effectiveDepartureMs || scheduledMs;
+    const delayMs = Math.max(0, resolved.delayMs || 0);
     return {
-      ...raw,
-      effectiveMs: propagatedDelayMs ? Math.max(raw.effectiveMs, projectedMs) : raw.effectiveMs,
+      scheduledMs: resolved.scheduledDepartureMs || scheduledMs,
+      effectiveMs,
+      displayScheduledMs: resolved.displayScheduledMs || resolved.scheduledReferenceMs || scheduledMs,
       sailing: s,
-      predictedDeparture: eligible ? predictedDeparture : null,
-      propagatedDelayMs,
-      routeDelayInfo: propagatedDelayMs
-        ? {
-            projectedDepartureMs: projectedMs,
-            delayMs: propagatedDelayMs,
-            vesselName: predictedDeparture?.vesselName || '',
-            basis: predictedDeparture?.basis || 'gps-vessel-forecast',
-          }
+      serverResolved: resolved,
+      lateInfo: resolved.isDeparted && delayMs > LATE_THRESHOLD_MS
+        ? { estimatedDepartureMs: effectiveMs, delayMs, atDock: false }
+        : null,
+      routeDelayInfo: resolved.isProjected && delayMs > LATE_THRESHOLD_MS
+        ? { projectedDepartureMs: effectiveMs, delayMs, vesselName: resolved.vesselName || '', basis: resolved.timingSource || 'server-resolved' }
         : null,
     };
   });
 }
 
 function getSailingTiming(s, vesselMap, fromTerminalId, parsedSailings = null) {
-  if (parsedSailings) {
-    return computeSailingTimings(parsedSailings, vesselMap, fromTerminalId)
-      .find(t => t.sailing === s || t.scheduledMs === s.sailTime.getTime()) ||
-      getRawSailingTiming(s, vesselMap, fromTerminalId, parsedSailings);
-  }
-  return getRawSailingTiming(s, vesselMap, fromTerminalId, parsedSailings);
+  const list = parsedSailings || [s];
+  return computeSailingTimings(list, vesselMap, fromTerminalId)
+    .find(t => t.sailing === s || t.scheduledMs === s.sailTime.getTime());
 }
 
 function formatCountdown(ms) {
@@ -1595,87 +1340,6 @@ function parseSailings(sched) {
     .sort((a, b) => a.sailTime - b.sailTime);
 }
 
-function isDepartureConfirmed(s, parsedSailings, spaceMap, vesselMap = {}, fromTerminalId = 5) {
-  // Only applies after the best-known departure time has passed
-  const now = Date.now();
-  const timing = getSailingTiming(s, vesselMap, fromTerminalId, parsedSailings);
-  if (timing.serverResolved) return Boolean(timing.serverResolved.isDeparted);
-  if (timing.effectiveMs >= now) return false;
-
-  const space = spaceMap[String(s.sailTime.getTime())] || null;
-  const spaceMapHasData = Object.keys(spaceMap).length > 0;
-
-  // Signal 1: this sailing is sold out (0 spaces left)
-  if (space && space.maxSpaces > 0 && space.driveUpSpaces === 0) return true;
-
-  // Signal 2: next sailing has reservations (someone is booking the next ferry)
-  const nextSailing = parsedSailings.find(x => getSailingTiming(x, vesselMap, fromTerminalId, parsedSailings).effectiveMs >= now);
-  if (nextSailing) {
-    const nextSpace = spaceMap[String(nextSailing.sailTime.getTime())] || null;
-    if (nextSpace && nextSpace.maxSpaces > 0 && nextSpace.driveUpSpaces < nextSpace.maxSpaces) return true;
-  }
-
-  // Signal 3: space entry is absent but spaceMap has data for other sailings - WSF dropped it (departed)
-  if (!space && spaceMapHasData) return true;
-
-  // Signal 4: vessel location data shows it left the dock
-  const vessel = timing.vessel;
-  if (vessel && vessel.departingTerminalId === fromTerminalId && !vessel.atDock && vessel.leftDockMs) return true;
-
-  // Signal 5: the server-side ferry history recorder matched GPS/LeftDock to this schedule.
-  if (timing.serverDeparture?.actualDepartureMs) return true;
-
-  return false;
-}
-
-// Resolve a sailing's vessel name and how much we trust it. Direct evidence — a
-// server-confirmed departure or a matched live vessel location — is reliable.
-// The regenerated server forecast is the best source for future rows because it
-// advances the active vessel chain from observed departures. Older GPS-chain
-// corrections are still useful as a fallback, but can be stale once boats slip
-// by a full half-hour sailing. A name taken only from the WSF space/schedule row
-// is a low-confidence label: for future sailings WSF often repeats the same
-// VesselName across several consecutive departures before the real assignment is
-// firm, which on its own would render a physically impossible boat sequence.
-function vesselNameSourceForSailing(s, vesselMap, spaceMap, fromTerminalId, parsedSailings) {
-  const timing = getRawSailingTiming(s, vesselMap, fromTerminalId, parsedSailings);
-  const correction = vesselCorrectionForSailing(s, vesselMap, fromTerminalId);
-  const prediction = predictedDepartureForSailing(s, vesselMap, fromTerminalId);
-  const directName = timing.serverDeparture?.vesselName ||
-    (timing.hasDirectVesselSignal ? timing.vessel?.vesselName : '') ||
-    '';
-  if (directName) return { name: directName, direct: true };
-  if (prediction?.vesselName) return { name: prediction.vesselName, direct: false, predicted: true };
-  if (correction?.vesselName) return { name: correction.vesselName, direct: true };
-  const space = spaceMap?.[String(s.sailTime.getTime())] || null;
-  return { name: space?.vesselName || s.VesselName || '', direct: false };
-}
-
-// Resolve the vessel name to display, suppressing a low-confidence label when it
-// would place the same vessel on two same-direction departures too close
-// together to be physically possible. Direct evidence always wins; when only
-// unreliable schedule/space labels collide we drop them rather than show a bogus
-// guess (e.g. the same boat on three back-to-back half-hour sailings).
-function resolveVesselName(s, parsedSailings, spaceMap, vesselMap, fromTerminalId) {
-  const resolvedSailing = resolvedSailingForSailing(s, vesselMap, fromTerminalId);
-  if (resolvedSailing) return resolvedSailing.vesselName || '';
-
-  const resolved = resolvedVesselForSailing(s, vesselMap, fromTerminalId);
-  if (resolved) return resolved.vesselName || '';
-
-  const self = vesselNameSourceForSailing(s, vesselMap, spaceMap, fromTerminalId, parsedSailings);
-  if (!self.name || self.direct || self.predicted) return self.name;
-  const schedMs = s.sailTime.getTime();
-  const list = parsedSailings || [s];
-  const conflict = list.some(other => {
-    const otherMs = other.sailTime.getTime();
-    if (other === s || otherMs === schedMs) return false;
-    if (Math.abs(otherMs - schedMs) >= MIN_SAME_VESSEL_GAP_MS) return false;
-    return vesselNameSourceForSailing(other, vesselMap, spaceMap, fromTerminalId, parsedSailings).name === self.name;
-  });
-  return conflict ? '' : self.name;
-}
-
 function sailingCard(s, parsedSailings, spaceMap, vesselMap = {}, fromTerminalId = 5) {
   const now = Date.now();
   const timings = computeSailingTimings(parsedSailings, vesselMap, fromTerminalId);
@@ -1689,35 +1353,29 @@ function sailingCard(s, parsedSailings, spaceMap, vesselMap = {}, fromTerminalId
   const displayScheduledMs = timing.displayScheduledMs || s.sailTime.getTime();
   const display = new Date(displayScheduledMs).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
 
+  // Status comes straight from the server's GPS interpretation. Missed/returning
+  // tracking lives on the history page, not the chip, so they are not rendered
+  // here; a missed slot is past and never enters the display list.
   const serverStatus = timing.serverResolved?.status || '';
-  const missedDeparture = missedDepartureForSailing(s, vesselMap, fromTerminalId);
-  const missed = serverStatus ? serverStatus === 'missed' : isPast && Boolean(missedDeparture);
-  const confirmed = serverStatus ? serverStatus === 'departed' : !missed && isPast && isDepartureConfirmed(s, parsedSailings, spaceMap, vesselMap, fromTerminalId);
-  const returning = serverStatus === 'returning';
-  const unknown = serverStatus ? serverStatus === 'unknown' : isPast && !confirmed;
+  const confirmed = serverStatus === 'departed';
+  const missed = serverStatus === 'missed';
 
   let statusText = '';
   let cssClass = 'sailing';
-  if (missed)                    { cssClass += ' past missed-departure';   statusText = 'Missed'; }
-  else if (isPast && confirmed)  { cssClass += ' past departed-confirmed'; statusText = 'Departed'; }
-  else if (returning)            { cssClass += ' returning';               statusText = 'Returning'; }
-  else if (isPast && unknown)    { cssClass += ' past departed-unknown';   statusText = 'Departed?'; }
-  else if (isNext)               { cssClass += ' next';                    statusText = '▶ Next'; }
-  else if (isTrueLast)           { cssClass += ' last-of-day';             statusText = '🔔 Last'; }
+  if (isPast && confirmed)  { cssClass += ' past departed-confirmed'; statusText = 'Departed'; }
+  else if (isNext)          { cssClass += ' next';                    statusText = '▶ Next'; }
+  else if (isTrueLast)      { cssClass += ' last-of-day';             statusText = '🔔 Last'; }
 
-  // Server-resolved projected departures render as an amber approximate time.
-  // The scheduled baseline underneath is enough to show lateness without adding
-  // a separate "N min late" note to the compact chip.
+  // A departed-late sailing shows its actual time over the scheduled "(was …)"
+  // baseline; a projected upcoming sailing shows an amber "~" estimate over the
+  // "(sched …)" baseline. Both baselines are the server's should-have-left tick.
   const lateInfo = timing.lateInfo;
   const routeDelayInfo = timing.routeDelayInfo;
   let timeHtml;
-  if (lateInfo && confirmed) {
+  if (lateInfo) {
     const actualTime = new Date(lateInfo.estimatedDepartureMs).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
     timeHtml = `<div class="sail-time"><span class="sail-time-actual">${actualTime}</span><span class="sail-time-sched">(was ${display})</span></div>`;
-  } else if (lateInfo) {
-    const estTime = new Date(lateInfo.estimatedDepartureMs).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
-    timeHtml = `<div class="sail-time"><span class="sail-time-est">${estTime}</span><span class="sail-time-sched">(was ${display})</span></div>`;
-  } else if (routeDelayInfo && (!isPast || serverStatus === 'projected')) {
+  } else if (routeDelayInfo) {
     const projTime = new Date(routeDelayInfo.projectedDepartureMs).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
     timeHtml = `<div class="sail-time"><span class="sail-time-est-route">~${projTime}</span><span class="sail-time-sched">(sched ${display})</span></div>`;
   } else {
@@ -1741,7 +1399,7 @@ function sailingCard(s, parsedSailings, spaceMap, vesselMap = {}, fromTerminalId
       : `<div class="sail-fill-label" style="color:var(--accent2)">${spaceLabel}</div>`;
     fillHtml = `<div class="sail-fill-wrap">${label}</div>`;
   }
-  const vesselName = resolveVesselName(s, parsedSailings, spaceMap, vesselMap, fromTerminalId);
+  const vesselName = timing.serverResolved?.vesselName || '';
   const vesselHtml = vesselName ? `<div class="sail-vessel">${vesselName}</div>` : '';
   return `<div class="${cssClass}">${timeHtml}${vesselHtml}<div class="sail-status">${statusText}</div>${fillHtml}</div>`;
 }
@@ -1754,11 +1412,12 @@ function buildDisplayList(parsedSailings, vesselMap = {}, fromTerminalId = 5) {
   const timings = computeSailingTimings(parsedSailings, vesselMap, fromTerminalId);
   const timingFor = s => timings.find(t => t.sailing === s || t.scheduledMs === s.sailTime.getTime());
   const isFuture = s => timingFor(s).effectiveMs >= now;
+  // The "last" chip is the most recent GPS-confirmed departure — never an
+  // unconfirmed or missed slot.
   const isDisplayablePastContext = s => {
     const timing = timingFor(s);
     if (!timing || timing.effectiveMs >= now) return false;
-    const status = timing.serverResolved?.status || '';
-    return status !== 'missed';
+    return timing.serverResolved?.status === 'departed';
   };
   const lastDeparted = [...parsedSailings].reverse().find(isDisplayablePastContext);
   const next3 = parsedSailings.filter(isFuture).slice(0, 3);

@@ -2920,69 +2920,52 @@ function ferryHistoryEndpoint(route = DEFAULT_FERRY_ROUTE) {
   };
 }
 
+// Assemble the full /departures payload for a recorded day. `resolvedSailings`
+// is the chip's only input and the history page's departure-truth fallback; the
+// other maps are the GPS model's intermediate stages, emitted for the history
+// page and tests. nowMs is anchored to the day's last sample so a cached day
+// reads back identically.
+function ferryDeparturesPayload(day) {
+  const nowMs = day.sampledAtMs || Date.now();
+  const departures = ferryDepartureSummary(day);
+  const missedDepartures = ferryMissedDepartureSummary(day);
+  const compiledHistoryTrips = ferryCompiledHistoryTrips(day);
+  const terminalTurnarounds = ferryRecentTerminalTurnarounds(day, nowMs);
+  const vesselCorrections = ferryVesselCorrectionSummary(day, nowMs);
+  const vesselStatuses = ferryVesselStatusSummary(day, nowMs, terminalTurnarounds);
+  const predictedDepartures = ferryPredictedDepartureSummary(day, nowMs);
+  const routeDelays = ferryRouteDelaySummary(day, nowMs);
+  const resolvedVessels = ferryResolvedVesselSummary(day, nowMs, { departures, predictedDepartures, vesselCorrections, vesselStatuses });
+  return {
+    date: day.date,
+    generatedAt: day.generatedAt,
+    sampledAtMs: day.sampledAtMs || null,
+    departures,
+    missedDepartures,
+    compiledHistoryTrips,
+    vesselCorrections,
+    vesselStatuses,
+    vesselStates: vesselStatuses,
+    terminalTurnarounds,
+    predictedDepartures,
+    resolvedVessels,
+    resolvedSailings: ferryResolvedSailingSummary(day, nowMs, { departures, missedDepartures, predictedDepartures, vesselCorrections, vesselStatuses, resolvedVessels, routeDelays }),
+    routeDelays,
+  };
+}
+
 function ferryDeparturesEndpoint(route = DEFAULT_FERRY_ROUTE) {
   return async (req, res) => {
-  const date = String(req.query.date || ferryHistoryDateForMs()).trim();
-  if (!isIsoDate(date)) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
-  try {
-    const today = ferryHistoryDateForMs();
-    const day = date === today ? await recordFerryHistoryDay(date, Date.now(), route) : readFerryHistoryDay(date, route);
-    const departures = ferryDepartureSummary(day);
-    const missedDepartures = ferryMissedDepartureSummary(day);
-    const compiledHistoryTrips = ferryCompiledHistoryTrips(day);
-    const nowMs = day.sampledAtMs || Date.now();
-    const terminalTurnarounds = ferryRecentTerminalTurnarounds(day, nowMs);
-    const vesselCorrections = ferryVesselCorrectionSummary(day, nowMs);
-    const vesselStatuses = ferryVesselStatusSummary(day, nowMs, terminalTurnarounds);
-    const predictedDepartures = ferryPredictedDepartureSummary(day, nowMs);
-    const routeDelays = ferryRouteDelaySummary(day, nowMs);
-    const resolvedVessels = ferryResolvedVesselSummary(day, nowMs, { departures, predictedDepartures, vesselCorrections, vesselStatuses });
-    res.json({
-      date: day.date,
-      generatedAt: day.generatedAt,
-      sampledAtMs: day.sampledAtMs || null,
-      departures,
-      missedDepartures,
-      compiledHistoryTrips,
-      vesselCorrections,
-      vesselStatuses,
-      vesselStates: vesselStatuses,
-      terminalTurnarounds,
-      predictedDepartures,
-      resolvedVessels,
-      resolvedSailings: ferryResolvedSailingSummary(day, nowMs, { departures, missedDepartures, predictedDepartures, vesselCorrections, vesselStatuses, resolvedVessels, routeDelays }),
-      routeDelays,
-    });
-  } catch (e) {
-    const existing = readFerryHistoryDay(date, route);
-    const nowMs = existing.sampledAtMs || Date.now();
-    const departures = ferryDepartureSummary(existing);
-    const missedDepartures = ferryMissedDepartureSummary(existing);
-    const compiledHistoryTrips = ferryCompiledHistoryTrips(existing);
-    const terminalTurnarounds = ferryRecentTerminalTurnarounds(existing, nowMs);
-    const vesselCorrections = ferryVesselCorrectionSummary(existing, nowMs);
-    const vesselStatuses = ferryVesselStatusSummary(existing, nowMs, terminalTurnarounds);
-    const predictedDepartures = ferryPredictedDepartureSummary(existing, nowMs);
-    const routeDelays = ferryRouteDelaySummary(existing, nowMs);
-    const resolvedVessels = ferryResolvedVesselSummary(existing, nowMs, { departures, predictedDepartures, vesselCorrections, vesselStatuses });
-    res.status(existing.generatedAt ? 200 : 500).json({
-      date: existing.date,
-      generatedAt: existing.generatedAt,
-      sampledAtMs: existing.sampledAtMs || null,
-      departures,
-      missedDepartures,
-      compiledHistoryTrips,
-      vesselCorrections,
-      vesselStatuses,
-      vesselStates: vesselStatuses,
-      terminalTurnarounds,
-      predictedDepartures,
-      resolvedVessels,
-      resolvedSailings: ferryResolvedSailingSummary(existing, nowMs, { departures, missedDepartures, predictedDepartures, vesselCorrections, vesselStatuses, resolvedVessels, routeDelays }),
-      routeDelays,
-      error: e.message,
-    });
-  }
+    const date = String(req.query.date || ferryHistoryDateForMs()).trim();
+    if (!isIsoDate(date)) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+    try {
+      const today = ferryHistoryDateForMs();
+      const day = date === today ? await recordFerryHistoryDay(date, Date.now(), route) : readFerryHistoryDay(date, route);
+      res.json(ferryDeparturesPayload(day));
+    } catch (e) {
+      const existing = readFerryHistoryDay(date, route);
+      res.status(existing.generatedAt ? 200 : 500).json({ ...ferryDeparturesPayload(existing), error: e.message });
+    }
   };
 }
 
