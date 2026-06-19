@@ -1893,7 +1893,7 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /function tableTripFromGpsDeparture/, 'builds lower table rows from GPS-observed crossings');
   assert.match(html, /if \(pendingDeparture\) departures\.push\(pendingDeparture\)/, 'shows in-progress GPS-observed departures before the crossing completes');
   assert.match(html, /observedTrips/, 'uses GPS-observed trips as the lower-table row source');
-  assert.match(html, /tableTripRows\(gpsScheduleStats, departureData\?\.resolvedSailings\)/, 'passes resolved departure truth into the GPS-observed lower-table row builder');
+  assert.match(html, /tableTripRows\(gpsScheduleStats, departureData\?\.resolvedSailings, departureData\?\.compiledHistoryTrips\)/, 'passes server-compiled history rows into the GPS-observed lower-table row builder');
   assert.match(html, /function applyResolvedDepartureTruth/, 'shares resolved sailing departure timestamps with the history table');
   assert.match(html, /terminalTable\(terminal, tableTrips, tableTrips\)/, 'computes dock time from the GPS-observed table rows');
   assert.doesNotMatch(html, /matchedTrips/, 'does not build lower-table rows by overlaying GPS onto scheduled rows');

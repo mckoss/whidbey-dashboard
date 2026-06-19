@@ -71,6 +71,8 @@ Originally one panel (Clinton→Mukilteo only). Split into two side-by-side card
 
 **Whole-day WSF schedule rows:** WSF schedule payloads may include the full service day, including AM departures long after the display has moved into PM service. Old `missed` rows are valid raw history, but they are not visible dashboard context. The card list should use the last real departed/unknown row plus upcoming rows; never promote a stale `missed` AM row into the previous-sailing slot just because it is the last row before now. Ferry API JSON should also be served with no-store headers so browsers and edge caches do not keep an old service-day payload after the live resolver has advanced.
 
+**Compiled history is ferry chip truth:** The ferry history table reconciles GPS tracks into scheduled-vs-actual trip rows. The main dashboard chips should consume that same server-compiled trip truth through `/api/.../ferry/departures` before applying live projections. Do not rebuild a competing browser-side or schedule-row/vessel-name matching algorithm for chip identity when compiled history rows or server `resolvedSailings` exist. A GPS track may prove that a vessel left a terminal, but an approaching vessel with `arrivingTerminalId` must not be interpreted as departing that terminal.
+
 Repo-specific ferry-status lessons like this belong in this `AGENTS.md`, not in OpenClaw workspace memory. OpenClaw session memory may record what changed or what was pushed, but durable rules for this codebase should live with the repo.
 
 ### Tides: Sparkline + Thermometer

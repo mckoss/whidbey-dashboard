@@ -677,7 +677,7 @@
 
       renderDiagram(day, trips, vessels, { gpsTracks });
       renderLegend(vessels);
-      const tableTrips = tableTripRows(gpsScheduleStats, departureData?.resolvedSailings);
+      const tableTrips = tableTripRows(gpsScheduleStats, departureData?.resolvedSailings, departureData?.compiledHistoryTrips);
       renderVehicleLoadCharts(day, tableTrips, vessels);
       renderRows(tableTrips);
     }
@@ -1107,7 +1107,10 @@
       tablesEl.innerHTML = TERMINAL_ORDER.map(terminal => terminalTable(terminal, tableTrips, tableTrips)).join('');
     }
 
-    function tableTripRows(gpsScheduleStats = {}, resolvedSailings = {}) {
+    function tableTripRows(gpsScheduleStats = {}, resolvedSailings = {}, compiledHistoryTrips = null) {
+      if (Array.isArray(compiledHistoryTrips) && compiledHistoryTrips.length) {
+        return [...compiledHistoryTrips].sort((a, b) => tableSortMs(a) - tableSortMs(b));
+      }
       return [...(gpsScheduleStats.observedTrips || [])]
         .map(trip => applyResolvedDepartureTruth(trip, resolvedSailings))
         .sort((a, b) => tableSortMs(a) - tableSortMs(b));

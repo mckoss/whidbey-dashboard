@@ -1473,20 +1473,25 @@ function ferryDepartureSummary(day) {
       status: trip.status || null,
     };
   }
-  for (const { trip, departure } of ferryGpsScheduleObservations(day).matched) {
+  for (const trip of ferryCompiledHistoryTrips(day)) {
+    if (!Number.isFinite(trip?.fromTerminalId) ||
+        !Number.isFinite(trip?.scheduledDepartureMs) ||
+        !Number.isFinite(trip?.actualDepartureMs)) {
+      continue;
+    }
     const key = ferryDepartureKey(trip.fromTerminalId, trip.scheduledDepartureMs);
     if (departures[key]) continue;
     departures[key] = {
       departed: true,
-      source: 'gps-sequence',
+      source: trip.departureSource || 'compiled-history',
       direction: trip.direction,
       fromTerminalId: trip.fromTerminalId,
       toTerminalId: trip.toTerminalId,
       scheduledDepartureMs: trip.scheduledDepartureMs,
-      actualDepartureMs: departure.ms,
-      delayMs: Math.max(0, departure.ms - trip.scheduledDepartureMs),
-      vesselName: departure.vesselName || trip.vesselName || '',
-      vesselId: departure.vesselId || trip.vesselId || null,
+      actualDepartureMs: trip.actualDepartureMs,
+      delayMs: Math.max(0, trip.actualDepartureMs - trip.scheduledDepartureMs),
+      vesselName: trip.vesselName || '',
+      vesselId: trip.vesselId || null,
       status: 'gps-observed',
     };
   }
@@ -1624,6 +1629,12 @@ function ferryGpsScheduleObservations(day) {
   return allocateFerryGpsDeparturesToSchedule(serviceDepartures, scheduledTrips, nowMs);
 }
 
+function ferryCompiledHistoryTrips(day) {
+  return [...(ferryGpsScheduleObservations(day).observedTrips || [])]
+    .filter(trip => Number.isFinite(trip?.actualDepartureMs))
+    .sort((a, b) => a.actualDepartureMs - b.actualDepartureMs);
+}
+
 function ferryGpsObservedDepartures(day) {
   return ferryGpsTracks(day)
     .flatMap(track => ferryGpsObservedDeparturesForTrack(track))
@@ -1717,24 +1728,74 @@ function ferryGpsObservedDeparturesForTrack(track) {
   const departures = [];
   for (const point of track.points) {
     const currentTerminal = ferryGpsTerminalZone(point.pct, route);
-    if (terminal && !currentTerminal && !pendingDeparture) {
+    const arrivalTerminal = ferryGpsDockTerminalZone(point.pct, route);
+    if (pendingDeparture) {
+      if (arrivalTerminal === pendingDeparture.toTerminal && point.atDock !== false) {
+        pendingDeparture.arrivalMs = point.ms;
+        departures.push(pendingDeparture);
+        pendingDeparture = null;
+        terminal = arrivalTerminal;
+      }
+      if (pendingDeparture &&
+          currentTerminal &&
+          currentTerminal !== pendingDeparture.toTerminal &&
+          point.atDock !== false) {
+        pendingDeparture = null;
+        terminal = currentTerminal;
+      }
+      continue;
+    }
+    const currentTerminalId = currentTerminal === route.primary.name ? route.primary.id : route.secondary.id;
+    const dockDeparture = terminal &&
+      currentTerminal === terminal &&
+      point.atDock === false &&
+      (!point.arrivingTerminalId || point.departingTerminalId === currentTerminalId);
+    if (terminal && (!currentTerminal || dockDeparture) && !pendingDeparture) {
       pendingDeparture = {
         direction: terminal === route.primary.name ? `${route.primary.slug}-to-${route.secondary.slug}` : `${route.secondary.slug}-to-${route.primary.slug}`,
         ms: point.ms,
         fromTerminal: terminal,
         toTerminal: terminal === route.primary.name ? route.secondary.name : route.primary.name,
+        fromTerminalId: terminal === route.primary.name ? route.primary.id : route.secondary.id,
+        toTerminalId: terminal === route.primary.name ? route.secondary.id : route.primary.id,
         vesselName: track.name,
         vesselId: track.id,
       };
     }
     if (!currentTerminal) continue;
-    if (pendingDeparture && currentTerminal === pendingDeparture.toTerminal) {
-      departures.push(pendingDeparture);
-    }
-    pendingDeparture = null;
     terminal = currentTerminal;
   }
+  if (pendingDeparture) departures.push(pendingDeparture);
   return departures;
+}
+
+function ferryCompiledTripFromGpsDeparture(departure, scheduledTrip = null) {
+  const route = ferryRouteForKey(scheduledTrip?.routeKey || departure?.routeKey);
+  const scheduledActualMs = Number.isFinite(scheduledTrip?.actualDepartureMs)
+    ? scheduledTrip.actualDepartureMs
+    : null;
+  const departureMs = scheduledActualMs ? Math.min(scheduledActualMs, departure.ms) : departure.ms;
+  return {
+    direction: departure.direction,
+    fromTerminalName: departure.fromTerminal,
+    toTerminalName: departure.toTerminal,
+    fromTerminalId: departure.fromTerminalId ||
+      (departure.fromTerminal === route.primary.name ? route.primary.id : route.secondary.id),
+    toTerminalId: departure.toTerminalId ||
+      (departure.toTerminal === route.primary.name ? route.primary.id : route.secondary.id),
+    scheduledDepartureMs: scheduledTrip?.scheduledDepartureMs || null,
+    actualDepartureMs: departureMs,
+    arrivalMs: departure.arrivalMs || null,
+    arrivalBasis: departure.arrivalMs ? 'gps-observed-terminal' : '',
+    departureSpace: hasTripSpace(scheduledTrip?.departureSpace) ? scheduledTrip.departureSpace : null,
+    space: hasTripSpace(scheduledTrip?.departureSpace)
+      ? scheduledTrip.departureSpace
+      : (hasTripSpace(scheduledTrip?.space) ? scheduledTrip.space : null),
+    vesselName: departure.vesselName || scheduledTrip?.vesselName || 'Unknown',
+    vesselId: departure.vesselId || scheduledTrip?.vesselId || null,
+    departureSource: 'gps-sequence',
+    gpsOnly: true,
+  };
 }
 
 function allocateFerryGpsDeparturesToSchedule(departures, scheduledTrips, nowMs = null) {
@@ -1748,12 +1809,19 @@ function allocateFerryGpsDeparturesToSchedule(departures, scheduledTrips, nowMs 
   const matchedDirections = new Set();
   const matched = [];
   const missed = [];
+  const observedTrips = [];
   for (const departure of departures) {
     const directionTrips = tripsByDirection.get(departure.direction) || [];
     let tripIndex = nextTripIndexByDirection.get(departure.direction) || 0;
     let trip = directionTrips[tripIndex];
-    if (!trip) continue;
-    if (tripIndex === 0 && departure.ms < trip.scheduledDepartureMs - FERRY_GPS_FIRST_DEPARTURE_GRACE_MS) continue;
+    if (!trip) {
+      observedTrips.push(ferryCompiledTripFromGpsDeparture(departure));
+      continue;
+    }
+    if (tripIndex === 0 && departure.ms < trip.scheduledDepartureMs - FERRY_GPS_FIRST_DEPARTURE_GRACE_MS) {
+      observedTrips.push(ferryCompiledTripFromGpsDeparture(departure));
+      continue;
+    }
     while (tripIndex + 1 < directionTrips.length &&
            departure.ms >= directionTrips[tripIndex + 1].scheduledDepartureMs) {
       missed.push(directionTrips[tripIndex]);
@@ -1763,6 +1831,7 @@ function allocateFerryGpsDeparturesToSchedule(departures, scheduledTrips, nowMs 
     nextTripIndexByDirection.set(departure.direction, tripIndex + 1);
     matchedDirections.add(departure.direction);
     matched.push({ trip, departure });
+    observedTrips.push(ferryCompiledTripFromGpsDeparture(departure, trip));
   }
 
   // Trailing missed slots: the sample clock acts as a virtual departure. Once a
@@ -1786,7 +1855,7 @@ function allocateFerryGpsDeparturesToSchedule(departures, scheduledTrips, nowMs 
     }
   }
 
-  return { matched, missed };
+  return { matched, missed, observedTrips };
 }
 
 function ferryGpsTerminalZone(pct, route = DEFAULT_FERRY_ROUTE) {
@@ -2860,6 +2929,7 @@ function ferryDeparturesEndpoint(route = DEFAULT_FERRY_ROUTE) {
     const day = date === today ? await recordFerryHistoryDay(date, Date.now(), route) : readFerryHistoryDay(date, route);
     const departures = ferryDepartureSummary(day);
     const missedDepartures = ferryMissedDepartureSummary(day);
+    const compiledHistoryTrips = ferryCompiledHistoryTrips(day);
     const nowMs = day.sampledAtMs || Date.now();
     const terminalTurnarounds = ferryRecentTerminalTurnarounds(day, nowMs);
     const vesselCorrections = ferryVesselCorrectionSummary(day, nowMs);
@@ -2873,6 +2943,7 @@ function ferryDeparturesEndpoint(route = DEFAULT_FERRY_ROUTE) {
       sampledAtMs: day.sampledAtMs || null,
       departures,
       missedDepartures,
+      compiledHistoryTrips,
       vesselCorrections,
       vesselStatuses,
       vesselStates: vesselStatuses,
@@ -2887,6 +2958,7 @@ function ferryDeparturesEndpoint(route = DEFAULT_FERRY_ROUTE) {
     const nowMs = existing.sampledAtMs || Date.now();
     const departures = ferryDepartureSummary(existing);
     const missedDepartures = ferryMissedDepartureSummary(existing);
+    const compiledHistoryTrips = ferryCompiledHistoryTrips(existing);
     const terminalTurnarounds = ferryRecentTerminalTurnarounds(existing, nowMs);
     const vesselCorrections = ferryVesselCorrectionSummary(existing, nowMs);
     const vesselStatuses = ferryVesselStatusSummary(existing, nowMs, terminalTurnarounds);
@@ -2899,6 +2971,7 @@ function ferryDeparturesEndpoint(route = DEFAULT_FERRY_ROUTE) {
       sampledAtMs: existing.sampledAtMs || null,
       departures,
       missedDepartures,
+      compiledHistoryTrips,
       vesselCorrections,
       vesselStatuses,
       vesselStates: vesselStatuses,
