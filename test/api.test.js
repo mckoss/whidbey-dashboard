@@ -243,6 +243,12 @@ test('ferry legacy alias — /api/ferry still works', async () => {
   assert.ok(d.TerminalCombos, 'legacy alias returns TerminalCombos');
 });
 
+test('ferry API endpoints — disable browser and edge caching', async () => {
+  const res = await fetch(`${BASE}/api/bainbridge/ferry/departures?date=2026-06-30`);
+  assert.ok(res.ok, `HTTP ${res.status}`);
+  assert.match(res.headers.get('cache-control') || '', /no-store/, 'ferry API JSON is not browser-cached');
+});
+
 test('ferry/alerts endpoint — returns normalized route alerts', async () => {
   const d = await getJson('/api/ferry/alerts');
   if (d.error === 'WSF API key not configured') {
@@ -1054,11 +1060,11 @@ test('ferry/departures endpoint — GPS vessel state forecasts destination depar
 });
 
 test('bainbridge departures — overdue assigned vessel inbound to terminal stays projected, not unknown', async () => {
-  const historyDate = '2026-06-18';
-  const sampledAtMs = Date.UTC(2026, 5, 19, 1, 5); // 6:05 PM PDT
-  const b0445 = Date.UTC(2026, 5, 18, 11, 45); // 4:45 AM PDT
-  const b1735 = Date.UTC(2026, 5, 19, 0, 35); // 5:35 PM PDT, more than 20 minutes old
-  const b1840 = Date.UTC(2026, 5, 19, 1, 40);
+  const historyDate = '2026-07-03';
+  const sampledAtMs = Date.UTC(2026, 6, 4, 1, 5); // 6:05 PM PDT
+  const b0445 = Date.UTC(2026, 6, 3, 11, 45); // 4:45 AM PDT
+  const b1735 = Date.UTC(2026, 6, 4, 0, 35); // 5:35 PM PDT, more than 20 minutes old
+  const b1840 = Date.UTC(2026, 6, 4, 1, 40);
   const historyDir = join(dataDir, 'ferry-history-bainbridge');
   await mkdir(historyDir, { recursive: true });
   await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
@@ -1090,8 +1096,8 @@ test('bainbridge departures — overdue assigned vessel inbound to terminal stay
       }),
     ],
     vesselSamples: [
-      bainbridgeTestSample(Date.UTC(2026, 5, 19, 0, 55), 'Tacoma', 13, 0.84, { arrivingTerminalId: 3, atDock: false }),
-      bainbridgeTestSample(Date.UTC(2026, 5, 19, 1, 0), 'Tacoma', 13, 0.89, { arrivingTerminalId: 3, atDock: false }),
+      bainbridgeTestSample(Date.UTC(2026, 6, 4, 0, 55), 'Tacoma', 13, 0.84, { arrivingTerminalId: 3, atDock: false }),
+      bainbridgeTestSample(Date.UTC(2026, 6, 4, 1, 0), 'Tacoma', 13, 0.89, { arrivingTerminalId: 3, atDock: false }),
       bainbridgeTestSample(sampledAtMs, 'Tacoma', 13, 0.94, { arrivingTerminalId: 3, atDock: false }),
     ],
     currentVessels: [],
@@ -1112,11 +1118,11 @@ test('bainbridge departures — overdue assigned vessel inbound to terminal stay
 });
 
 test('bainbridge departures — live GPS anchors to latest terminal schedule, not old same-vessel row', async () => {
-  const historyDate = '2026-06-18';
-  const sampledAtMs = Date.UTC(2026, 5, 19, 1, 5); // 6:05 PM PDT
-  const b0445 = Date.UTC(2026, 5, 18, 11, 45); // 4:45 AM PDT
-  const b1735 = Date.UTC(2026, 5, 19, 0, 35); // 5:35 PM PDT
-  const b1840 = Date.UTC(2026, 5, 19, 1, 40);
+  const historyDate = '2026-07-04';
+  const sampledAtMs = Date.UTC(2026, 6, 5, 1, 5); // 6:05 PM PDT
+  const b0445 = Date.UTC(2026, 6, 4, 11, 45); // 4:45 AM PDT
+  const b1735 = Date.UTC(2026, 6, 5, 0, 35); // 5:35 PM PDT
+  const b1840 = Date.UTC(2026, 6, 5, 1, 40);
   const historyDir = join(dataDir, 'ferry-history-bainbridge');
   await mkdir(historyDir, { recursive: true });
   await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
@@ -1148,8 +1154,8 @@ test('bainbridge departures — live GPS anchors to latest terminal schedule, no
       }),
     ],
     vesselSamples: [
-      bainbridgeTestSample(Date.UTC(2026, 5, 19, 0, 55), 'Tacoma', 13, 0.84, { arrivingTerminalId: 3, atDock: false }),
-      bainbridgeTestSample(Date.UTC(2026, 5, 19, 1, 0), 'Tacoma', 13, 0.89, { arrivingTerminalId: 3, atDock: false }),
+      bainbridgeTestSample(Date.UTC(2026, 6, 5, 0, 55), 'Tacoma', 13, 0.84, { arrivingTerminalId: 3, atDock: false }),
+      bainbridgeTestSample(Date.UTC(2026, 6, 5, 1, 0), 'Tacoma', 13, 0.89, { arrivingTerminalId: 3, atDock: false }),
       bainbridgeTestSample(sampledAtMs, 'Tacoma', 13, 0.94, { arrivingTerminalId: 3, atDock: false }),
     ],
     currentVessels: [],
@@ -2531,6 +2537,74 @@ test('late ferry logic — current vessel position does not resurrect old mornin
   const list = context.__lateTest.buildDisplayList(sailings, vesselMap, 14);
   assert.equal(list[0].sailTime.getTime(), priorMs, 'last departed is the prior evening sailing');
   assert.ok(!list.some(s => s.sailTime.getTime() === morningMs), 'old morning sailing is not shown as late');
+});
+
+test('late ferry logic — old missed morning rows are not displayed as previous sailing context', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
+  const script = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+
+  const fixedNow = Date.UTC(2026, 5, 19, 4, 0); // 9:00 PM PDT
+  class FakeDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [fixedNow])); }
+    static now() { return fixedNow; }
+  }
+  Object.assign(FakeDate, Date);
+
+  const nullEl = { style: {}, className: '', textContent: '', innerHTML: '', querySelector: () => null };
+  const context = {
+    console,
+    Date: FakeDate,
+    setInterval: () => 0,
+    setTimeout: () => 0,
+    clearInterval: () => {},
+    fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
+    document: {
+      getElementById: () => nullEl,
+      querySelector: () => nullEl,
+      createElement: () => ({}),
+      head: { appendChild: () => {} },
+    },
+    window: {},
+  };
+  vm.createContext(context);
+  vm.runInContext(script + `\nthis.__lateTest = { buildVesselMap, buildDisplayList };`, context);
+
+  const morningMs = Date.UTC(2026, 5, 18, 11, 45); // 4:45 AM PDT
+  const nextMs = Date.UTC(2026, 5, 19, 4, 20);     // 9:20 PM PDT
+  const laterMs = Date.UTC(2026, 5, 19, 5, 5);     // 10:05 PM PDT
+  const sailings = [morningMs, nextMs, laterMs].map(ms => ({
+    sailTime: new Date(ms),
+    DepartingTime: `/Date(${ms})/`,
+  }));
+  const vesselMap = context.__lateTest.buildVesselMap(null, {
+    resolvedSailings: {
+      [`7:${morningMs}`]: {
+        scheduledDepartureMs: morningMs,
+        effectiveDepartureMs: morningMs,
+        status: 'missed',
+        isMissed: true,
+      },
+      [`7:${nextMs}`]: {
+        scheduledDepartureMs: nextMs,
+        effectiveDepartureMs: nextMs,
+        status: 'projected',
+        isProjected: true,
+      },
+      [`7:${laterMs}`]: {
+        scheduledDepartureMs: laterMs,
+        effectiveDepartureMs: laterMs,
+        status: 'scheduled',
+      },
+    },
+  });
+
+  const list = context.__lateTest.buildDisplayList(sailings, vesselMap, 7);
+  assert.ok(!list.some(s => s.sailTime.getTime() === morningMs), 'old missed AM row is not used as previous context');
+  assert.equal(list[0].sailTime.getTime(), nextMs, 'display starts with the next current sailing');
 });
 
 test('late ferry logic — vessel scheduled departure does not delay nearby earlier sailing', async () => {

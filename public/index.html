@@ -1754,7 +1754,13 @@ function buildDisplayList(parsedSailings, vesselMap = {}, fromTerminalId = 5) {
   const timings = computeSailingTimings(parsedSailings, vesselMap, fromTerminalId);
   const timingFor = s => timings.find(t => t.sailing === s || t.scheduledMs === s.sailTime.getTime());
   const isFuture = s => timingFor(s).effectiveMs >= now;
-  const lastDeparted = [...parsedSailings].reverse().find(s => !isFuture(s));
+  const isDisplayablePastContext = s => {
+    const timing = timingFor(s);
+    if (!timing || timing.effectiveMs >= now) return false;
+    const status = timing.serverResolved?.status || '';
+    return status !== 'missed';
+  };
+  const lastDeparted = [...parsedSailings].reverse().find(isDisplayablePastContext);
   const next3 = parsedSailings.filter(isFuture).slice(0, 3);
   const list = [];
   if (lastDeparted) list.push(lastDeparted);

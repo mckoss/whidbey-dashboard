@@ -1219,6 +1219,16 @@ function ferryCacheKey(route, suffix) {
   return route.key === DEFAULT_FERRY_ROUTE.key ? `ferry_${suffix}` : `ferry_${route.key}_${suffix}`;
 }
 
+function noStoreApiResponses(req, res, next) {
+  res.set('Cache-Control', 'no-store, max-age=0, must-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  next();
+}
+
+app.use('/api/ferry', noStoreApiResponses);
+app.use('/api/bainbridge/ferry', noStoreApiResponses);
+
 function registerFerryApi(route) {
   const outboundKey = ferryCacheKey(route, route.primary.slug);
   const inboundKey = ferryCacheKey(route, route.secondary.slug);
