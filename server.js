@@ -1294,6 +1294,11 @@ const FERRY_OPERATIONAL_HORIZON_MS = 4 * 60 * 60 * 1000;
 const FERRY_GPS_STATE_SAMPLE_COUNT = 3;
 const FERRY_GPS_STATE_RECENCY_MS = 30 * 60 * 1000;
 const FERRY_GPS_MIN_PROGRESS_PER_MINUTE = 0.0025;
+// Window over which the underway ETA velocity is smoothed (least-squares slope).
+// Longer than the short classification window so the projected departure stays
+// steady sample-to-sample instead of swinging with GPS jitter or the natural
+// slow-down on final approach to the dock.
+const FERRY_GPS_VELOCITY_WINDOW_MS = 12 * 60 * 1000;
 // Route-level delay inferred from recent observed departures: how far back to
 // look, how many samples are required for confidence, and the median-delay floor
 // below which the route is treated as on time.
@@ -2055,6 +2060,22 @@ function ferryOneBoatOperationalMode(day, nowMs) {
   return { active: vesselIds.size === 1, vesselIds };
 }
 
+// Least-squares slope of terminal-progress (pct) over minutes. Robust to
+// per-sample GPS jitter — a single noisy fix can't swing the projected ETA the
+// way a two-point endpoint slope can.
+function ferryRobustProgressPerMinute(points) {
+  if (!Array.isArray(points) || points.length < 2) return 0;
+  const t0 = points[0].ms;
+  let n = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (const point of points) {
+    const x = (point.ms - t0) / 60000;
+    const y = point.pct;
+    n += 1; sx += x; sy += y; sxx += x * x; sxy += x * y;
+  }
+  const denominator = n * sxx - sx * sx;
+  return denominator !== 0 ? (n * sxy - sx * sy) / denominator : 0;
+}
+
 function ferryVesselStatusSummary(day, nowMs = Date.now(), terminalTurnarounds = ferryRecentTerminalTurnarounds(day, nowMs)) {
   const route = ferryRouteForDay(day);
   const statuses = {};
@@ -2066,47 +2087,11 @@ function ferryVesselStatusSummary(day, nowMs = Date.now(), terminalTurnarounds =
       .slice(-FERRY_GPS_STATE_SAMPLE_COUNT);
     if (!recent.length) continue;
     const latest = recent[recent.length - 1];
-    const terminalName = ferryDockTerminalNameForPoint(latest);
-    const latestTerminalId = terminalIdForName(terminalName, route);
     const vesselId = track.id || track.name || 'Unknown';
     if (oneBoatMode.active && !oneBoatMode.vesselIds.has(vesselId)) continue;
 
-    if (latestTerminalId) {
-      const turnaround = ferryTerminalTurnaroundEstimate(terminalTurnarounds, latestTerminalId);
-      const dockArrivalMs = ferryTrackDockArrivalMs(track, latestTerminalId, nowMs);
-      const dwellCompleteMs = Number.isFinite(dockArrivalMs)
-        ? dockArrivalMs + turnaround.turnaroundMs
-        : nowMs;
-      const stillDockedDepartureFloorMs = latest.atDock === true
-        ? nowMs + FERRY_DOCKED_ACTIVE_LOADING_BUFFER_MS
-        : nowMs;
-      const availableMs = Math.max(dwellCompleteMs, stillDockedDepartureFloorMs);
-      statuses[track.key] = {
-        vesselName: track.name,
-        vesselId: track.id,
-        status: latestTerminalId === route.primary.id ? `at-${route.primary.slug}-dock` : `at-${route.secondary.slug}-dock`,
-        terminalId: latestTerminalId,
-        terminalName: terminalNameForId(latestTerminalId),
-        dockedTerminalId: latestTerminalId,
-        dockedTerminalName: terminalNameForId(latestTerminalId),
-        dockArrivalMs,
-        estimatedTurnaroundMs: turnaround.turnaroundMs,
-        estimatedTurnaroundBasis: turnaround.basis,
-        estimatedDwellCompleteMs: dwellCompleteMs,
-        estimatedDockDepartureMs: availableMs,
-        estimatedRemainingDockMs: Math.max(0, availableMs - nowMs),
-        availableTerminalId: latestTerminalId,
-        availableMs,
-        observedAtMs: latest.ms,
-        progressPct: latest.pct,
-        position: ferryVesselPositionState(latest, route, latestTerminalId),
-        basis: 'gps-vessel-state',
-      };
-      continue;
-    }
-
-    if (recent.length < 2) continue;
-
+    // Classification velocity over the short recent window — drives the
+    // reversal / idle decisions, kept short so a real turn-around is caught fast.
     const first = recent[0];
     const elapsedMinutes = (latest.ms - first.ms) / 60000;
     const progressPerMinute = elapsedMinutes > 0 ? (latest.pct - first.pct) / elapsedMinutes : 0;
@@ -2123,6 +2108,47 @@ function ferryVesselStatusSummary(day, nowMs = Date.now(), terminalTurnarounds =
     const expectedSign = expectedTerminalId === route.primary.id ? -1 :
       (expectedTerminalId === route.secondary.id ? 1 : 0);
     const motionSign = Math.abs(progressPerMinute) >= FERRY_GPS_MIN_PROGRESS_PER_MINUTE ? Math.sign(progressPerMinute) : 0;
+
+    // Which dock (if any) is this boat at? WSF's atDock flag (wide zone) or the
+    // tight dock zone when the flag is absent.
+    const dockTerminalId = terminalIdForName(ferryDockTerminalNameForPoint(latest), route);
+
+    if (dockTerminalId) {
+      const turnaround = ferryTerminalTurnaroundEstimate(terminalTurnarounds, dockTerminalId);
+      const dockArrivalMs = ferryTrackDockArrivalMs(track, dockTerminalId, nowMs);
+      const dwellCompleteMs = Number.isFinite(dockArrivalMs)
+        ? dockArrivalMs + turnaround.turnaroundMs
+        : nowMs;
+      const stillDockedDepartureFloorMs = latest.atDock === true
+        ? nowMs + FERRY_DOCKED_ACTIVE_LOADING_BUFFER_MS
+        : nowMs;
+      const availableMs = Math.max(dwellCompleteMs, stillDockedDepartureFloorMs);
+      statuses[track.key] = {
+        vesselName: track.name,
+        vesselId: track.id,
+        status: dockTerminalId === route.primary.id ? `at-${route.primary.slug}-dock` : `at-${route.secondary.slug}-dock`,
+        terminalId: dockTerminalId,
+        terminalName: terminalNameForId(dockTerminalId),
+        dockedTerminalId: dockTerminalId,
+        dockedTerminalName: terminalNameForId(dockTerminalId),
+        dockArrivalMs,
+        estimatedTurnaroundMs: turnaround.turnaroundMs,
+        estimatedTurnaroundBasis: turnaround.basis,
+        estimatedDwellCompleteMs: dwellCompleteMs,
+        estimatedDockDepartureMs: availableMs,
+        estimatedRemainingDockMs: Math.max(0, availableMs - nowMs),
+        availableTerminalId: dockTerminalId,
+        availableMs,
+        observedAtMs: latest.ms,
+        progressPct: latest.pct,
+        position: ferryVesselPositionState(latest, route, dockTerminalId),
+        basis: 'gps-vessel-state',
+      };
+      continue;
+    }
+
+    if (recent.length < 2) continue;
+
     if (reversed ||
         (expectedSign && motionSign !== 0 && motionSign !== expectedSign)) {
       statuses[track.key] = ferryReturningStatus(track, latest, reversed ? 'gps-motion-reversal' : 'not-making-way-to-expected-dock');
@@ -2130,9 +2156,23 @@ function ferryVesselStatusSummary(day, nowMs = Date.now(), terminalTurnarounds =
     }
     if (motionSign === 0) continue;
 
+    // Underway ETA. Prefer WSDOT's own published vessel ETA — it is already
+    // smoothed and is far steadier than extrapolating an instantaneous GPS slope,
+    // which swings wildly sample-to-sample when the boat is far out or slowing on
+    // approach. Fall back to a least-squares velocity (robust to single-sample
+    // jitter) over a longer window when WSF gives no ETA.
     const destinationTerminalId = motionSign > 0 ? route.secondary.id : route.primary.id;
     const remainingProgress = motionSign > 0 ? 1 - latest.pct : latest.pct;
-    const etaMs = latest.ms + Math.round((remainingProgress / Math.abs(progressPerMinute)) * 60000);
+    const smoothedPpm = ferryRobustProgressPerMinute(
+      track.points.filter(point => point.ms <= nowMs && nowMs - point.ms <= FERRY_GPS_VELOCITY_WINDOW_MS));
+    const etaPpm = Math.abs(smoothedPpm) >= FERRY_GPS_MIN_PROGRESS_PER_MINUTE ? smoothedPpm : progressPerMinute;
+    const derivedEtaMs = latest.ms + Math.round((remainingProgress / Math.abs(etaPpm)) * 60000);
+    const wsfEtaMs = latest.etaMs;
+    const etaMs = Number.isFinite(wsfEtaMs) &&
+      wsfEtaMs > latest.ms &&
+      wsfEtaMs - nowMs <= FERRY_OPERATIONAL_HORIZON_MS
+      ? wsfEtaMs
+      : derivedEtaMs;
     const turnaround = ferryTerminalTurnaroundEstimate(terminalTurnarounds, destinationTerminalId);
     const availableMs = etaMs + turnaround.turnaroundMs;
     statuses[track.key] = {
