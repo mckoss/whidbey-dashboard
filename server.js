@@ -2121,31 +2121,42 @@ function operationalReferenceTrip(trips, projectedMs, usedKeys) {
 }
 
 function activeVesselStatusForTrip(trip, vesselStatuses = {}) {
-  if (!trip?.vesselName) return null;
-  return Object.values(vesselStatuses).find(status =>
-    status?.vesselName === trip.vesselName &&
-    status.availableTerminalId === trip.fromTerminalId &&
-    Number.isFinite(status.availableMs)
-  ) || null;
+  if (!Number.isFinite(trip?.fromTerminalId)) return null;
+  const statuses = Object.values(vesselStatuses)
+    .filter(status =>
+      status?.availableTerminalId === trip.fromTerminalId &&
+      Number.isFinite(status.availableMs)
+    )
+    .sort((a, b) => a.availableMs - b.availableMs);
+  return statuses.find(status => status.vesselName === trip.vesselName) || statuses[0] || null;
 }
 
-function isLatestAssignedTripForLiveVessel(trip, trips = [], nowMs = Date.now()) {
-  if (!trip?.vesselName || !Number.isFinite(trip?.scheduledDepartureMs)) return false;
-  if (trip.scheduledDepartureMs > nowMs) return false;
-  return !trips.some(other =>
-    other !== trip &&
-    other?.vesselName === trip.vesselName &&
-    other.fromTerminalId === trip.fromTerminalId &&
-    Number.isFinite(other.scheduledDepartureMs) &&
-    other.scheduledDepartureMs <= nowMs &&
-    other.scheduledDepartureMs > trip.scheduledDepartureMs
-  );
+function currentScheduleTripForTerminal(trip, trips = [], referenceMs = Date.now()) {
+  if (!Number.isFinite(trip?.fromTerminalId) || !Number.isFinite(referenceMs)) return null;
+  const terminalTrips = trips
+    .filter(other =>
+      other?.fromTerminalId === trip.fromTerminalId &&
+      Number.isFinite(other.scheduledDepartureMs)
+    )
+    .sort((a, b) => a.scheduledDepartureMs - b.scheduledDepartureMs);
+  let match = null;
+  for (const terminalTrip of terminalTrips) {
+    if (terminalTrip.scheduledDepartureMs <= referenceMs) match = terminalTrip;
+    else break;
+  }
+  return match || terminalTrips[0] || null;
+}
+
+function isCurrentScheduleTripForLiveTerminal(trip, trips = [], status = null, nowMs = Date.now()) {
+  if (!Number.isFinite(trip?.scheduledDepartureMs) || !status) return false;
+  const referenceMs = Math.max(nowMs, status.availableMs);
+  return currentScheduleTripForTerminal(trip, trips, referenceMs) === trip;
 }
 
 function gpsDominantProjectionForTrip(trip, vesselStatuses = {}, nowMs = Date.now(), trips = []) {
   const status = activeVesselStatusForTrip(trip, vesselStatuses);
   if (!status) return null;
-  if (!isLatestAssignedTripForLiveVessel(trip, trips, nowMs)) return null;
+  if (!isCurrentScheduleTripForLiveTerminal(trip, trips, status, nowMs)) return null;
   const projectedDepartureMs = Math.max(trip.scheduledDepartureMs, status.availableMs, nowMs);
   return {
     direction: trip.direction,
@@ -2172,13 +2183,14 @@ function ferryOperationalPredictions(day, nowMs = Date.now(), vesselStatuses = f
   const orderedTrips = [...(day?.trips || [])].sort((a, b) => a.scheduledDepartureMs - b.scheduledDepartureMs);
   const tripsByTerminal = new Map();
   for (const trip of orderedTrips) {
-    const staleButAssignedVesselIsStillInbound =
+    const activeStatus = activeVesselStatusForTrip(trip, vesselStatuses);
+    const staleButLiveVesselStillAnchorsThisSlot =
       trip?.scheduledDepartureMs < nowMs - FERRY_HISTORY_DEPARTURE_MATCH_MS &&
-      activeVesselStatusForTrip(trip, vesselStatuses) &&
-      isLatestAssignedTripForLiveVessel(trip, orderedTrips, nowMs);
+      activeStatus &&
+      isCurrentScheduleTripForLiveTerminal(trip, orderedTrips, activeStatus, nowMs);
     if (!Number.isFinite(trip?.scheduledDepartureMs) ||
         trip.actualDepartureMs ||
-        (trip.scheduledDepartureMs < nowMs - FERRY_HISTORY_DEPARTURE_MATCH_MS && !staleButAssignedVesselIsStillInbound)) {
+        (trip.scheduledDepartureMs < nowMs - FERRY_HISTORY_DEPARTURE_MATCH_MS && !staleButLiveVesselStillAnchorsThisSlot)) {
       continue;
     }
     const trips = tripsByTerminal.get(trip.fromTerminalId) || [];

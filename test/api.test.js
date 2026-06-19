@@ -1111,6 +1111,59 @@ test('bainbridge departures — overdue assigned vessel inbound to terminal stay
   assert.ok(oldResolved.effectiveDepartureMs < sampledAtMs, 'old row remains in the past');
 });
 
+test('bainbridge departures — live GPS anchors to latest terminal schedule, not old same-vessel row', async () => {
+  const historyDate = '2026-06-18';
+  const sampledAtMs = Date.UTC(2026, 5, 19, 1, 5); // 6:05 PM PDT
+  const b0445 = Date.UTC(2026, 5, 18, 11, 45); // 4:45 AM PDT
+  const b1735 = Date.UTC(2026, 5, 19, 0, 35); // 5:35 PM PDT
+  const b1840 = Date.UTC(2026, 5, 19, 1, 40);
+  const historyDir = join(dataDir, 'ferry-history-bainbridge');
+  await mkdir(historyDir, { recursive: true });
+  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+    date: historyDate,
+    routeKey: 'bainbridge',
+    generatedAt: new Date(sampledAtMs).toISOString(),
+    sampledAtMs,
+    trips: [
+      ferryTestTrip(historyDate, 'bainbridge-to-seattle', 3, 7, b0445, {
+        routeKey: 'bainbridge',
+        fromTerminalName: 'Bainbridge Island',
+        toTerminalName: 'Seattle',
+        vesselName: 'Tacoma',
+        vesselId: 13,
+      }),
+      ferryTestTrip(historyDate, 'bainbridge-to-seattle', 3, 7, b1735, {
+        routeKey: 'bainbridge',
+        fromTerminalName: 'Bainbridge Island',
+        toTerminalName: 'Seattle',
+        vesselName: 'Wenatchee',
+        vesselId: 64,
+      }),
+      ferryTestTrip(historyDate, 'bainbridge-to-seattle', 3, 7, b1840, {
+        routeKey: 'bainbridge',
+        fromTerminalName: 'Bainbridge Island',
+        toTerminalName: 'Seattle',
+        vesselName: 'Wenatchee',
+        vesselId: 64,
+      }),
+    ],
+    vesselSamples: [
+      bainbridgeTestSample(Date.UTC(2026, 5, 19, 0, 55), 'Tacoma', 13, 0.84, { arrivingTerminalId: 3, atDock: false }),
+      bainbridgeTestSample(Date.UTC(2026, 5, 19, 1, 0), 'Tacoma', 13, 0.89, { arrivingTerminalId: 3, atDock: false }),
+      bainbridgeTestSample(sampledAtMs, 'Tacoma', 13, 0.94, { arrivingTerminalId: 3, atDock: false }),
+    ],
+    currentVessels: [],
+  }, null, 2));
+
+  const d = await getJson(`/api/bainbridge/ferry/departures?date=${historyDate}`);
+  const oldResolved = d.resolvedSailings[`3:${b0445}`];
+  const currentTerminalSlot = d.resolvedSailings[`3:${b1735}`];
+  assert.notEqual(oldResolved.status, 'projected', 'old Tacoma row is not resurrected by same-vessel GPS');
+  assert.equal(currentTerminalSlot.status, 'projected', 'latest terminal schedule slot receives the live projection');
+  assert.equal(currentTerminalSlot.vesselName, 'Tacoma', 'live GPS vessel can differ from the schedule assignment');
+  assert.equal(currentTerminalSlot.displayScheduledMs, b1735, 'schedule label stays on the latest terminal departure slot');
+});
+
 test('bainbridge departures — operational chain uses Bainbridge crossing time, not Whidbey interval', async () => {
   const historyDate = '2026-07-02';
   const sampledAtMs = Date.UTC(2026, 6, 3, 1, 10); // 6:10 PM PDT
