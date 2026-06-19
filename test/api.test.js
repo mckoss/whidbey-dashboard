@@ -1111,6 +1111,53 @@ test('bainbridge departures — overdue assigned vessel inbound to terminal stay
   assert.ok(oldResolved.effectiveDepartureMs < sampledAtMs, 'old row remains in the past');
 });
 
+test('bainbridge departures — operational chain uses Bainbridge crossing time, not Whidbey interval', async () => {
+  const historyDate = '2026-07-02';
+  const sampledAtMs = Date.UTC(2026, 6, 3, 1, 10); // 6:10 PM PDT
+  const b1840 = Date.UTC(2026, 6, 3, 1, 40);
+  const s1910 = Date.UTC(2026, 6, 3, 2, 10);
+  const historyDir = join(dataDir, 'ferry-history-bainbridge');
+  await mkdir(historyDir, { recursive: true });
+  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+    date: historyDate,
+    routeKey: 'bainbridge',
+    generatedAt: new Date(sampledAtMs).toISOString(),
+    sampledAtMs,
+    trips: [
+      ferryTestTrip(historyDate, 'bainbridge-to-seattle', 3, 7, b1840, {
+        routeKey: 'bainbridge',
+        fromTerminalName: 'Bainbridge Island',
+        toTerminalName: 'Seattle',
+        vesselName: 'Wenatchee',
+        vesselId: 37,
+      }),
+      ferryTestTrip(historyDate, 'seattle-to-bainbridge', 7, 3, s1910, {
+        routeKey: 'bainbridge',
+        fromTerminalName: 'Seattle',
+        toTerminalName: 'Bainbridge Island',
+        vesselName: 'Wenatchee',
+        vesselId: 37,
+      }),
+    ],
+    vesselSamples: [
+      bainbridgeTestSample(Date.UTC(2026, 6, 3, 1, 0), 'Wenatchee', 37, 0.86, { arrivingTerminalId: 3, atDock: false }),
+      bainbridgeTestSample(Date.UTC(2026, 6, 3, 1, 5), 'Wenatchee', 37, 0.91, { arrivingTerminalId: 3, atDock: false }),
+      bainbridgeTestSample(sampledAtMs, 'Wenatchee', 37, 0.96, { arrivingTerminalId: 3, atDock: false }),
+    ],
+    currentVessels: [],
+  }, null, 2));
+
+  const d = await getJson(`/api/bainbridge/ferry/departures?date=${historyDate}`);
+  const bainbridgeDeparture = d.resolvedSailings[`3:${b1840}`];
+  const seattleDeparture = d.resolvedSailings[`7:${s1910}`];
+  assert.equal(bainbridgeDeparture.status, 'projected', 'first Bainbridge departure is projected from live GPS');
+  assert.equal(seattleDeparture.status, 'projected', 'opposite-direction chain projection is still available');
+  assert.ok(
+    seattleDeparture.effectiveDepartureMs >= bainbridgeDeparture.effectiveDepartureMs + 45 * 60 * 1000,
+    'Seattle departure waits for Bainbridge crossing plus operational turnaround'
+  );
+});
+
 test('ferry/departures endpoint — approach-zone vessel is not available until docked or ETA plus turnaround', async () => {
   const historyDate = '2026-06-25';
   const sampledAtMs = Date.UTC(2026, 5, 25, 16, 0);

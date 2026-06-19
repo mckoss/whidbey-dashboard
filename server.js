@@ -1282,6 +1282,10 @@ function ferryRouteForKey(key) {
   return FERRY_ROUTES[key] || DEFAULT_FERRY_ROUTE;
 }
 
+function ferryOperationalCycleMs(route = DEFAULT_FERRY_ROUTE) {
+  return route.crossingEstimateMs + FERRY_OPERATIONAL_TURNAROUND_MS;
+}
+
 function ferryRouteForDay(day = {}) {
   return ferryRouteForKey(day?.route?.key || day?.routeKey);
 }
@@ -2163,6 +2167,8 @@ function gpsDominantProjectionForTrip(trip, vesselStatuses = {}, nowMs = Date.no
 function ferryOperationalPredictions(day, nowMs = Date.now(), vesselStatuses = ferryVesselStatusSummary(day, nowMs), terminalTurnarounds = ferryRecentTerminalTurnarounds(day, nowMs)) {
   const predictions = {};
   if (!Number.isFinite(nowMs)) return predictions;
+  const route = ferryRouteForKey(day?.routeKey);
+  const operationalCycleMs = ferryOperationalCycleMs(route);
   const orderedTrips = [...(day?.trips || [])].sort((a, b) => a.scheduledDepartureMs - b.scheduledDepartureMs);
   const tripsByTerminal = new Map();
   for (const trip of orderedTrips) {
@@ -2204,7 +2210,7 @@ function ferryOperationalPredictions(day, nowMs = Date.now(), vesselStatuses = f
     const directionTrips = tripsByTerminal.get(state.nextFromTerminalId) || [];
     const bounds = scheduleBounds.get(state.nextFromTerminalId);
     if (!directionTrips.length || !bounds) continue;
-    const closeMs = bounds.finalScheduledMs + FERRY_OPERATIONAL_INTERVAL_MS;
+    const closeMs = bounds.finalScheduledMs + operationalCycleMs;
     const projectedBaseMs = Math.max(state.availableMs, nowMs);
     const referenceTrip = operationalReferenceTrip(directionTrips, projectedBaseMs, usedKeys);
     if (!referenceTrip) continue;
@@ -2230,7 +2236,7 @@ function ferryOperationalPredictions(day, nowMs = Date.now(), vesselStatuses = f
     }
     usedKeys.add(key);
     state.nextFromTerminalId = referenceTrip.toTerminalId;
-    state.availableMs = projectedDepartureMs + FERRY_OPERATIONAL_INTERVAL_MS;
+    state.availableMs = projectedDepartureMs + operationalCycleMs;
     state.sourceStatus = 'operational-chain';
     states.push(state);
   }
