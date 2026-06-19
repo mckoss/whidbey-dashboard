@@ -1320,6 +1320,16 @@ function resolvedSailingForSailing(s, vesselMap, fromTerminalId) {
   return vesselMap?.resolvedSailings?.[`${fromTerminalId}:${scheduledMs}`] || null;
 }
 
+function activeVesselStatusForSailing(s, resolved, vesselMap, fromTerminalId) {
+  const vesselName = resolved?.vesselName || s.VesselName || '';
+  if (!vesselName) return null;
+  return Object.values(vesselMap?.vesselStatuses || {}).find(status =>
+    status?.vesselName === vesselName &&
+    status.availableTerminalId === fromTerminalId &&
+    Number.isFinite(status.availableMs)
+  ) || null;
+}
+
 function missedDepartureForSailing(s, vesselMap, fromTerminalId) {
   const scheduledMs = s.sailTime.getTime();
   return vesselMap?.missedDepartures?.[`${fromTerminalId}:${scheduledMs}`] || null;
@@ -1472,25 +1482,45 @@ function computeSailingTimings(parsedSailings, vesselMap = {}, fromTerminalId = 
     const resolved = resolvedSailingForSailing(s, vesselMap, fromTerminalId);
     if (resolved) {
       const scheduledMs = resolved.scheduledDepartureMs || s.sailTime.getTime();
-      const effectiveMs = resolved.effectiveDepartureMs || scheduledMs;
-      const delayMs = Math.max(0, resolved.delayMs || 0);
+      const vesselStatus = !resolved.isDeparted
+        ? activeVesselStatusForSailing(s, resolved, vesselMap, fromTerminalId)
+        : null;
+      const vesselProjectionMs = vesselStatus?.availableMs || null;
+      const effectiveMs = vesselProjectionMs
+        ? Math.max(scheduledMs, vesselProjectionMs)
+        : resolved.effectiveDepartureMs || scheduledMs;
+      const delayMs = Math.max(0, vesselProjectionMs ? effectiveMs - scheduledMs : resolved.delayMs || 0);
+      const shouldProjectFromVessel = vesselProjectionMs &&
+        delayMs > LATE_THRESHOLD_MS &&
+        (resolved.status === 'unknown' || resolved.status === 'scheduled' || resolved.status === 'missed');
+      const adjustedResolved = shouldProjectFromVessel
+        ? {
+            ...resolved,
+            status: 'projected',
+            timingSource: vesselStatus.basis || 'gps-vessel-state',
+            effectiveDepartureMs: effectiveMs,
+            delayMs,
+            isProjected: true,
+            isUnknown: false,
+          }
+        : resolved;
       return {
         scheduledMs,
         effectiveMs,
         displayScheduledMs: resolved.displayScheduledMs || resolved.scheduledReferenceMs || scheduledMs,
         sailing: s,
-        serverResolved: resolved,
-        serverDeparture: resolved.isDeparted ? { actualDepartureMs: effectiveMs } : null,
-        hasDirectVesselSignal: Boolean(resolved.isDeparted),
-        lateInfo: resolved.isDeparted && delayMs > LATE_THRESHOLD_MS
+        serverResolved: adjustedResolved,
+        serverDeparture: adjustedResolved.isDeparted ? { actualDepartureMs: effectiveMs } : null,
+        hasDirectVesselSignal: Boolean(adjustedResolved.isDeparted || vesselProjectionMs),
+        lateInfo: adjustedResolved.isDeparted && delayMs > LATE_THRESHOLD_MS
           ? { estimatedDepartureMs: effectiveMs, delayMs, atDock: false }
           : null,
-        routeDelayInfo: resolved.isProjected && delayMs > LATE_THRESHOLD_MS
+        routeDelayInfo: adjustedResolved.isProjected && delayMs > LATE_THRESHOLD_MS
           ? {
               projectedDepartureMs: effectiveMs,
               delayMs,
-              vesselName: resolved.vesselName || '',
-              basis: resolved.timingSource || 'server-resolved',
+              vesselName: adjustedResolved.vesselName || '',
+              basis: adjustedResolved.timingSource || 'server-resolved',
             }
           : null,
       };

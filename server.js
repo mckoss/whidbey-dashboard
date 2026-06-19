@@ -2116,14 +2116,47 @@ function operationalReferenceTrip(trips, projectedMs, usedKeys) {
   return null;
 }
 
+function activeVesselStatusForTrip(trip, vesselStatuses = {}) {
+  if (!trip?.vesselName) return null;
+  return Object.values(vesselStatuses).find(status =>
+    status?.vesselName === trip.vesselName &&
+    status.availableTerminalId === trip.fromTerminalId &&
+    Number.isFinite(status.availableMs)
+  ) || null;
+}
+
+function gpsDominantProjectionForTrip(trip, vesselStatuses = {}, nowMs = Date.now()) {
+  const status = activeVesselStatusForTrip(trip, vesselStatuses);
+  if (!status) return null;
+  const projectedDepartureMs = Math.max(trip.scheduledDepartureMs, status.availableMs, nowMs);
+  return {
+    direction: trip.direction,
+    fromTerminalId: trip.fromTerminalId,
+    toTerminalId: trip.toTerminalId,
+    scheduledDepartureMs: trip.scheduledDepartureMs,
+    scheduledReferenceMs: trip.scheduledDepartureMs,
+    displayScheduledMs: trip.scheduledDepartureMs,
+    projectedDepartureMs,
+    delayMs: Math.max(0, projectedDepartureMs - trip.scheduledDepartureMs),
+    vesselName: status.vesselName,
+    vesselId: status.vesselId,
+    sourceStatus: status.status,
+    sourceObservedAtMs: status.observedAtMs,
+    basis: status.basis || 'gps-vessel-state',
+  };
+}
+
 function ferryOperationalPredictions(day, nowMs = Date.now(), vesselStatuses = ferryVesselStatusSummary(day, nowMs), terminalTurnarounds = ferryRecentTerminalTurnarounds(day, nowMs)) {
   const predictions = {};
   if (!Number.isFinite(nowMs)) return predictions;
   const tripsByTerminal = new Map();
   for (const trip of [...(day?.trips || [])].sort((a, b) => a.scheduledDepartureMs - b.scheduledDepartureMs)) {
+    const staleButAssignedVesselIsStillInbound =
+      trip?.scheduledDepartureMs < nowMs - FERRY_HISTORY_DEPARTURE_MATCH_MS &&
+      activeVesselStatusForTrip(trip, vesselStatuses);
     if (!Number.isFinite(trip?.scheduledDepartureMs) ||
         trip.actualDepartureMs ||
-        trip.scheduledDepartureMs < nowMs - FERRY_HISTORY_DEPARTURE_MATCH_MS) {
+        (trip.scheduledDepartureMs < nowMs - FERRY_HISTORY_DEPARTURE_MATCH_MS && !staleButAssignedVesselIsStillInbound)) {
       continue;
     }
     const trips = tripsByTerminal.get(trip.fromTerminalId) || [];
@@ -2291,22 +2324,31 @@ function ferryResolvedSailingSummary(day, nowMs = Date.now(), summaries = {}) {
     const departure = departures[key];
     const missed = missedDepartures[key];
     const prediction = predictedDepartures[key];
+    const gpsDominantProjection = !departure
+      ? gpsDominantProjectionForTrip(trip, vesselStatuses, nowMs)
+      : null;
     const returning = returningVesselForTrip(trip, vesselStatuses, nowMs);
-    const projectedDepartureMs = prediction?.projectedDepartureMs || null;
+    const projectedDepartureMs = gpsDominantProjection?.projectedDepartureMs ||
+      prediction?.projectedDepartureMs ||
+      null;
     const effectiveDepartureMs = departure?.actualDepartureMs ||
       projectedDepartureMs ||
       trip.scheduledDepartureMs;
     const delayMs = departure?.delayMs ??
+      gpsDominantProjection?.delayMs ??
       prediction?.delayMs ??
       0;
     let status = 'scheduled';
     let timingSource = 'schedule-row';
-    if (missed) {
-      status = 'missed';
-      timingSource = missed.source || 'missed-departure';
-    } else if (departure) {
+    if (departure) {
       status = 'departed';
       timingSource = departure.source || 'observed-departure';
+    } else if (gpsDominantProjection) {
+      status = 'projected';
+      timingSource = gpsDominantProjection.basis || 'gps-vessel-state';
+    } else if (missed) {
+      status = 'missed';
+      timingSource = missed.source || 'missed-departure';
     } else if (returning) {
       status = 'returning';
       timingSource = returning.reason || 'gps-returning';
@@ -2325,8 +2367,8 @@ function ferryResolvedSailingSummary(day, nowMs = Date.now(), summaries = {}) {
       fromTerminalId: trip.fromTerminalId,
       toTerminalId: trip.toTerminalId,
       scheduledDepartureMs: trip.scheduledDepartureMs,
-      scheduledReferenceMs: prediction?.scheduledReferenceMs || trip.scheduledDepartureMs,
-      displayScheduledMs: prediction?.displayScheduledMs || trip.scheduledDepartureMs,
+      scheduledReferenceMs: gpsDominantProjection?.scheduledReferenceMs || prediction?.scheduledReferenceMs || trip.scheduledDepartureMs,
+      displayScheduledMs: gpsDominantProjection?.displayScheduledMs || prediction?.displayScheduledMs || trip.scheduledDepartureMs,
       effectiveDepartureMs,
       displayDepartureMs: effectiveDepartureMs,
       delayMs: Math.max(0, delayMs || 0),

@@ -983,12 +983,31 @@ function ferryTestPoint(pct) {
   };
 }
 
+function bainbridgeTestPoint(pct) {
+  const seattle = { lat: 47.602501, lon: -122.340472 };
+  const bainbridge = { lat: 47.622339, lon: -122.509617 };
+  return {
+    latitude: seattle.lat + (bainbridge.lat - seattle.lat) * pct,
+    longitude: seattle.lon + (bainbridge.lon - seattle.lon) * pct,
+  };
+}
+
 function ferryTestSample(ms, vesselName, vesselId, pct, extra = {}) {
   return {
     observedAt: new Date(ms).toISOString(),
     vesselName,
     vesselId,
     ...ferryTestPoint(pct),
+    ...extra,
+  };
+}
+
+function bainbridgeTestSample(ms, vesselName, vesselId, pct, extra = {}) {
+  return {
+    observedAt: new Date(ms).toISOString(),
+    vesselName,
+    vesselId,
+    ...bainbridgeTestPoint(pct),
     ...extra,
   };
 }
@@ -1032,6 +1051,52 @@ test('ferry/departures endpoint — GPS vessel state forecasts destination depar
   assert.equal(prediction.scheduledReferenceMs, m1605, 'maps the projection to the closest prior scheduled slot');
   assert.equal(d.resolvedSailings[`14:${m1605}`].displayScheduledMs, m1605, 'resolved sailings expose the scheduled display context');
   assert.equal(d.resolvedSailings[`14:${m1605}`].timingSource, 'gps-vessel-state', 'resolved sailings identify the new forecast basis');
+});
+
+test('bainbridge departures — overdue assigned vessel inbound to terminal stays projected, not unknown', async () => {
+  const historyDate = '2026-06-18';
+  const sampledAtMs = Date.UTC(2026, 5, 19, 1, 5); // 6:05 PM PDT
+  const b1735 = Date.UTC(2026, 5, 19, 0, 35); // 5:35 PM PDT, more than 20 minutes old
+  const b1840 = Date.UTC(2026, 5, 19, 1, 40);
+  const historyDir = join(dataDir, 'ferry-history-bainbridge');
+  await mkdir(historyDir, { recursive: true });
+  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+    date: historyDate,
+    routeKey: 'bainbridge',
+    generatedAt: new Date(sampledAtMs).toISOString(),
+    sampledAtMs,
+    trips: [
+      ferryTestTrip(historyDate, 'bainbridge-to-seattle', 3, 7, b1735, {
+        routeKey: 'bainbridge',
+        fromTerminalName: 'Bainbridge Island',
+        toTerminalName: 'Seattle',
+        vesselName: 'Tacoma',
+        vesselId: 13,
+      }),
+      ferryTestTrip(historyDate, 'bainbridge-to-seattle', 3, 7, b1840, {
+        routeKey: 'bainbridge',
+        fromTerminalName: 'Bainbridge Island',
+        toTerminalName: 'Seattle',
+        vesselName: 'Wenatchee',
+        vesselId: 64,
+      }),
+    ],
+    vesselSamples: [
+      bainbridgeTestSample(Date.UTC(2026, 5, 19, 0, 55), 'Tacoma', 13, 0.84, { arrivingTerminalId: 3, atDock: false }),
+      bainbridgeTestSample(Date.UTC(2026, 5, 19, 1, 0), 'Tacoma', 13, 0.89, { arrivingTerminalId: 3, atDock: false }),
+      bainbridgeTestSample(sampledAtMs, 'Tacoma', 13, 0.94, { arrivingTerminalId: 3, atDock: false }),
+    ],
+    currentVessels: [],
+  }, null, 2));
+
+  const d = await getJson(`/api/bainbridge/ferry/departures?date=${historyDate}`);
+  const status = Object.values(d.vesselStatuses).find(v => v.vesselName === 'Tacoma');
+  assert.equal(status.status, 'underway-to-bainbridge', 'Tacoma is still inbound to Bainbridge');
+  assert.equal(status.availableTerminalId, 3, 'Tacoma is next available from Bainbridge');
+  const resolved = d.resolvedSailings[`3:${b1735}`];
+  assert.equal(resolved.status, 'projected', 'overdue Bainbridge departure remains projected from GPS');
+  assert.equal(resolved.vesselName, 'Tacoma', 'keeps the assigned inbound vessel');
+  assert.ok(resolved.effectiveDepartureMs > sampledAtMs, 'projects after the current GPS sample time');
 });
 
 test('ferry/departures endpoint — approach-zone vessel is not available until docked or ETA plus turnaround', async () => {
@@ -2743,6 +2808,81 @@ test('late ferry logic — server-reported returning vessel renders as returning
   assert.match(card, /class="sailing returning"/, 'uses the returning class');
   assert.match(card, /<div class="sail-status">Returning<\/div>/, 'labels the chip returning');
   assert.match(card, /sail-vessel">Tokitae<\/div>/, 'keeps the returning vessel label');
+});
+
+test('late ferry logic — live inbound vessel suppresses schedule-derived missed/departed labels', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
+  const script = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+
+  const fixedNow = Date.UTC(2026, 5, 19, 0, 50); // 5:50 PM PDT
+  class FakeDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [fixedNow])); }
+    static now() { return fixedNow; }
+  }
+  Object.assign(FakeDate, Date);
+
+  const nullEl = { style: {}, className: '', textContent: '', innerHTML: '', querySelector: () => null };
+  const context = {
+    console,
+    Date: FakeDate,
+    setInterval: () => 0,
+    setTimeout: () => 0,
+    clearInterval: () => {},
+    fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
+    document: {
+      getElementById: () => nullEl,
+      querySelector: () => nullEl,
+      createElement: () => ({}),
+      head: { appendChild: () => {} },
+    },
+    window: {},
+  };
+  vm.createContext(context);
+  vm.runInContext(script + `\nthis.__lateTest = { buildVesselMap, sailingCard };`, context);
+
+  const overdueMs = Date.UTC(2026, 5, 19, 0, 35); // 5:35 PM PDT
+  const nextMs = Date.UTC(2026, 5, 19, 1, 45);
+  const projectedMs = Date.UTC(2026, 5, 19, 1, 5);
+  const sailings = [overdueMs, nextMs].map(ms => ({
+    sailTime: new Date(ms),
+    DepartingTime: `/Date(${ms})/`,
+    VesselName: ms === overdueMs ? 'Tacoma' : 'Wenatchee',
+  }));
+  const vesselMap = context.__lateTest.buildVesselMap({ vessels: [] }, {
+    resolvedSailings: {
+      [`3:${overdueMs}`]: {
+        status: 'missed',
+        fromTerminalId: 3,
+        toTerminalId: 7,
+        scheduledDepartureMs: overdueMs,
+        effectiveDepartureMs: overdueMs,
+        displayScheduledMs: overdueMs,
+        vesselName: 'Tacoma',
+        vesselId: 13,
+        isMissed: true,
+      },
+    },
+    vesselStatuses: {
+      tacoma: {
+        vesselName: 'Tacoma',
+        vesselId: 13,
+        status: 'underway-to-bainbridge',
+        availableTerminalId: 3,
+        availableMs: projectedMs,
+        basis: 'gps-vessel-state',
+      },
+    },
+  });
+
+  const card = context.__lateTest.sailingCard(sailings[0], sailings, {}, vesselMap, 3);
+  assert.doesNotMatch(card, /Departed\?/, 'does not mark the inbound vessel as ambiguously departed');
+  assert.doesNotMatch(card, /<div class="sail-status">Missed<\/div>/, 'does not let schedule-derived missed status outrank live GPS');
+  assert.match(card, /sail-time-est-route">~6:05 PM<\/span>/, 'shows the GPS-projected departure time');
+  assert.match(card, /<div class="sail-status">▶ Next<\/div>/, 'keeps the overdue inbound vessel as the next effective departure');
 });
 
 test('late ferry logic — overtaken missed slot does not propagate lateness to next chip', async () => {
