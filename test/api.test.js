@@ -1056,6 +1056,7 @@ test('ferry/departures endpoint — GPS vessel state forecasts destination depar
 test('bainbridge departures — overdue assigned vessel inbound to terminal stays projected, not unknown', async () => {
   const historyDate = '2026-06-18';
   const sampledAtMs = Date.UTC(2026, 5, 19, 1, 5); // 6:05 PM PDT
+  const b0445 = Date.UTC(2026, 5, 18, 11, 45); // 4:45 AM PDT
   const b1735 = Date.UTC(2026, 5, 19, 0, 35); // 5:35 PM PDT, more than 20 minutes old
   const b1840 = Date.UTC(2026, 5, 19, 1, 40);
   const historyDir = join(dataDir, 'ferry-history-bainbridge');
@@ -1066,6 +1067,13 @@ test('bainbridge departures — overdue assigned vessel inbound to terminal stay
     generatedAt: new Date(sampledAtMs).toISOString(),
     sampledAtMs,
     trips: [
+      ferryTestTrip(historyDate, 'bainbridge-to-seattle', 3, 7, b0445, {
+        routeKey: 'bainbridge',
+        fromTerminalName: 'Bainbridge Island',
+        toTerminalName: 'Seattle',
+        vesselName: 'Tacoma',
+        vesselId: 13,
+      }),
       ferryTestTrip(historyDate, 'bainbridge-to-seattle', 3, 7, b1735, {
         routeKey: 'bainbridge',
         fromTerminalName: 'Bainbridge Island',
@@ -1097,6 +1105,10 @@ test('bainbridge departures — overdue assigned vessel inbound to terminal stay
   assert.equal(resolved.status, 'projected', 'overdue Bainbridge departure remains projected from GPS');
   assert.equal(resolved.vesselName, 'Tacoma', 'keeps the assigned inbound vessel');
   assert.ok(resolved.effectiveDepartureMs > sampledAtMs, 'projects after the current GPS sample time');
+  const oldResolved = d.resolvedSailings[`3:${b0445}`];
+  assert.notEqual(oldResolved.status, 'projected', 'old same-vessel Bainbridge row is not resurrected by current GPS');
+  assert.notEqual(oldResolved.timingSource, 'gps-vessel-state', 'old row does not use current GPS timing');
+  assert.ok(oldResolved.effectiveDepartureMs < sampledAtMs, 'old row remains in the past');
 });
 
 test('ferry/departures endpoint — approach-zone vessel is not available until docked or ETA plus turnaround', async () => {

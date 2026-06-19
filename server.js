@@ -2125,9 +2125,23 @@ function activeVesselStatusForTrip(trip, vesselStatuses = {}) {
   ) || null;
 }
 
-function gpsDominantProjectionForTrip(trip, vesselStatuses = {}, nowMs = Date.now()) {
+function isLatestAssignedTripForLiveVessel(trip, trips = [], nowMs = Date.now()) {
+  if (!trip?.vesselName || !Number.isFinite(trip?.scheduledDepartureMs)) return false;
+  if (trip.scheduledDepartureMs > nowMs) return false;
+  return !trips.some(other =>
+    other !== trip &&
+    other?.vesselName === trip.vesselName &&
+    other.fromTerminalId === trip.fromTerminalId &&
+    Number.isFinite(other.scheduledDepartureMs) &&
+    other.scheduledDepartureMs <= nowMs &&
+    other.scheduledDepartureMs > trip.scheduledDepartureMs
+  );
+}
+
+function gpsDominantProjectionForTrip(trip, vesselStatuses = {}, nowMs = Date.now(), trips = []) {
   const status = activeVesselStatusForTrip(trip, vesselStatuses);
   if (!status) return null;
+  if (!isLatestAssignedTripForLiveVessel(trip, trips, nowMs)) return null;
   const projectedDepartureMs = Math.max(trip.scheduledDepartureMs, status.availableMs, nowMs);
   return {
     direction: trip.direction,
@@ -2149,11 +2163,13 @@ function gpsDominantProjectionForTrip(trip, vesselStatuses = {}, nowMs = Date.no
 function ferryOperationalPredictions(day, nowMs = Date.now(), vesselStatuses = ferryVesselStatusSummary(day, nowMs), terminalTurnarounds = ferryRecentTerminalTurnarounds(day, nowMs)) {
   const predictions = {};
   if (!Number.isFinite(nowMs)) return predictions;
+  const orderedTrips = [...(day?.trips || [])].sort((a, b) => a.scheduledDepartureMs - b.scheduledDepartureMs);
   const tripsByTerminal = new Map();
-  for (const trip of [...(day?.trips || [])].sort((a, b) => a.scheduledDepartureMs - b.scheduledDepartureMs)) {
+  for (const trip of orderedTrips) {
     const staleButAssignedVesselIsStillInbound =
       trip?.scheduledDepartureMs < nowMs - FERRY_HISTORY_DEPARTURE_MATCH_MS &&
-      activeVesselStatusForTrip(trip, vesselStatuses);
+      activeVesselStatusForTrip(trip, vesselStatuses) &&
+      isLatestAssignedTripForLiveVessel(trip, orderedTrips, nowMs);
     if (!Number.isFinite(trip?.scheduledDepartureMs) ||
         trip.actualDepartureMs ||
         (trip.scheduledDepartureMs < nowMs - FERRY_HISTORY_DEPARTURE_MATCH_MS && !staleButAssignedVesselIsStillInbound)) {
@@ -2325,7 +2341,7 @@ function ferryResolvedSailingSummary(day, nowMs = Date.now(), summaries = {}) {
     const missed = missedDepartures[key];
     const prediction = predictedDepartures[key];
     const gpsDominantProjection = !departure
-      ? gpsDominantProjectionForTrip(trip, vesselStatuses, nowMs)
+      ? gpsDominantProjectionForTrip(trip, vesselStatuses, nowMs, trips)
       : null;
     const returning = returningVesselForTrip(trip, vesselStatuses, nowMs);
     const projectedDepartureMs = gpsDominantProjection?.projectedDepartureMs ||
