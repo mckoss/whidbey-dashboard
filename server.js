@@ -647,12 +647,23 @@ function cachedEndpointStaleWhileRefresh(cacheKey, ttlMs, fetcher) {
   };
 }
 
-app.use(express.static(join(__dirname, 'public')));
+function noCacheHtmlResponses(res) {
+  res.set('Cache-Control', 'no-cache, must-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+}
+
+app.use(express.static(join(__dirname, 'public'), {
+  setHeaders(res, filePath) {
+    if (filePath.endsWith('.html')) noCacheHtmlResponses(res);
+  },
+}));
 
 function sendRoutePage(res, fileName, route) {
   const html = readFileSync(join(__dirname, 'public', fileName), 'utf8');
   const routeScript = `<script>window.__FERRY_ROUTE__=${JSON.stringify(ferryRouteClientConfig(route))};</script>`;
   const moduleScriptTag = '<script type="module">';
+  noCacheHtmlResponses(res);
   if (html.includes(moduleScriptTag)) {
     res.type('html').send(html.replace(moduleScriptTag, `${routeScript}\n${moduleScriptTag}`));
     return;
@@ -661,6 +672,7 @@ function sendRoutePage(res, fileName, route) {
 }
 
 app.get('/admin', (req, res) => {
+  noCacheHtmlResponses(res);
   res.sendFile(join(__dirname, 'public', 'admin.html'));
 });
 
@@ -2907,6 +2919,7 @@ app.get('/api/bainbridge/ferry/history', ferryHistoryEndpoint(FERRY_ROUTES.bainb
 app.get('/api/bainbridge/ferry/departures', ferryDeparturesEndpoint(FERRY_ROUTES.bainbridge));
 
 app.get('/ferry-history', (req, res) => {
+  noCacheHtmlResponses(res);
   res.sendFile(join(__dirname, 'public', 'ferry-history.html'));
 });
 

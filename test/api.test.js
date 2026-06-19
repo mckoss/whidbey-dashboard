@@ -1761,6 +1761,7 @@ test('static HTML — index.html contains required elements', async () => {
 test('bainbridge pages — serve the shared dashboard with Bainbridge route config', async () => {
   const dashboardRes = await fetch(`${BASE}/bainbridge`);
   assert.ok(dashboardRes.ok, 'Bainbridge dashboard responds OK');
+  assert.match(dashboardRes.headers.get('cache-control') || '', /no-cache/, 'Bainbridge dashboard HTML is revalidated');
   const dashboardHtml = await dashboardRes.text();
   assert.match(dashboardHtml, /window\.__FERRY_ROUTE__=/, 'Bainbridge dashboard injects route config');
   assert.match(dashboardHtml, /"key":"bainbridge"/, 'Bainbridge dashboard route key is injected');
