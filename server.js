@@ -2,7 +2,7 @@ import express from 'express';
 import fetch from 'node-fetch';
 import { OAuth2Client } from 'google-auth-library';
 import morgan from 'morgan';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
@@ -40,7 +40,6 @@ const CONFIG = {
   wsfArrivingTerminal: Number(configValue('wsfArrivingTerminal', 14)),
   wsfRouteId: Number(configValue('wsfRouteId', 7)),
   timezone: String(configValue('timezone', 'America/Los_Angeles')),
-  ferryHistoryRetentionDays: Number(configValue('ferryHistoryRetentionDays', 30)),
   ferryHistorySampleMs: Number(configValue('ferryHistorySampleMs', 60 * 1000)),
   ferryHistoryDayStartHour: Number(configValue('ferryHistoryDayStartHour', 2)),
 };
@@ -1273,7 +1272,6 @@ function parseWsfMs(d) {
 }
 
 // ── Ferry history persistence ─────────────────────────────────────────
-const FERRY_HISTORY_RETENTION_DAYS = CONFIG.ferryHistoryRetentionDays;
 const FERRY_HISTORY_SAMPLE_INTERVAL_MS = CONFIG.ferryHistorySampleMs;
 const FERRY_TURNAROUND_ESTIMATE_MS = 15 * 60 * 1000;
 const FERRY_OPERATIONAL_TURNAROUND_MS = 10 * 60 * 1000;
@@ -1379,7 +1377,20 @@ function ferryHistoryOperationalDay(date) {
 }
 
 function ferryHistoryFile(date, route = DEFAULT_FERRY_ROUTE) {
+  if (!isIsoDate(date)) return join(route.historyDir, `${date}.json`);
+  const [year, month] = date.split('-');
+  return join(route.historyDir, year, month, `${date}.json`);
+}
+
+function legacyFerryHistoryFile(date, route = DEFAULT_FERRY_ROUTE) {
   return join(route.historyDir, `${date}.json`);
+}
+
+function existingFerryHistoryFile(date, route = DEFAULT_FERRY_ROUTE) {
+  const nested = ferryHistoryFile(date, route);
+  if (existsSync(nested)) return nested;
+  const legacy = legacyFerryHistoryFile(date, route);
+  return existsSync(legacy) ? legacy : nested;
 }
 
 function emptyFerryHistoryDay(date, route = DEFAULT_FERRY_ROUTE) {
@@ -1389,6 +1400,8 @@ function emptyFerryHistoryDay(date, route = DEFAULT_FERRY_ROUTE) {
     route: ferryRouteClientConfig(route),
     operationalDay: ferryHistoryOperationalDay(date),
     generatedAt: null,
+    retentionDays: null,
+    retentionPolicy: 'permanent',
     trips: [],
     currentVessels: [],
     vesselSamples: [],
@@ -1397,8 +1410,9 @@ function emptyFerryHistoryDay(date, route = DEFAULT_FERRY_ROUTE) {
 
 function readFerryHistoryDay(date, route = DEFAULT_FERRY_ROUTE) {
   try {
-    if (!existsSync(ferryHistoryFile(date, route))) return emptyFerryHistoryDay(date, route);
-    const parsed = JSON.parse(readFileSync(ferryHistoryFile(date, route), 'utf8'));
+    const file = existingFerryHistoryFile(date, route);
+    if (!existsSync(file)) return emptyFerryHistoryDay(date, route);
+    const parsed = JSON.parse(readFileSync(file, 'utf8'));
     return normalizeFerryHistoryDay({
       ...emptyFerryHistoryDay(date, route),
       ...(parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}),
@@ -1424,6 +1438,8 @@ function normalizeFerryHistoryDay(day) {
     routeKey: route.key,
     route: ferryRouteClientConfig(route),
     operationalDay,
+    retentionDays: null,
+    retentionPolicy: 'permanent',
     vesselSamples: filterFerrySamplesForRoute(day.vesselSamples, route),
     trips: (day.trips || []).map(trip => {
       const cleanTrip = {
@@ -2591,26 +2607,11 @@ function observedVesselForTrip(trip, actualDepartureMs) {
 
 function writeFerryHistoryDay(day) {
   const route = ferryRouteForDay(day);
-  mkdirSync(route.historyDir, { recursive: true });
   const file = ferryHistoryFile(day.date, route);
+  mkdirSync(dirname(file), { recursive: true });
   const tmpFile = `${file}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync(tmpFile, JSON.stringify(day, null, 2));
   renameSync(tmpFile, file);
-}
-
-function pruneFerryHistory(nowMs = Date.now(), route = DEFAULT_FERRY_ROUTE) {
-  try {
-    if (!existsSync(route.historyDir)) return;
-    const cutoffMs = startOfLocalDayMs(nowMs, CONFIG.timezone) - (FERRY_HISTORY_RETENTION_DAYS - 1) * 24 * 60 * 60 * 1000;
-    for (const name of readdirSync(route.historyDir)) {
-      const match = name.match(/^(\d{4}-\d{2}-\d{2})\.json$/);
-      if (!match) continue;
-      const dayMs = localDateStartMs(match[1], CONFIG.timezone);
-      if (dayMs !== null && dayMs < cutoffMs) unlinkSync(join(route.historyDir, name));
-    }
-  } catch (e) {
-    console.warn(`[ferry-history] prune failed: ${e.message}`);
-  }
 }
 
 async function ferryScheduleDataForHistory(cacheKey, fromTerminal, toTerminal) {
@@ -2928,7 +2929,8 @@ async function recordFerryHistoryDay(date = ferryHistoryDateForMs(), nowMs = Dat
     operationalDay: ferryHistoryOperationalDay(date),
     generatedAt: new Date(nowMs).toISOString(),
     sampledAtMs: nowMs,
-    retentionDays: FERRY_HISTORY_RETENTION_DAYS,
+    retentionDays: null,
+    retentionPolicy: 'permanent',
     trips,
     currentVessels: vessels,
     vesselSamples,
@@ -2938,7 +2940,6 @@ async function recordFerryHistoryDay(date = ferryHistoryDateForMs(), nowMs = Dat
   };
   applyGpsDepartureSpaceSnapshots(day);
   writeFerryHistoryDay(day);
-  pruneFerryHistory(nowMs, route);
   return day;
 }
 

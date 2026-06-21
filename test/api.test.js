@@ -81,6 +81,13 @@ async function getJsonAllowError(path) {
   return res.json();
 }
 
+async function writeFerryHistoryFixture(historyDir, historyDate, payload) {
+  const [year, month] = historyDate.split('-');
+  const dir = join(historyDir, year, month);
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, `${historyDate}.json`), JSON.stringify(payload, null, 2));
+}
+
 async function getJsonWithToken(path, token = '') {
   const headers = {};
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -300,7 +307,14 @@ test('ferry/history endpoint — returns a dated trip log shell and validates da
   assert.ok(Number.isFinite(d.operationalDay?.startMs), 'history file carries its own start timestamp');
   assert.ok(Number.isFinite(d.operationalDay?.endMs), 'history file carries its own end timestamp');
   assert.equal(d.operationalDay.endMs - d.operationalDay.startMs, 24 * 60 * 60 * 1000, 'history file defines a 24-hour span');
-  assert.equal(d.retentionDays, 30, 'uses default 30-day retention');
+  assert.equal(d.retentionDays, null, 'does not report a day-count retention limit');
+  assert.equal(d.retentionPolicy, 'permanent', 'documents permanent ferry history retention');
+  const [year, month] = today.split('-');
+  await readFile(join(dataDir, 'ferry-history', year, month, `${today}.json`), 'utf8');
+  const oldFlatFile = join(dataDir, 'ferry-history', '1999-01-01.json');
+  await writeFile(oldFlatFile, JSON.stringify({ date: '1999-01-01', trips: [] }));
+  await getJson(`/api/ferry/history?date=${today}`);
+  await readFile(oldFlatFile, 'utf8');
 
   const bad = await fetch(`${BASE}/api/ferry/history?date=today`);
   assert.equal(bad.status, 400, 'rejects non-ISO dates');
@@ -311,6 +325,9 @@ test('ferry/history endpoint — returns a dated trip log shell and validates da
   assert.match(source, /ferryHistoryDayStartHour: Number\(configValue\('ferryHistoryDayStartHour', 2\)\)/, 'defines ferry history day boundary once in server config');
   assert.match(source, /function ferryHistoryDateForMs/, 'uses an operational history date instead of raw calendar date');
   assert.match(source, /function ferryHistoryOperationalDay/, 'stores the operational-day span in each history response');
+  assert.match(source, /function existingFerryHistoryFile/, 'reads legacy flat history files while writing nested files');
+  assert.doesNotMatch(source, /function pruneFerryHistory/, 'does not automatically prune ferry history files');
+  assert.doesNotMatch(source, /unlinkSync/, 'does not delete ferry history files automatically');
   assert.match(source, /operationalDay: ferryHistoryOperationalDay\(date\)/, 'history files are self-describing about their day span');
   assert.match(source, /tripBelongsToFerryHistoryDate\(scheduledDepartureMs, date\)/, 'assigns trips by 2 AM history-day window');
   assert.match(source, /req\.query\.date \|\| ferryHistoryDateForMs\(\)/, 'history API default date follows the 2 AM boundary');
@@ -371,7 +388,7 @@ test('bainbridge ferry history — excludes saved Bremerton vessel samples', asy
   const sampledAtMs = Date.UTC(2026, 6, 1, 16, 0);
   const historyDir = join(dataDir, 'ferry-history-bainbridge');
   await mkdir(historyDir, { recursive: true });
-  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+  await writeFerryHistoryFixture(historyDir, historyDate, {
     date: historyDate,
     routeKey: 'bainbridge',
     generatedAt: new Date(sampledAtMs).toISOString(),
@@ -396,7 +413,7 @@ test('bainbridge ferry history — excludes saved Bremerton vessel samples', asy
         arrivingTerminalId: 4,
       }),
     ],
-  }, null, 2));
+  });
 
   const d = await getJson(`/api/bainbridge/ferry/history?date=${historyDate}`);
   const vesselNames = new Set(d.vesselSamples.map(sample => sample.vesselName));
@@ -416,7 +433,7 @@ test('ferry/history endpoint — ignores impossible early actual departures from
   const staleActualDepartureMs = scheduledDepartureMs - 55 * 60 * 1000;
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
-  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+  await writeFerryHistoryFixture(historyDir, historyDate, {
     date: historyDate,
     generatedAt: '2026-06-08T20:30:00.000Z',
     trips: [{
@@ -451,7 +468,7 @@ test('ferry/history endpoint — ignores impossible early actual departures from
       observations: [],
     }],
     currentVessels: [],
-  }, null, 2));
+  });
 
   const d = await getJson(`/api/ferry/history?date=${historyDate}`);
   assert.equal(d.trips[0].actualDepartureMs, null, 'drops actual departure that predates schedule by too much');
@@ -490,7 +507,7 @@ test('ferry/history endpoint — normalizes stale scheduled vessel names from ob
   const actualDepartureMs = scheduledDepartureMs + 23 * 1000;
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
-  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+  await writeFerryHistoryFixture(historyDir, historyDate, {
     date: historyDate,
     generatedAt: '2026-06-08T04:20:00.000Z',
     trips: [{
@@ -520,7 +537,7 @@ test('ferry/history endpoint — normalizes stale scheduled vessel names from ob
       }],
     }],
     currentVessels: [],
-  }, null, 2));
+  });
 
   const d = await getJson(`/api/ferry/history?date=${historyDate}`);
   assert.equal(d.trips[0].vesselName, 'Suquamish', 'uses observed vessel name instead of stale schedule name');
@@ -534,7 +551,7 @@ test('ferry/departures endpoint — exposes server-confirmed actual departures b
   const futureDepartureMs = Date.UTC(2026, 5, 6, 15, 35);
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
-  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+  await writeFerryHistoryFixture(historyDir, historyDate, {
     date: historyDate,
     generatedAt: '2026-06-06T15:10:00.000Z',
     sampledAtMs: Date.UTC(2026, 5, 6, 15, 20),
@@ -570,7 +587,7 @@ test('ferry/departures endpoint — exposes server-confirmed actual departures b
       observations: [],
     }],
     currentVessels: [],
-  }, null, 2));
+  });
 
   const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
   const key = `5:${scheduledDepartureMs}`;
@@ -592,7 +609,7 @@ test('ferry/departures endpoint — GPS-chain corrections never assign one vesse
   const m1605 = Date.UTC(2026, 5, 24, 23, 5);
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
-  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+  await writeFerryHistoryFixture(historyDir, historyDate, {
     date: historyDate,
     generatedAt: new Date(sampledAtMs).toISOString(),
     sampledAtMs,
@@ -607,7 +624,7 @@ test('ferry/departures endpoint — GPS-chain corrections never assign one vesse
       ferryTestTrip(historyDate, 'mukilteo-to-clinton', 14, 5, m1605),
     ],
     currentVessels: [],
-  }, null, 2));
+  });
 
   const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
   assert.equal(d.vesselCorrections[`5:${c1535}`].vesselName, 'Suquamish',
@@ -624,7 +641,7 @@ test('ferry/departures endpoint — exposes GPS-observed departures and missed s
   const secondMs = Date.UTC(2026, 5, 7, 15, 0);
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
-  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+  await writeFerryHistoryFixture(historyDir, historyDate, {
     date: historyDate,
     generatedAt: '2026-06-07T15:40:00.000Z',
     sampledAtMs: Date.UTC(2026, 5, 7, 15, 40),
@@ -664,7 +681,7 @@ test('ferry/departures endpoint — exposes GPS-observed departures and missed s
       longitude: -122.3046,
     }],
     currentVessels: [],
-  }, null, 2));
+  });
 
   const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
   const missedKey = `5:${firstMs}`;
@@ -691,7 +708,7 @@ test('ferry/departures endpoint — accumulating lateness skips the overtaken sc
   ];
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
-  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+  await writeFerryHistoryFixture(historyDir, historyDate, {
     date: historyDate,
     generatedAt: '2026-06-12T15:50:00.000Z',
     sampledAtMs: Date.UTC(2026, 5, 12, 15, 50),
@@ -733,7 +750,7 @@ test('ferry/departures endpoint — accumulating lateness skips the overtaken sc
       }];
     }),
     currentVessels: [],
-  }, null, 2));
+  });
 
   const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
   assert.equal(d.departures[`5:${scheduleMs[0]}`].actualDepartureMs, departureMs[0], 'first late departure maps to the first slot');
@@ -776,7 +793,7 @@ test('ferry/departures endpoint — trailing schedule slots are missed when serv
   });
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
-  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+  await writeFerryHistoryFixture(historyDir, historyDate, {
     date: historyDate,
     generatedAt: '2026-06-11T15:45:00.000Z',
     sampledAtMs: Date.UTC(2026, 5, 11, 15, 45),
@@ -796,7 +813,7 @@ test('ferry/departures endpoint — trailing schedule slots are missed when serv
       vesselName: 'Tokitae', vesselId: 68, latitude: 47.9485, longitude: -122.3046,
     }],
     currentVessels: [],
-  }, null, 2));
+  });
 
   const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
   assert.equal(d.departures[`5:${c2mSlots[0]}`].departed, true, 'the one observed boat serves the 14:00 slot');
@@ -844,7 +861,7 @@ test('ferry/departures endpoint — infers a per-direction route delay from rece
   });
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
-  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+  await writeFerryHistoryFixture(historyDir, historyDate, {
     date: historyDate,
     generatedAt: new Date(sampledAtMs).toISOString(),
     sampledAtMs,
@@ -853,7 +870,7 @@ test('ferry/departures endpoint — infers a per-direction route delay from rece
       ...m2c.map(t => mkTrip('mukilteo-to-clinton', 14, 5, t)),
     ],
     currentVessels: [],
-  }, null, 2));
+  });
 
   const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
   assert.ok(d.routeDelays, 'response includes a routeDelays map');
@@ -869,7 +886,7 @@ test('ferry/departures endpoint — a single late departure is not enough to cla
   const sched = Date.UTC(2026, 5, 9, 15, 0);
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
-  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+  await writeFerryHistoryFixture(historyDir, historyDate, {
     date: historyDate,
     generatedAt: new Date(sampledAtMs).toISOString(),
     sampledAtMs,
@@ -890,23 +907,23 @@ test('ferry/departures endpoint — a single late departure is not enough to cla
       observations: [],
     }],
     currentVessels: [],
-  }, null, 2));
+  });
 
   const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
   assert.equal(d.routeDelays['5'], undefined, 'one late departure alone does not establish a route delay');
 });
 
 test('ferry/departures endpoint — modest repeated lateness is diagnostic without an inbound vessel forecast', async () => {
-  const historyDate = '2026-06-20';
-  const sampledAtMs = Date.UTC(2026, 5, 20, 18, 0);
+  const historyDate = '2026-06-22';
+  const sampledAtMs = Date.UTC(2026, 5, 22, 18, 0);
   const recent = [
-    Date.UTC(2026, 5, 20, 17, 0),
-    Date.UTC(2026, 5, 20, 17, 30),
+    Date.UTC(2026, 5, 22, 17, 0),
+    Date.UTC(2026, 5, 22, 17, 30),
   ];
-  const nextMs = Date.UTC(2026, 5, 20, 18, 0);
+  const nextMs = Date.UTC(2026, 5, 22, 18, 0);
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
-  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+  await writeFerryHistoryFixture(historyDir, historyDate, {
     date: historyDate,
     generatedAt: new Date(sampledAtMs).toISOString(),
     sampledAtMs,
@@ -918,7 +935,7 @@ test('ferry/departures endpoint — modest repeated lateness is diagnostic witho
       ferryTestTrip(historyDate, 'clinton-to-mukilteo', 5, 14, nextMs),
     ],
     currentVessels: [],
-  }, null, 2));
+  });
 
   const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
   assert.equal(d.routeDelays['5'].delayMs, 5 * 60 * 1000, 'two five-minute late departures establish a modest route delay');
@@ -934,7 +951,7 @@ test('ferry/departures endpoint — prior departures do not create schedule-deri
   const m1605 = Date.UTC(2026, 5, 27, 16, 5);
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
-  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+  await writeFerryHistoryFixture(historyDir, historyDate, {
     date: historyDate,
     generatedAt: new Date(sampledAtMs).toISOString(),
     sampledAtMs,
@@ -950,7 +967,7 @@ test('ferry/departures endpoint — prior departures do not create schedule-deri
     ],
     vesselSamples: [],
     currentVessels: [],
-  }, null, 2));
+  });
 
   const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
   assert.deepEqual(d.vesselStatuses, {}, 'without current GPS state there is no server vessel availability');
@@ -1027,7 +1044,7 @@ test('ferry/departures endpoint — GPS vessel state forecasts destination depar
   const expectedDepartureMs = Date.UTC(2026, 5, 15, 16, 32, 30);
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
-  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+  await writeFerryHistoryFixture(historyDir, historyDate, {
     date: historyDate,
     generatedAt: new Date(sampledAtMs).toISOString(),
     sampledAtMs,
@@ -1039,7 +1056,7 @@ test('ferry/departures endpoint — GPS vessel state forecasts destination depar
       ferryTestSample(sampledAtMs, 'Tokitae', 68, 0.55, { arrivingTerminalId: 14 }),
     ],
     currentVessels: [],
-  }, null, 2));
+  });
 
   const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
   const status = Object.values(d.vesselStatuses).find(v => v.vesselName === 'Tokitae');
@@ -1067,7 +1084,7 @@ test('bainbridge departures — overdue assigned vessel inbound to terminal stay
   const b1840 = Date.UTC(2026, 6, 4, 1, 40);
   const historyDir = join(dataDir, 'ferry-history-bainbridge');
   await mkdir(historyDir, { recursive: true });
-  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+  await writeFerryHistoryFixture(historyDir, historyDate, {
     date: historyDate,
     routeKey: 'bainbridge',
     generatedAt: new Date(sampledAtMs).toISOString(),
@@ -1101,7 +1118,7 @@ test('bainbridge departures — overdue assigned vessel inbound to terminal stay
       bainbridgeTestSample(sampledAtMs, 'Tacoma', 13, 0.94, { arrivingTerminalId: 3, atDock: false }),
     ],
     currentVessels: [],
-  }, null, 2));
+  });
 
   const d = await getJson(`/api/bainbridge/ferry/departures?date=${historyDate}`);
   const status = Object.values(d.vesselStatuses).find(v => v.vesselName === 'Tacoma');
@@ -1125,7 +1142,7 @@ test('bainbridge departures — live GPS anchors to latest terminal schedule, no
   const b1840 = Date.UTC(2026, 6, 5, 1, 40);
   const historyDir = join(dataDir, 'ferry-history-bainbridge');
   await mkdir(historyDir, { recursive: true });
-  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+  await writeFerryHistoryFixture(historyDir, historyDate, {
     date: historyDate,
     routeKey: 'bainbridge',
     generatedAt: new Date(sampledAtMs).toISOString(),
@@ -1159,7 +1176,7 @@ test('bainbridge departures — live GPS anchors to latest terminal schedule, no
       bainbridgeTestSample(sampledAtMs, 'Tacoma', 13, 0.94, { arrivingTerminalId: 3, atDock: false }),
     ],
     currentVessels: [],
-  }, null, 2));
+  });
 
   const d = await getJson(`/api/bainbridge/ferry/departures?date=${historyDate}`);
   const oldResolved = d.resolvedSailings[`3:${b0445}`];
@@ -1177,7 +1194,7 @@ test('bainbridge departures — operational chain uses Bainbridge crossing time,
   const s1910 = Date.UTC(2026, 6, 3, 2, 10);
   const historyDir = join(dataDir, 'ferry-history-bainbridge');
   await mkdir(historyDir, { recursive: true });
-  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+  await writeFerryHistoryFixture(historyDir, historyDate, {
     date: historyDate,
     routeKey: 'bainbridge',
     generatedAt: new Date(sampledAtMs).toISOString(),
@@ -1204,7 +1221,7 @@ test('bainbridge departures — operational chain uses Bainbridge crossing time,
       bainbridgeTestSample(sampledAtMs, 'Wenatchee', 37, 0.96, { arrivingTerminalId: 3, atDock: false }),
     ],
     currentVessels: [],
-  }, null, 2));
+  });
 
   const d = await getJson(`/api/bainbridge/ferry/departures?date=${historyDate}`);
   const bainbridgeDeparture = d.resolvedSailings[`3:${b1840}`];
@@ -1225,7 +1242,7 @@ test('ferry/departures endpoint — approach-zone vessel is not available until 
   const expectedDepartureMs = expectedEtaMs + 10 * 60 * 1000;
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
-  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+  await writeFerryHistoryFixture(historyDir, historyDate, {
     date: historyDate,
     generatedAt: new Date(sampledAtMs).toISOString(),
     sampledAtMs,
@@ -1238,7 +1255,7 @@ test('ferry/departures endpoint — approach-zone vessel is not available until 
       ferryTestSample(sampledAtMs, 'Tokitae', 68, 0.978, { arrivingTerminalId: 14, atDock: false }),
     ],
     currentVessels: [],
-  }, null, 2));
+  });
 
   const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
   const status = Object.values(d.vesselStatuses).find(v => v.vesselName === 'Tokitae');
@@ -1263,7 +1280,7 @@ test('ferry/departures endpoint — newly docked vessel waits for terminal turna
   const expectedDepartureMs = dockArrivalMs + 10 * 60 * 1000;
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
-  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+  await writeFerryHistoryFixture(historyDir, historyDate, {
     date: historyDate,
     generatedAt: new Date(sampledAtMs).toISOString(),
     sampledAtMs,
@@ -1276,7 +1293,7 @@ test('ferry/departures endpoint — newly docked vessel waits for terminal turna
       ferryTestSample(sampledAtMs, 'Tokitae', 68, 1, { arrivingTerminalId: 14, atDock: true }),
     ],
     currentVessels: [],
-  }, null, 2));
+  });
 
   const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
   const status = Object.values(d.vesselStatuses).find(v => v.vesselName === 'Tokitae');
@@ -1299,7 +1316,7 @@ test('ferry/departures endpoint — still-docked vessel keeps a future departure
   const expectedDepartureMs = sampledAtMs + 60 * 1000;
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
-  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+  await writeFerryHistoryFixture(historyDir, historyDate, {
     date: historyDate,
     generatedAt: new Date(sampledAtMs).toISOString(),
     sampledAtMs,
@@ -1312,7 +1329,7 @@ test('ferry/departures endpoint — still-docked vessel keeps a future departure
     trips: [
       ferryTestTrip(historyDate, 'mukilteo-to-clinton', 14, 5, m1545),
     ],
-  }, null, 2));
+  });
 
   const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
   const status = Object.values(d.vesselStatuses).find(v => v.vesselName === 'Tokitae');
@@ -1333,7 +1350,7 @@ test('ferry/departures endpoint — inbound vessel forecast uses recent same-ter
   const c1800 = Date.UTC(2026, 5, 21, 18, 0);
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
-  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+  await writeFerryHistoryFixture(historyDir, historyDate, {
     date: historyDate,
     generatedAt: new Date(sampledAtMs).toISOString(),
     sampledAtMs,
@@ -1367,7 +1384,7 @@ test('ferry/departures endpoint — inbound vessel forecast uses recent same-ter
       ferryTestSample(sampledAtMs, 'Tokitae', 68, 0.15, { arrivingTerminalId: 5 }),
     ],
     currentVessels: [],
-  }, null, 2));
+  });
 
   const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
   assert.equal(d.terminalTurnarounds['5'].turnaroundMs, 12 * 60 * 1000,
@@ -1391,7 +1408,7 @@ test('ferry/departures endpoint — operational forecast chains every 30 minutes
   const c1705 = Date.UTC(2026, 5, 16, 17, 5);
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
-  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+  await writeFerryHistoryFixture(historyDir, historyDate, {
     date: historyDate,
     generatedAt: new Date(sampledAtMs).toISOString(),
     sampledAtMs,
@@ -1405,7 +1422,7 @@ test('ferry/departures endpoint — operational forecast chains every 30 minutes
       ferryTestSample(sampledAtMs, 'Suquamish', 75, 1, { atDock: true }),
     ],
     currentVessels: [],
-  }, null, 2));
+  });
 
   const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
   assert.equal(d.predictedDepartures[`14:${m1605}`].projectedDepartureMs, m1605, 'at-dock vessel waits for the first due Mukilteo slot');
@@ -1427,7 +1444,7 @@ test('ferry/departures endpoint — two vessels at one terminal consume separate
   const c1705 = Date.UTC(2026, 5, 19, 17, 5);
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
-  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+  await writeFerryHistoryFixture(historyDir, historyDate, {
     date: historyDate,
     generatedAt: new Date(sampledAtMs).toISOString(),
     sampledAtMs,
@@ -1442,7 +1459,7 @@ test('ferry/departures endpoint — two vessels at one terminal consume separate
       ferryTestSample(sampledAtMs, 'Second Boat', 302, 1, { atDock: true }),
     ],
     currentVessels: [],
-  }, null, 2));
+  });
 
   const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
   assert.equal(d.predictedDepartures[`14:${m1605}`].projectedDepartureMs, m1605, 'first vessel takes the first Mukilteo slot');
@@ -1462,7 +1479,7 @@ test('ferry/departures endpoint — one-boat operation does not invent the missi
   const m1635 = Date.UTC(2026, 5, 17, 16, 35);
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
-  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+  await writeFerryHistoryFixture(historyDir, historyDate, {
     date: historyDate,
     generatedAt: new Date(sampledAtMs).toISOString(),
     sampledAtMs,
@@ -1479,7 +1496,7 @@ test('ferry/departures endpoint — one-boat operation does not invent the missi
       ferryTestSample(sampledAtMs, 'Missing Boat', 202, 0, { atDock: true }),
     ],
     currentVessels: [],
-  }, null, 2));
+  });
 
   const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
   assert.equal(d.predictedDepartures[`14:${m1605}`].vesselName, 'Active Boat', 'the recent passage vessel continues from Mukilteo');
@@ -1496,7 +1513,7 @@ test('ferry/departures endpoint — GPS reversal is surfaced as returning withou
   const m1605 = Date.UTC(2026, 5, 29, 16, 5);
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
-  await writeFile(join(historyDir, `${historyDate}.json`), JSON.stringify({
+  await writeFerryHistoryFixture(historyDir, historyDate, {
     date: historyDate,
     generatedAt: new Date(sampledAtMs).toISOString(),
     sampledAtMs,
@@ -1510,7 +1527,7 @@ test('ferry/departures endpoint — GPS reversal is surfaced as returning withou
       ferryTestSample(sampledAtMs, 'Tokitae', 68, 0.28, { arrivingTerminalId: 14 }),
     ],
     currentVessels: [],
-  }, null, 2));
+  });
 
   const d = await getJson(`/api/ferry/departures?date=${historyDate}`);
   const status = Object.values(d.vesselStatuses).find(v => v.vesselName === 'Tokitae');
@@ -2196,7 +2213,7 @@ test('config example — documents runtime and Google admin auth configuration',
   assert.equal(typeof config.wsfDepartingTerminal, 'number', 'example has departing terminal ID');
   assert.equal(typeof config.wsfArrivingTerminal, 'number', 'example has arriving terminal ID');
   assert.equal(typeof config.wsfRouteId, 'number', 'example has route ID');
-  assert.equal(config.ferryHistoryRetentionDays, 30, 'example documents ferry history retention');
+  assert.equal(config.ferryHistoryRetentionDays, undefined, 'example does not expose a ferry history cleanup setting');
   assert.equal(config.ferryHistorySampleMs, 60000, 'example documents ferry history sampling interval');
   assert.equal(config.ferryHistoryDayStartHour, 2, 'example documents ferry history operational-day boundary');
   assert.ok('gaMeasurementId' in config, 'example documents optional Google Analytics ID');

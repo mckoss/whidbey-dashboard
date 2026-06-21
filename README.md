@@ -173,6 +173,10 @@ Ferry history records raw WSDOT vessel GPS samples when `/api/ferry/history`
 is hit. Production also uses `scripts/ferry-history-keepalive.sh` from system
 cron once per minute to keep recording through low-traffic periods, especially
 the midnight-to-2 AM tail of the operational ferry day.
+History files are retained permanently by the app and written under dated
+folders such as `data/ferry-history/2026/06/2026-06-20.json`. There is no
+automated history cleanup; manually remove old files from the data volume if
+you want to reclaim space.
 
 Cache files are written to `dataDir` in `config.json`, or local `./data` when
 `dataDir` is omitted. For Railway persistence across deploys, mount a Railway
