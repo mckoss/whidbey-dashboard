@@ -9,6 +9,8 @@
   "wsfDepartingTerminal": 5,
   "wsfArrivingTerminal": 14,
   "wsfRouteId": 7,
+  "wsfApiMinIntervalMs": 60000,
+  "wsfRawLogDir": "data/wsf-raw",
   "ferryHistorySampleMs": 60000,
   "ferryHistoryDayStartHour": 2,
   "gaMeasurementId": null,

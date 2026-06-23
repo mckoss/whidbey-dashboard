@@ -41,6 +41,8 @@ Runtime configuration lives in ignored `config.json`. Copy
   "wsfDepartingTerminal": 5,
   "wsfArrivingTerminal": 14,
   "wsfRouteId": 7,
+  "wsfApiMinIntervalMs": 60000,
+  "wsfRawLogDir": "data/wsf-raw",
   "gaMeasurementId": null,
   "googleClientId": "your-google-oauth-client-id.apps.googleusercontent.com",
   "sessionSecret": "replace-with-a-long-random-session-secret",
@@ -53,6 +55,11 @@ Runtime configuration lives in ignored `config.json`. Copy
 The WSDOT ferry API key is free from https://www.wsdot.wa.gov/traffic/api/.
 For Railway, set the same JSON object as a `CONFIG_JSON` environment variable.
 `config.json` and `CONFIG_JSON` use the same canonical keys.
+WSF ferry API calls are limited to at most one outbound request per endpoint and
+parameter set per minute. Raw WSF responses are appended under `wsfRawLogDir` as
+2 AM operational-day JSONL files named `yyyy/mm/yyyy-mm-dd-wsfdata.jsonl`; each
+record includes the response timestamp, sanitized call parameters, HTTP status,
+and raw JSON response.
 
 Weather and tides work without any API keys.
 

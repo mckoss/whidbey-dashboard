@@ -343,6 +343,14 @@ test('ferry/history endpoint — returns a dated trip log shell and validates da
   assert.match(source, /writeFerryHistoryDay\(day\)/, 'writes the enriched history day to disk');
   assert.match(source, /const tmpFile = `\$\{file\}\.\$\{process\.pid\}\.\$\{Date\.now\(\)\}\.tmp`/, 'writes history files through a temp file first');
   assert.match(source, /renameSync\(tmpFile, file\)/, 'atomically replaces the durable history file after the write completes');
+  assert.match(source, /const WSF_API_MIN_INTERVAL_MS = Math\.max\(60 \* 1000/, 'enforces a one-minute minimum WSF fetch interval');
+  assert.match(source, /function cachedWsfJson/, 'funnels raw WSF JSON through a shared limiter');
+  assert.match(source, /function wsfRawLogFileForMs/, 'computes WSF raw log files from the operational-day cutoff');
+  assert.match(source, /\$\{date\}-wsfdata\.jsonl/, 'names WSF raw logs as operational-day jsonl files');
+  assert.match(source, /appendFileSync\(logFile/, 'appends raw WSF responses to JSONL');
+  assert.match(source, /cachedWsfJson\('vesselLocations', \{\}, url\)/, 'shares the raw all-vessel WSF feed before route filtering');
+  assert.match(source, /cachedWsfJson\('alerts', \{\}, url\)/, 'shares the raw all-alert WSF feed before route filtering');
+  assert.match(source, /cachedEndpoint\(`\$\{route\.key\}_ferry_vessels`, WSF_API_MIN_INTERVAL_MS/, 'keeps public vessel fetches on the WSF one-minute cadence');
 });
 
 test('bainbridge ferry endpoints — use separate route metadata and history storage', async () => {
@@ -914,13 +922,13 @@ test('ferry/departures endpoint — a single late departure is not enough to cla
 });
 
 test('ferry/departures endpoint — modest repeated lateness is diagnostic without an inbound vessel forecast', async () => {
-  const historyDate = '2026-06-22';
-  const sampledAtMs = Date.UTC(2026, 5, 22, 18, 0);
+  const historyDate = '2026-06-18';
+  const sampledAtMs = Date.UTC(2026, 5, 18, 18, 0);
   const recent = [
-    Date.UTC(2026, 5, 22, 17, 0),
-    Date.UTC(2026, 5, 22, 17, 30),
+    Date.UTC(2026, 5, 18, 17, 0),
+    Date.UTC(2026, 5, 18, 17, 30),
   ];
-  const nextMs = Date.UTC(2026, 5, 22, 18, 0);
+  const nextMs = Date.UTC(2026, 5, 18, 18, 0);
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
   await writeFerryHistoryFixture(historyDir, historyDate, {
@@ -2213,6 +2221,8 @@ test('config example — documents runtime and Google admin auth configuration',
   assert.equal(typeof config.wsfDepartingTerminal, 'number', 'example has departing terminal ID');
   assert.equal(typeof config.wsfArrivingTerminal, 'number', 'example has arriving terminal ID');
   assert.equal(typeof config.wsfRouteId, 'number', 'example has route ID');
+  assert.equal(config.wsfApiMinIntervalMs, 60000, 'example documents WSF API minimum interval');
+  assert.ok(config.wsfRawLogDir, 'example documents WSF raw JSONL log directory');
   assert.equal(config.ferryHistoryRetentionDays, undefined, 'example does not expose a ferry history cleanup setting');
   assert.equal(config.ferryHistorySampleMs, 60000, 'example documents ferry history sampling interval');
   assert.equal(config.ferryHistoryDayStartHour, 2, 'example documents ferry history operational-day boundary');

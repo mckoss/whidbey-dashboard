@@ -2,7 +2,7 @@ import express from 'express';
 import fetch from 'node-fetch';
 import { OAuth2Client } from 'google-auth-library';
 import morgan from 'morgan';
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
@@ -27,6 +27,8 @@ const CONFIG = {
   alertContextFile: join(dataDir, 'alert-context.json'),
   ferryHistoryDir: join(dataDir, 'ferry-history'),
   wsfApiKey: String(configValue('wsfApiKey', '')).trim(),
+  wsfApiMinIntervalMs: Number(configValue('wsfApiMinIntervalMs', 60 * 1000)),
+  wsfRawLogDir: resolve(configValue('wsfRawLogDir', join(dataDir, 'wsf-raw'))),
   gaMeasurementId: configValue('gaMeasurementId', null),
   googleClientId: String(configValue('googleClientId', '')).trim(),
   adminUsers: parseAuthorizedUsers(configValue('adminUsers', [])),
@@ -43,6 +45,7 @@ const CONFIG = {
   ferryHistorySampleMs: Number(configValue('ferryHistorySampleMs', 60 * 1000)),
   ferryHistoryDayStartHour: Number(configValue('ferryHistoryDayStartHour', 2)),
 };
+const WSF_API_MIN_INTERVAL_MS = Math.max(60 * 1000, CONFIG.wsfApiMinIntervalMs || 0);
 
 const FERRY_ROUTES = {
   whidbey: {
@@ -582,6 +585,115 @@ async function fetchWithRetry(url, options = {}, retries = 1) {
   }
 }
 
+const wsfFetchesInFlight = new Map();
+const wsfFetchAttempts = new Map();
+
+function stableJson(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return JSON.stringify(value);
+  }
+  return JSON.stringify(Object.keys(value).sort().reduce((out, key) => {
+    out[key] = value[key];
+    return out;
+  }, {}));
+}
+
+function wsfRequestPath(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.pathname;
+  } catch {
+    return '';
+  }
+}
+
+function wsfRawCacheKey(api, params = {}) {
+  return `wsf_raw:${api}:${stableJson(params)}`;
+}
+
+function wsfRawLogFileForMs(ms = Date.now()) {
+  const date = ferryHistoryDateForMs(ms);
+  const [year, month] = date.split('-');
+  return join(CONFIG.wsfRawLogDir, year, month, `${date}-wsfdata.jsonl`);
+}
+
+function appendWsfRawLog(entry) {
+  const recordedMs = Date.parse(entry?.recordedAt || '');
+  const logFile = wsfRawLogFileForMs(Number.isFinite(recordedMs) ? recordedMs : Date.now());
+  try {
+    mkdirSync(dirname(logFile), { recursive: true });
+    appendFileSync(logFile, `${JSON.stringify(entry)}\n`);
+  } catch (e) {
+    console.warn(`[wsf-raw-log] failed to append ${logFile}: ${e.message}`);
+  }
+}
+
+async function fetchWsfJson(api, params, url) {
+  const startedAt = Date.now();
+  const request = {
+    api,
+    params,
+    path: wsfRequestPath(url),
+  };
+
+  try {
+    const response = await fetchWithRetry(url, { headers: { Accept: 'application/json' } }, 0);
+    const data = await response.json();
+    appendWsfRawLog({
+      recordedAt: new Date().toISOString(),
+      durationMs: Date.now() - startedAt,
+      request,
+      http: {
+        status: response.status,
+        statusText: response.statusText,
+      },
+      response: data,
+    });
+    return data;
+  } catch (e) {
+    appendWsfRawLog({
+      recordedAt: new Date().toISOString(),
+      durationMs: Date.now() - startedAt,
+      request,
+      error: e.message,
+    });
+    throw e;
+  }
+}
+
+async function cachedWsfJson(api, params, url) {
+  const cacheKey = wsfRawCacheKey(api, params);
+  const hit = getCached(cacheKey);
+  if (hit) return hit.data;
+
+  const inFlight = wsfFetchesInFlight.get(cacheKey);
+  if (inFlight) return inFlight;
+
+  const stale = getStale(cacheKey);
+  const now = Date.now();
+  const attempt = wsfFetchAttempts.get(cacheKey);
+  if (attempt && now < attempt.nextAllowedAt) {
+    if (stale) return stale.data;
+    throw new Error(`WSF ${api} request is rate-limited until ${new Date(attempt.nextAllowedAt).toISOString()}`);
+  }
+
+  wsfFetchAttempts.set(cacheKey, { nextAllowedAt: now + WSF_API_MIN_INTERVAL_MS });
+  const pending = fetchWsfJson(api, params, url)
+    .then(data => {
+      setCache(cacheKey, data, WSF_API_MIN_INTERVAL_MS);
+      return data;
+    })
+    .catch(e => {
+      if (stale) return stale.data;
+      throw e;
+    })
+    .finally(() => {
+      wsfFetchesInFlight.delete(cacheKey);
+    });
+  wsfFetchesInFlight.set(cacheKey, pending);
+  return pending;
+}
+
 // ── Cache-aware handler factory ────────────────────────────────────────
 function cachedEndpoint(cacheKey, ttlMs, fetcher) {
   return async (req, res) => {
@@ -1004,16 +1116,18 @@ async function fetchWsfFerryScheduleData(fromTerminal, toTerminal) {
   if (!CONFIG.wsfApiKey) return { error: 'WSF API key not configured', sailings: [] };
   const url = `https://www.wsdot.wa.gov/ferries/api/schedule/rest/scheduletoday` +
     `/${fromTerminal}/${toTerminal}/false?apiaccesscode=${CONFIG.wsfApiKey}`;
-  const r = await fetchWithRetry(url, { headers: { Accept: 'application/json' } });
-  return r.json();
+  return cachedWsfJson('scheduleToday', {
+    fromTerminal,
+    toTerminal,
+    includeAnnotations: false,
+  }, url);
 }
 
 async function fetchWsfFerrySpaceData(fromTerminal, toTerminal) {
   if (!CONFIG.wsfApiKey) return { error: 'WSF API key not configured' };
   const url = `https://www.wsdot.wa.gov/ferries/api/terminals/rest/terminalsailingspace` +
     `/${fromTerminal}?apiaccesscode=${CONFIG.wsfApiKey}`;
-  const r = await fetchWithRetry(url, { headers: { Accept: 'application/json' } });
-  const data = await r.json();
+  const data = await cachedWsfJson('terminalSailingSpace', { fromTerminal }, url);
   const byDeparture = {};
   for (const dep of (data.DepartingSpaces || [])) {
     const ms = dep.Departure?.match(/\/Date\((\d+)/)?.[1];
@@ -1029,11 +1143,21 @@ async function fetchWsfFerrySpaceData(fromTerminal, toTerminal) {
   return byDeparture;
 }
 
+async function fetchWsfFerryAlertsData() {
+  if (!CONFIG.wsfApiKey) return [];
+  const url = `https://www.wsdot.wa.gov/ferries/api/schedule/rest/alerts?apiaccesscode=${CONFIG.wsfApiKey}`;
+  return cachedWsfJson('alerts', {}, url);
+}
+
+async function fetchWsfVesselLocationsData() {
+  if (!CONFIG.wsfApiKey) return [];
+  const url = `https://www.wsdot.wa.gov/ferries/api/vessels/rest/vessellocations?apiaccesscode=${CONFIG.wsfApiKey}`;
+  return cachedWsfJson('vesselLocations', {}, url);
+}
+
 async function fetchFerryVesselsData(route = DEFAULT_FERRY_ROUTE) {
   if (!CONFIG.wsfApiKey) return { error: 'WSF API key not configured', vessels: [] };
-  const url = `https://www.wsdot.wa.gov/ferries/api/vessels/rest/vessellocations?apiaccesscode=${CONFIG.wsfApiKey}`;
-  const r = await fetchWithRetry(url, { headers: { Accept: 'application/json' } });
-  const data = await r.json();
+  const data = await fetchWsfVesselLocationsData();
   const vessels = (Array.isArray(data) ? data : [])
     .filter(v => routeHasBothTerminals(v, route))
     .map(v => ({
@@ -1074,11 +1198,9 @@ function stripFerryAlertRoutePrefix(value = '') {
 }
 
 function ferryAlertsEndpoint(route = DEFAULT_FERRY_ROUTE) {
-  return cachedEndpoint(`${route.key}_ferry_alerts`, 30 * 1000, async () => {
+  return cachedEndpoint(`${route.key}_ferry_alerts`, WSF_API_MIN_INTERVAL_MS, async () => {
   if (!CONFIG.wsfApiKey) return { error: 'WSF API key not configured', alerts: [] };
-  const url = `https://www.wsdot.wa.gov/ferries/api/schedule/rest/alerts?apiaccesscode=${CONFIG.wsfApiKey}`;
-  const r = await fetchWithRetry(url, { headers: { Accept: 'application/json' } });
-  const data = await r.json();
+  const data = await fetchWsfFerryAlertsData();
   const alerts = (Array.isArray(data) ? data : [])
     .filter(alert => alertAppliesToRoute(alert, route))
     .sort((a, b) => (a.SortSeq ?? 9999) - (b.SortSeq ?? 9999))
@@ -1168,7 +1290,7 @@ function shouldCarryOverSailing(departureMs, nowMs = Date.now()) {
 }
 
 function ferryScheduleEndpoint(cacheKey, fromTerminal, toTerminal) {
-  return cachedEndpointStaleWhileRefresh(cacheKey, 30 * 1000, async () => {
+  return cachedEndpointStaleWhileRefresh(cacheKey, WSF_API_MIN_INTERVAL_MS, async () => {
     const data = await fetchWsfFerryScheduleData(fromTerminal, toTerminal);
 
     // Merge carry-over sailings into the new response
@@ -1221,7 +1343,7 @@ function cachedSailingsFor(cacheKey) {
 
 // ── Ferry space helper (reusable for either terminal) ─────────────────
 function ferrySpaceEndpoint(cacheKey, fromTerminal, toTerminal) {
-  return cachedEndpoint(cacheKey, 30 * 1000, async () => {
+  return cachedEndpoint(cacheKey, WSF_API_MIN_INTERVAL_MS, async () => {
     return fetchWsfFerrySpaceData(fromTerminal, toTerminal);
   });
 }
@@ -1248,7 +1370,7 @@ function registerFerryApi(route) {
   app.get(`${route.apiPrefix}/${route.secondary.slug}`, ferryScheduleEndpoint(inboundKey, route.secondary.id, route.primary.id));
   app.get(`${route.apiPrefix}/${route.secondary.slug}/space`, ferrySpaceEndpoint(`${inboundKey}_space`, route.secondary.id, route.primary.id));
   app.get(`${route.apiPrefix}/alerts`, ferryAlertsEndpoint(route));
-  app.get(`${route.apiPrefix}/vessels`, cachedEndpoint(`${route.key}_ferry_vessels`, 30 * 1000, () => fetchFerryVesselsData(route)));
+  app.get(`${route.apiPrefix}/vessels`, cachedEndpoint(`${route.key}_ferry_vessels`, WSF_API_MIN_INTERVAL_MS, () => fetchFerryVesselsData(route)));
 }
 
 registerFerryApi(FERRY_ROUTES.whidbey);
@@ -2615,12 +2737,12 @@ function writeFerryHistoryDay(day) {
 }
 
 async function ferryScheduleDataForHistory(cacheKey, fromTerminal, toTerminal) {
-  return cachedDataForHistory(cacheKey, 30 * 1000, () =>
+  return cachedDataForHistory(cacheKey, WSF_API_MIN_INTERVAL_MS, () =>
     fetchWsfFerryScheduleData(fromTerminal, toTerminal));
 }
 
 async function ferrySpaceDataForHistory(cacheKey, fromTerminal, toTerminal) {
-  return cachedDataForHistory(cacheKey, 30 * 1000, () =>
+  return cachedDataForHistory(cacheKey, WSF_API_MIN_INTERVAL_MS, () =>
     fetchWsfFerrySpaceData(fromTerminal, toTerminal));
 }
 
