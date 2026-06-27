@@ -113,6 +113,10 @@ function pacificDate(date = new Date()) {
   return date.toLocaleString('sv-SE', { timeZone: 'America/Los_Angeles' }).slice(0, 10);
 }
 
+function pacificOperationalDate(date = new Date()) {
+  return pacificDate(new Date(date.getTime() - 2 * 60 * 60 * 1000));
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────
 
 test('weather endpoint — returns current temperature and 3-day forecast', async () => {
@@ -296,7 +300,7 @@ test('ferry/vessels endpoint — normalized vessel location data', async () => {
 });
 
 test('ferry/history endpoint — returns a dated trip log shell and validates date parameter', async () => {
-  const today = pacificDate();
+  const today = pacificOperationalDate();
   const d = await getJson(`/api/ferry/history?date=${today}`);
   assert.equal(d.date, today, 'returns requested Pacific date');
   assert.ok(Array.isArray(d.trips), 'history has trips array');
@@ -1281,10 +1285,10 @@ test('ferry/departures endpoint — approach-zone vessel is not available until 
 });
 
 test('ferry/departures endpoint — newly docked vessel waits for terminal turnaround before availability', async () => {
-  const historyDate = '2026-06-26';
-  const sampledAtMs = Date.UTC(2026, 5, 26, 16, 0);
-  const dockArrivalMs = Date.UTC(2026, 5, 26, 15, 58);
-  const m1605 = Date.UTC(2026, 5, 26, 16, 5);
+  const historyDate = '2026-07-06';
+  const sampledAtMs = Date.UTC(2026, 6, 6, 16, 0);
+  const dockArrivalMs = Date.UTC(2026, 6, 6, 15, 58);
+  const m1605 = Date.UTC(2026, 6, 6, 16, 5);
   const expectedDepartureMs = dockArrivalMs + 10 * 60 * 1000;
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
@@ -1296,7 +1300,7 @@ test('ferry/departures endpoint — newly docked vessel waits for terminal turna
       ferryTestTrip(historyDate, 'mukilteo-to-clinton', 14, 5, m1605),
     ],
     vesselSamples: [
-      ferryTestSample(Date.UTC(2026, 5, 26, 15, 54), 'Tokitae', 68, 0.94, { arrivingTerminalId: 14, atDock: false }),
+      ferryTestSample(Date.UTC(2026, 6, 6, 15, 54), 'Tokitae', 68, 0.94, { arrivingTerminalId: 14, atDock: false }),
       ferryTestSample(dockArrivalMs, 'Tokitae', 68, 1, { arrivingTerminalId: 14, atDock: true }),
       ferryTestSample(sampledAtMs, 'Tokitae', 68, 1, { arrivingTerminalId: 14, atDock: true }),
     ],
@@ -1887,6 +1891,10 @@ test('ferry history page — serves dated table and time-distance diagram UI', a
   assert.match(html, /const chartTrips = trips\.filter\(trip => actualDepartureMs\(trip\) && carLoad\(trip\)\)/, 'only charts recorded departures with vehicle-load data');
   assert.match(html, /const bounds = timeBounds\(day\)/, 'uses the whole history operational day as the chart extent');
   assert.match(html, /vehicleLoadSvg\(terminal, rows, vessels, bounds, maxCapacity, dayDate\)/, 'labels load chart day boundaries using the history date');
+  assert.match(html, /function loadChartTimeTicks/, 'draws explicit time ticks on vehicle-load charts');
+  assert.match(html, /label: '6 AM'[\s\S]*label: 'Noon'[\s\S]*label: '6 PM'[\s\S]*label: 'Midnight'/, 'labels load chart x-axis at 6 AM, noon, 6 PM, and midnight');
+  assert.match(html, /class="load-time-tick"/, 'renders load chart time tick marks');
+  assert.match(html, /zonedDateTimeMs\(addDays\(dateText, 1\), 0, 0\)/, 'places midnight tick at the end-of-day boundary');
   assert.match(html, /colorFor\(trip\.vesselName, vessels\)/, 'uses the same vessel colors as the GPS track legend');
   assert.match(html, /id="trip-tables"/, 'renders trip tables into a grouped container');
   assert.match(html, /function terminalTable/, 'renders separate history tables by departure terminal');

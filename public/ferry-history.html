@@ -312,6 +312,11 @@
       stroke-width: 1;
     }
 
+    .load-time-tick {
+      stroke: rgba(148, 163, 184, 0.5);
+      stroke-width: 1;
+    }
+
     .load-bar {
       opacity: 0.92;
       rx: 2;
@@ -1178,18 +1183,33 @@
           <title>${escapeHtml(trip.vesselName || 'Unknown')} ${escapeHtml(terminal)} ${formatTableTimeMs(actualDepartureMs(trip))}: ${load.carried} of ${load.max} vehicles</title>
         </rect>`;
       }).join('');
-      const startLabel = formatGraphTimeMs(bounds.startMs, '');
-      const endLabel = formatGraphTimeMs(bounds.endMs, dayDate);
+      const timeTicks = loadChartTimeTicks(bounds, chartW, pad, height, dayDate);
       return `<div class="load-chart-wrap">
         <svg viewBox="0 0 ${width} ${height}" style="aspect-ratio:${width} / ${height}" role="img" aria-label="${escapeHtml(terminal)} vehicle loads by observed departure">
           ${grid}
           <line class="load-axis" x1="${pad.left}" x2="${width - pad.right}" y1="${height - pad.bottom}" y2="${height - pad.bottom}"></line>
           <line class="load-axis" x1="${pad.left}" x2="${pad.left}" y1="${pad.top}" y2="${height - pad.bottom}"></line>
+          ${timeTicks}
           ${bars}
-          <text class="load-label" x="${pad.left}" y="${height - 8}" text-anchor="start">${startLabel}</text>
-          <text class="load-label" x="${width - pad.right}" y="${height - 8}" text-anchor="end">${endLabel}</text>
         </svg>
       </div>`;
+    }
+
+    function loadChartTimeTicks(bounds, chartW, pad, height, dayDate) {
+      const dateText = validDate(dayDate) || localDateText(bounds.startMs);
+      const ticks = [
+        { label: '6 AM', ms: zonedDateTimeMs(dateText, 6, 0) },
+        { label: 'Noon', ms: zonedDateTimeMs(dateText, 12, 0) },
+        { label: '6 PM', ms: zonedDateTimeMs(dateText, 18, 0) },
+        { label: 'Midnight', ms: zonedDateTimeMs(addDays(dateText, 1), 0, 0) },
+      ];
+      return ticks
+        .filter(tick => tick.ms >= bounds.startMs && tick.ms <= bounds.endMs)
+        .map(tick => {
+          const x = pad.left + ((tick.ms - bounds.startMs) / (bounds.endMs - bounds.startMs)) * chartW;
+          return `<line class="load-time-tick" x1="${x}" x2="${x}" y1="${height - pad.bottom}" y2="${height - pad.bottom + 5}"></line>
+            <text class="load-label" x="${x}" y="${height - 8}" text-anchor="middle">${tick.label}</text>`;
+        }).join('');
     }
 
     function terminalTable(terminal, trips, allTrips) {
