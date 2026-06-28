@@ -35,6 +35,11 @@
       gap: 1rem;
       margin-bottom: 1rem;
     }
+    .header-links {
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+    }
     h1, h2 {
       margin: 0;
       letter-spacing: 0;
@@ -215,7 +220,10 @@
   <main>
     <header>
       <h1>Admin <span id="app-version" class="app-version"></span></h1>
-      <a href="/">Dashboard</a>
+      <div class="header-links">
+        <a id="tracking-link" class="hidden" href="/admin/tracking">Tracking</a>
+        <a href="/">Dashboard</a>
+      </div>
     </header>
 
     <section>
@@ -317,6 +325,7 @@
     const signedInEl = document.getElementById('signed-in');
     const signInButton = document.getElementById('sign-in');
     const signOutButton = document.getElementById('sign-out');
+    const trackingLink = document.getElementById('tracking-link');
     const messagesPanel = document.getElementById('messages-panel');
     const alertContextPanel = document.getElementById('alert-context-panel');
     const versionEl = document.getElementById('app-version');
@@ -405,6 +414,7 @@
       alertContextPanel.classList.remove('hidden');
       signOutButton.classList.remove('hidden');
       signInButton.classList.add('hidden');
+      trackingLink.classList.remove('hidden');
       setAuthStatus('');
     }
 
@@ -416,6 +426,7 @@
       alertContextPanel.classList.add('hidden');
       signOutButton.classList.add('hidden');
       signInButton.classList.remove('hidden');
+      trackingLink.classList.add('hidden');
       setAuthStatus(message);
     }
 

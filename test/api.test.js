@@ -1756,6 +1756,38 @@ test('analytics endpoint — logs first-seen IPs and splits public/admin view fi
   assert.match(ipLog, new RegExp(publicIp), 'IP log records forwarded client IP');
 });
 
+test('analytics recent endpoint — requires admin auth and returns newest events first', async () => {
+  const blocked = await fetch(`${BASE}/api/analytics/recent`);
+  assert.equal(blocked.status, 401, 'rejects anonymous analytics history reads');
+
+  await fetch(`${BASE}/api/analytics/view`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Forwarded-For': '203.0.113.45',
+    },
+    body: JSON.stringify({
+      event: 'view_start',
+      page: '/tracking-test',
+      sessionId: 'session-recent',
+      viewId: 'view-recent',
+      elapsedMs: 0,
+      userAgent: 'node-test-recent',
+    }),
+  });
+
+  const allowed = await fetch(`${BASE}/api/analytics/recent?limit=20`, {
+    headers: { Authorization: 'Bearer valid-admin-token' },
+  });
+  assert.equal(allowed.status, 200, 'allows admin analytics history reads');
+  const data = await allowed.json();
+  assert.ok(Array.isArray(data.events), 'returns analytics events array');
+  assert.ok(data.events.length > 0, 'returns recent analytics events');
+  assert.ok(data.events.some(event => event.page === '/tracking-test'), 'includes newly logged view');
+  const times = data.events.map(event => Date.parse(event.recordedAt));
+  assert.deepEqual(times, [...times].sort((a, b) => b - a), 'events are sorted newest first');
+});
+
 test('html responses — inject dashboard analytics heartbeat script', async () => {
   for (const path of ['/', '/admin', '/ferry-history', '/bainbridge', '/bainbridge/ferry-history']) {
     const res = await fetch(`${BASE}${path}`);
@@ -1883,6 +1915,8 @@ test('admin page — serves Google-authenticated admin surface', async () => {
   assert.match(html, /accounts\.google\.com\/gsi\/client/, 'loads Google Identity Services');
   assert.doesNotMatch(html, /id="from"/, 'does not expose old email/password-style field');
   assert.match(html, /id="app-version"/, 'shows app version in the admin header');
+  assert.match(html, /id="tracking-link"[^>]+href="\/admin\/tracking"/, 'links to the tracking page from the admin header');
+  assert.match(html, /trackingLink\.classList\.remove\('hidden'\)/, 'shows tracking link only after sign-in');
   assert.match(html, /<h2><button id="sign-in"[^>]*>Sign In<\/button><\/h2>/, 'uses the sign-in title as the compact sign-in control');
   assert.doesNotMatch(html, /renderButton/, 'does not render Google branded sign-in button');
   assert.match(html, /<textarea[^>]+id="text"/, 'has message text field');
@@ -1917,6 +1951,26 @@ test('admin page — serves Google-authenticated admin surface', async () => {
 
   const old = await fetch(`${BASE}/message`);
   assert.equal(old.status, 404, 'old /message link is intentionally gone');
+});
+
+test('tracking page — requires admin session and renders recent analytics UI', async () => {
+  const anonymous = await fetch(`${BASE}/admin/tracking`, { redirect: 'manual' });
+  assert.equal(anonymous.status, 302, 'redirects anonymous users back to admin sign-in');
+  assert.equal(anonymous.headers.get('location'), '/admin', 'anonymous redirect target is admin page');
+
+  const created = await sendJson('/api/admin/session', 'POST', {}, 'valid-admin-token');
+  const cookie = (created.res.headers.get('set-cookie') || '').split(';')[0];
+  const res = await fetch(`${BASE}/admin/tracking`, { headers: { Cookie: cookie } });
+  assert.equal(res.status, 200, 'serves tracking page to signed-in admin');
+  const html = await res.text();
+  assert.match(html, /Whidbey Dashboard Tracking/, 'page is named tracking');
+  assert.match(html, /\/api\/analytics\/recent\?limit=/, 'loads recent analytics events');
+  assert.match(html, /view_heartbeat/, 'has event rendering for hourly heartbeats');
+  assert.match(html, /credentials:\s*'same-origin'/, 'sends admin session cookie with tracking requests');
+
+  const scriptMatch = html.match(/<script[^>]*>([\s\S]*?)<\/script>/);
+  assert.ok(scriptMatch, 'found tracking script block');
+  assert.doesNotThrow(() => new Function(scriptMatch[1]), 'tracking inline JS should parse without syntax errors');
 });
 
 test('ferry history page — serves dated table and time-distance diagram UI', async () => {

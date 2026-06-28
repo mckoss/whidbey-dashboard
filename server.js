@@ -2,7 +2,7 @@ import express from 'express';
 import fetch from 'node-fetch';
 import { OAuth2Client } from 'google-auth-library';
 import morgan from 'morgan';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'fs';
 import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
@@ -391,6 +391,13 @@ async function requireAdmin(req, res, next) {
   }
 }
 
+function requireAdminPage(req, res, next) {
+  const admin = verifyAdminSessionCookie(req);
+  if (!admin) return res.redirect('/admin');
+  req.admin = admin;
+  next();
+}
+
 function loadUserMessages() {
   try {
     if (!existsSync(CONFIG.messageFile)) return [];
@@ -633,6 +640,73 @@ function appendAnalyticsLog(kind, entry) {
   } catch (e) {
     console.warn(`[analytics] could not append ${kind} log: ${e.message}`);
   }
+}
+
+function listAnalyticsLogFiles(dir = CONFIG.analyticsDir) {
+  if (!existsSync(dir)) return [];
+  const files = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const filePath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...listAnalyticsLogFiles(filePath));
+    } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+      files.push(filePath);
+    }
+  }
+  return files;
+}
+
+function readAnalyticsJsonLines(filePath) {
+  try {
+    return readFileSync(filePath, 'utf8')
+      .split('\n')
+      .map(line => line.trim())
+      .filter(Boolean)
+      .map(line => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
+  } catch (e) {
+    console.warn(`[analytics] could not read ${filePath}: ${e.message}`);
+    return [];
+  }
+}
+
+function recentAnalyticsEvents(limit = 200) {
+  const boundedLimit = Math.max(1, Math.min(1000, Number(limit) || 200));
+  const files = listAnalyticsLogFiles()
+    .map(filePath => {
+      try {
+        return { filePath, mtimeMs: statSync(filePath).mtimeMs };
+      } catch {
+        return { filePath, mtimeMs: 0 };
+      }
+    })
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+  const geoByIp = new Map();
+  const events = [];
+  for (const file of files) {
+    for (const event of readAnalyticsJsonLines(file.filePath)) {
+      if (event.event === 'ip_geo' && event.ip && event.geo) geoByIp.set(event.ip, event.geo);
+      events.push({
+        ...event,
+        log: file.filePath.startsWith(CONFIG.analyticsDir)
+          ? file.filePath.slice(CONFIG.analyticsDir.length + 1)
+          : file.filePath,
+      });
+    }
+  }
+  return events
+    .map(event => ({
+      ...event,
+      geo: event.geo || (event.ip ? geoByIp.get(event.ip) || null : null),
+    }))
+    .sort((a, b) => Date.parse(b.recordedAt || '') - Date.parse(a.recordedAt || ''))
+    .slice(0, boundedLimit);
 }
 
 function clientIp(req) {
@@ -1012,6 +1086,10 @@ app.get('/admin', (req, res) => {
   sendHtmlPage(res, 'admin.html');
 });
 
+app.get('/admin/tracking', requireAdminPage, (req, res) => {
+  sendHtmlPage(res, 'tracking.html');
+});
+
 app.get('/api/admin/session', (req, res) => {
   const admin = verifyAdminSessionCookie(req);
   if (!admin) return res.status(401).json({ signedIn: false });
@@ -1047,6 +1125,12 @@ app.post('/api/admin/session', async (req, res) => {
 app.delete('/api/admin/session', (req, res) => {
   clearAdminSessionCookie(req, res);
   res.json({ ok: true });
+});
+
+app.get('/api/analytics/recent', requireAdmin, (req, res) => {
+  res.json({
+    events: recentAnalyticsEvents(req.query.limit),
+  });
 });
 
 app.get('/api/messages', (req, res) => {

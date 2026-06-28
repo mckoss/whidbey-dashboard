@@ -79,6 +79,9 @@ scheduling and CSS color text, and edit WSF alert parenthetical context shown
 after the first matching query substring, including an optional CSS color string
 for matched alert text.
 
+Signed-in admins can open `/admin/tracking` from the admin page to review recent
+dashboard view analytics, newest first.
+
 User messages are separate from WSF ferry alerts in storage and management, but
 they render in the same single-line marquee: WSF alerts first, then user-added
 messages, then the duplicate wrap copy. User messages use the dashboard heading
