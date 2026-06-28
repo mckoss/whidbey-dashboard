@@ -44,6 +44,7 @@ Runtime configuration lives in ignored `config.json`. Copy
   "wsfApiMinIntervalMs": 60000,
   "wsfRawLogDir": "data/wsf-raw",
   "gaMeasurementId": null,
+  "analyticsGeoUrl": "https://ipapi.co/{ip}/json/",
   "googleClientId": "your-google-oauth-client-id.apps.googleusercontent.com",
   "sessionSecret": "replace-with-a-long-random-session-secret",
   "adminUsers": [
@@ -62,6 +63,13 @@ record includes the response timestamp, sanitized call parameters, HTTP status,
 and raw JSON response.
 
 Weather and tides work without any API keys.
+
+Dashboard view analytics are written as append-only JSONL files under
+`dataDir/analytics`. Public views and admin-authenticated views are stored in
+separate files, and first-seen IP addresses are logged under `analytics/ips`.
+The server attempts a best-effort geolocation lookup for public IP addresses
+using `analyticsGeoUrl`; set that value to `null` or an empty string to disable
+geolocation.
 
 ## Admin
 

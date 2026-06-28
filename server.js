@@ -15,6 +15,7 @@ const CONFIG_FILE = resolve(process.env.CONFIG_FILE || join(__dirname, 'config.j
 const pkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8'));
 
 const app = express();
+app.set('trust proxy', true);
 const rootConfig = loadRootConfig();
 const dataDir = resolve(configValue('dataDir', 'data'));
 const configuredSessionSecret = String(configValue('sessionSecret', '')).trim();
@@ -25,6 +26,9 @@ const CONFIG = {
   cacheFile: join(dataDir, 'cache.json'),
   messageFile: join(dataDir, 'messages.json'),
   alertContextFile: join(dataDir, 'alert-context.json'),
+  analyticsDir: join(dataDir, 'analytics'),
+  analyticsSeenIpFile: join(dataDir, 'analytics', 'known-ips.json'),
+  analyticsGeoUrl: String(configValue('analyticsGeoUrl', 'https://ipapi.co/{ip}/json/')).trim(),
   ferryHistoryDir: join(dataDir, 'ferry-history'),
   wsfApiKey: String(configValue('wsfApiKey', '')).trim(),
   wsfApiMinIntervalMs: Number(configValue('wsfApiMinIntervalMs', 60 * 1000)),
@@ -106,6 +110,25 @@ if (!CONFIG.sessionSecretConfigured && process.env.NODE_ENV !== 'test') {
 // ── Request logging (stdout → Railway Log Explorer) ───────────────────
 app.use(morgan('combined'));
 app.use(express.json({ limit: '16kb' }));
+
+app.post('/api/analytics/view', (req, res) => {
+  try {
+    const actorInfo = analyticsAdmin(req);
+    const event = analyticsEventFromBody(req.body);
+    const ip = clientIp(req);
+    recordFirstSeenIp(req, actorInfo);
+    appendAnalyticsLog(actorInfo.actor === 'admin' ? 'admin-views' : 'public-views', {
+      ...event,
+      ip,
+      actor: actorInfo.actor,
+      adminEmail: actorInfo.adminEmail,
+      referrer: String(req.get('referer') || '').slice(0, 240),
+    });
+    res.status(204).end();
+  } catch (e) {
+    res.status(e.statusCode || 400).json({ error: e.message });
+  }
+});
 
 // ── Cache: memory first, persisted for restart/deploy continuity ────────
 const cache = loadPersistentCache();
@@ -569,6 +592,190 @@ function ferryAlertContext(...messageParts) {
   return loadAlertContexts().find(entry => message.includes(entry.query.toLowerCase())) || {};
 }
 
+// ── Analytics: append-only page view and first-seen IP logs ─────────────
+const analyticsSeenIps = loadAnalyticsSeenIps();
+const analyticsGeoLookups = new Map();
+
+function loadAnalyticsSeenIps() {
+  try {
+    if (!existsSync(CONFIG.analyticsSeenIpFile)) return new Set();
+    const parsed = JSON.parse(readFileSync(CONFIG.analyticsSeenIpFile, 'utf8'));
+    return new Set(Array.isArray(parsed) ? parsed.map(ip => String(ip)).filter(Boolean) : []);
+  } catch (e) {
+    console.warn(`[analytics] ignoring known IP file: ${e.message}`);
+    return new Set();
+  }
+}
+
+function writeAnalyticsSeenIps() {
+  try {
+    mkdirSync(dirname(CONFIG.analyticsSeenIpFile), { recursive: true });
+    writeFileSync(CONFIG.analyticsSeenIpFile, JSON.stringify([...analyticsSeenIps].sort(), null, 2));
+  } catch (e) {
+    console.warn(`[analytics] could not persist known IPs: ${e.message}`);
+  }
+}
+
+function analyticsLogDatePath(kind, now = new Date()) {
+  const date = formatCalendarDate(now);
+  const [year, month] = date.split('-');
+  return join(CONFIG.analyticsDir, kind, year, month, `${date}.jsonl`);
+}
+
+function appendAnalyticsLog(kind, entry) {
+  try {
+    const file = analyticsLogDatePath(kind);
+    mkdirSync(dirname(file), { recursive: true });
+    appendFileSync(file, `${JSON.stringify({
+      recordedAt: new Date().toISOString(),
+      ...entry,
+    })}\n`);
+  } catch (e) {
+    console.warn(`[analytics] could not append ${kind} log: ${e.message}`);
+  }
+}
+
+function clientIp(req) {
+  const forwarded = String(req.get('x-forwarded-for') || '')
+    .split(',')
+    .map(part => part.trim())
+    .find(Boolean);
+  const raw = forwarded || req.ip || req.socket?.remoteAddress || '';
+  return raw.replace(/^::ffff:/, '');
+}
+
+function isPrivateIp(ip) {
+  if (!ip || ip === '::1' || ip === '127.0.0.1' || ip === 'localhost') return true;
+  if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.|169\.254\.)/.test(ip)) return true;
+  if (/^(fc|fd|fe80):/i.test(ip)) return true;
+  return false;
+}
+
+function analyticsAdmin(req) {
+  const admin = verifyAdminSessionCookie(req);
+  return admin ? { actor: 'admin', adminEmail: admin.email } : { actor: 'public', adminEmail: null };
+}
+
+function sanitizeAnalyticsPath(value) {
+  const text = String(value || '').trim().slice(0, 240);
+  return text.startsWith('/') ? text : '/';
+}
+
+function sanitizeAnalyticsId(value) {
+  return String(value || '').trim().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80);
+}
+
+function analyticsEventFromBody(body = {}) {
+  const event = String(body.event || '').trim();
+  if (!['view_start', 'view_heartbeat', 'view_end'].includes(event)) {
+    const error = new Error('Unsupported analytics event.');
+    error.statusCode = 400;
+    throw error;
+  }
+  return {
+    event,
+    page: sanitizeAnalyticsPath(body.page),
+    sessionId: sanitizeAnalyticsId(body.sessionId),
+    viewId: sanitizeAnalyticsId(body.viewId),
+    elapsedMs: Math.max(0, Math.min(30 * 24 * 60 * 60 * 1000, Number(body.elapsedMs) || 0)),
+    userAgent: String(body.userAgent || '').slice(0, 240),
+  };
+}
+
+async function geolocateIp(ip) {
+  if (!CONFIG.analyticsGeoUrl || isPrivateIp(ip)) return null;
+  const url = CONFIG.analyticsGeoUrl.replace('{ip}', encodeURIComponent(ip));
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 1500);
+  try {
+    const res = await fetch(url, { signal: controller.signal, headers: { Accept: 'application/json' } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return {
+      city: data.city || null,
+      region: data.region || data.region_code || null,
+      country: data.country_name || data.country || null,
+      latitude: typeof data.latitude === 'number' ? data.latitude : null,
+      longitude: typeof data.longitude === 'number' ? data.longitude : null,
+      org: data.org || data.asn || null,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function recordFirstSeenIp(req, actorInfo) {
+  const ip = clientIp(req);
+  if (!ip || analyticsSeenIps.has(ip)) return;
+  analyticsSeenIps.add(ip);
+  writeAnalyticsSeenIps();
+  appendAnalyticsLog('ips', {
+    event: 'ip_seen',
+    ip,
+    privateIp: isPrivateIp(ip),
+    actor: actorInfo.actor,
+    adminEmail: actorInfo.adminEmail,
+    userAgent: String(req.get('user-agent') || '').slice(0, 240),
+  });
+  if (isPrivateIp(ip) || analyticsGeoLookups.has(ip)) return;
+  const lookup = geolocateIp(ip)
+    .then(geo => appendAnalyticsLog('ips', {
+      event: 'ip_geo',
+      ip,
+      geo,
+    }))
+    .catch(e => appendAnalyticsLog('ips', {
+      event: 'ip_geo_error',
+      ip,
+      error: e.message,
+    }))
+    .finally(() => analyticsGeoLookups.delete(ip));
+  analyticsGeoLookups.set(ip, lookup);
+}
+
+function analyticsScriptHtml() {
+  return `<script>
+(() => {
+  const endpoint = '/api/analytics/view';
+  const sessionKey = 'whidbey-dashboard-analytics-session';
+  let sessionId = localStorage.getItem(sessionKey);
+  if (!sessionId) {
+    sessionId = crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + '-' + Math.random().toString(36).slice(2);
+    localStorage.setItem(sessionKey, sessionId);
+  }
+  const viewId = crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + '-' + Math.random().toString(36).slice(2);
+  const startedAt = Date.now();
+  function payload(event) {
+    return JSON.stringify({
+      event,
+      page: location.pathname + location.search.slice(0, 200),
+      sessionId,
+      viewId,
+      elapsedMs: Date.now() - startedAt,
+      userAgent: navigator.userAgent
+    });
+  }
+  function send(event, beacon = false) {
+    const body = payload(event);
+    if (beacon && navigator.sendBeacon) {
+      navigator.sendBeacon(endpoint, new Blob([body], { type: 'application/json' }));
+      return;
+    }
+    fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, credentials: 'same-origin', keepalive: beacon }).catch(() => {});
+  }
+  send('view_start');
+  setInterval(() => send('view_heartbeat'), 60 * 60 * 1000);
+  addEventListener('pagehide', () => send('view_end', true));
+})();
+</script>`;
+}
+
+function injectAnalyticsScript(html) {
+  if (html.includes('/api/analytics/view')) return html;
+  const script = analyticsScriptHtml();
+  return html.includes('</body>') ? html.replace('</body>', `${script}\n</body>`) : `${html}\n${script}`;
+}
+
 // ── Fetch with retry ────────────────────────────────────────────────────
 async function fetchWithRetry(url, options = {}, retries = 1) {
   try {
@@ -764,6 +971,33 @@ function noCacheHtmlResponses(res) {
   res.set('Expires', '0');
 }
 
+function sendHtmlPage(res, fileName, options = {}) {
+  let html = readFileSync(join(__dirname, 'public', fileName), 'utf8');
+  if (options.route) {
+    const routeScript = `<script>window.__FERRY_ROUTE__=${JSON.stringify(ferryRouteClientConfig(options.route))};</script>`;
+    const moduleScriptTag = '<script type="module">';
+    if (html.includes(moduleScriptTag)) {
+      html = html.replace(moduleScriptTag, `${routeScript}\n${moduleScriptTag}`);
+    } else {
+      html = html.replace('<script>', `${routeScript}\n  <script>`);
+    }
+  }
+  noCacheHtmlResponses(res);
+  res.type('html').send(injectAnalyticsScript(html));
+}
+
+app.get(['/', '/index.html'], (req, res) => {
+  sendHtmlPage(res, 'index.html');
+});
+
+app.get('/ferry-history.html', (req, res) => {
+  sendHtmlPage(res, 'ferry-history.html');
+});
+
+app.get('/admin.html', (req, res) => {
+  sendHtmlPage(res, 'admin.html');
+});
+
 app.use(express.static(join(__dirname, 'public'), {
   setHeaders(res, filePath) {
     if (filePath.endsWith('.html')) noCacheHtmlResponses(res);
@@ -771,20 +1005,11 @@ app.use(express.static(join(__dirname, 'public'), {
 }));
 
 function sendRoutePage(res, fileName, route) {
-  const html = readFileSync(join(__dirname, 'public', fileName), 'utf8');
-  const routeScript = `<script>window.__FERRY_ROUTE__=${JSON.stringify(ferryRouteClientConfig(route))};</script>`;
-  const moduleScriptTag = '<script type="module">';
-  noCacheHtmlResponses(res);
-  if (html.includes(moduleScriptTag)) {
-    res.type('html').send(html.replace(moduleScriptTag, `${routeScript}\n${moduleScriptTag}`));
-    return;
-  }
-  res.type('html').send(html.replace('<script>', `${routeScript}\n  <script>`));
+  sendHtmlPage(res, fileName, { route });
 }
 
 app.get('/admin', (req, res) => {
-  noCacheHtmlResponses(res);
-  res.sendFile(join(__dirname, 'public', 'admin.html'));
+  sendHtmlPage(res, 'admin.html');
 });
 
 app.get('/api/admin/session', (req, res) => {
@@ -3138,8 +3363,7 @@ app.get('/api/bainbridge/ferry/history', ferryHistoryEndpoint(FERRY_ROUTES.bainb
 app.get('/api/bainbridge/ferry/departures', ferryDeparturesEndpoint(FERRY_ROUTES.bainbridge));
 
 app.get('/ferry-history', (req, res) => {
-  noCacheHtmlResponses(res);
-  res.sendFile(join(__dirname, 'public', 'ferry-history.html'));
+  sendHtmlPage(res, 'ferry-history.html');
 });
 
 app.get('/bainbridge', (req, res) => {

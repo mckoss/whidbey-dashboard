@@ -13,6 +13,7 @@
   "wsfRawLogDir": "data/wsf-raw",
   "ferryHistorySampleMs": 60000,
   "ferryHistoryDayStartHour": 2,
+  "analyticsGeoUrl": "https://ipapi.co/{ip}/json/",
   "gaMeasurementId": null,
   "googleClientId": "your-google-oauth-client-id.apps.googleusercontent.com",
   "sessionSecret": "replace-with-a-long-random-session-secret",

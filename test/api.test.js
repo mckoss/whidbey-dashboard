@@ -34,6 +34,7 @@ before(async () => {
       'valid-admin-token': 'mike@example.com',
       'unauthorized-admin-token': 'someone@example.com',
     },
+    analyticsGeoUrl: '',
     sessionSecret: 'test-session-secret-for-admin-cookies',
   }, null, 2));
 
@@ -1321,10 +1322,10 @@ test('ferry/departures endpoint — newly docked vessel waits for terminal turna
 });
 
 test('ferry/departures endpoint — still-docked vessel keeps a future departure floor after dwell estimate expires', async () => {
-  const historyDate = '2026-06-28';
-  const sampledAtMs = Date.UTC(2026, 5, 28, 16, 0);
-  const dockArrivalMs = Date.UTC(2026, 5, 28, 15, 40);
-  const m1545 = Date.UTC(2026, 5, 28, 15, 45);
+  const historyDate = '2026-07-07';
+  const sampledAtMs = Date.UTC(2026, 6, 7, 16, 0);
+  const dockArrivalMs = Date.UTC(2026, 6, 7, 15, 40);
+  const m1545 = Date.UTC(2026, 6, 7, 15, 45);
   const expectedDepartureMs = sampledAtMs + 60 * 1000;
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
@@ -1334,7 +1335,7 @@ test('ferry/departures endpoint — still-docked vessel keeps a future departure
     sampledAtMs,
     vesselSamples: [
       ferryTestSample(dockArrivalMs, 'Tokitae', 68, 1, { arrivingTerminalId: 14, atDock: true }),
-      ferryTestSample(Date.UTC(2026, 5, 28, 15, 50), 'Tokitae', 68, 1, { arrivingTerminalId: 14, atDock: true }),
+      ferryTestSample(Date.UTC(2026, 6, 7, 15, 50), 'Tokitae', 68, 1, { arrivingTerminalId: 14, atDock: true }),
       ferryTestSample(sampledAtMs, 'Tokitae', 68, 1, { arrivingTerminalId: 14, atDock: true }),
     ],
     currentVessels: [],
@@ -1702,6 +1703,67 @@ test('admin session endpoint — persists Google admin auth in a 30-day HttpOnly
   const signedOut = await sendJson('/api/admin/session', 'DELETE', {}, '', cookie);
   assert.equal(signedOut.res.status, 200, 'sign out endpoint succeeds');
   assert.match(signedOut.res.headers.get('set-cookie') || '', /whidbey_admin_session=;/, 'sign out clears session cookie in the browser');
+});
+
+test('analytics endpoint — logs first-seen IPs and splits public/admin view files', async () => {
+  const publicIp = '203.0.113.44';
+  const publicRes = await fetch(`${BASE}/api/analytics/view`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Forwarded-For': publicIp,
+    },
+    body: JSON.stringify({
+      event: 'view_start',
+      page: '/',
+      sessionId: 'session-public',
+      viewId: 'view-public',
+      elapsedMs: 0,
+      userAgent: 'node-test-public',
+    }),
+  });
+  assert.equal(publicRes.status, 204, 'public analytics event is accepted');
+
+  const created = await sendJson('/api/admin/session', 'POST', {}, 'valid-admin-token');
+  const cookie = (created.res.headers.get('set-cookie') || '').split(';')[0];
+  const adminRes = await fetch(`${BASE}/api/analytics/view`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Cookie': cookie,
+      'X-Forwarded-For': '198.51.100.88',
+    },
+    body: JSON.stringify({
+      event: 'view_heartbeat',
+      page: '/admin',
+      sessionId: 'session-admin',
+      viewId: 'view-admin',
+      elapsedMs: 60 * 60 * 1000,
+      userAgent: 'node-test-admin',
+    }),
+  });
+  assert.equal(adminRes.status, 204, 'admin analytics event is accepted');
+
+  const [year, month, day] = pacificDate().split('-');
+  const publicLog = await readFile(join(dataDir, 'analytics', 'public-views', year, month, `${year}-${month}-${day}.jsonl`), 'utf8');
+  const adminLog = await readFile(join(dataDir, 'analytics', 'admin-views', year, month, `${year}-${month}-${day}.jsonl`), 'utf8');
+  const ipLog = await readFile(join(dataDir, 'analytics', 'ips', year, month, `${year}-${month}-${day}.jsonl`), 'utf8');
+  assert.match(publicLog, /"event":"view_start"/, 'writes public view start events');
+  assert.match(publicLog, /"actor":"public"/, 'public view file marks public actor');
+  assert.match(adminLog, /"event":"view_heartbeat"/, 'writes admin heartbeat events');
+  assert.match(adminLog, /"adminEmail":"mike@example.com"/, 'admin view file includes admin email');
+  assert.match(ipLog, /"event":"ip_seen"/, 'writes first-seen IP events');
+  assert.match(ipLog, new RegExp(publicIp), 'IP log records forwarded client IP');
+});
+
+test('html responses — inject dashboard analytics heartbeat script', async () => {
+  for (const path of ['/', '/admin', '/ferry-history', '/bainbridge', '/bainbridge/ferry-history']) {
+    const res = await fetch(`${BASE}${path}`);
+    assert.equal(res.status, 200, `${path} returns HTML`);
+    const html = await res.text();
+    assert.match(html, /\/api\/analytics\/view/, `${path} includes analytics endpoint`);
+    assert.match(html, /view_heartbeat/, `${path} includes hourly heartbeat event`);
+  }
 });
 
 test('alert-contexts endpoint — Google-authorized admins can manage ferry alert parentheticals', async () => {
