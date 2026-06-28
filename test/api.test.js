@@ -613,6 +613,74 @@ test('ferry/departures endpoint — exposes server-confirmed actual departures b
   assert.equal(d.vesselCorrections[correctionKey].basis, 'recent-gps-chain', 'labels vessel corrections separately from departed sailings');
 });
 
+test('ferry/departure-metrics endpoint — returns prediction error series from recorded snapshots', async () => {
+  const historyDate = '2026-06-05';
+  const scheduledDepartureMs = Date.UTC(2026, 5, 5, 16, 0);
+  const actualDepartureMs = scheduledDepartureMs + 5 * 60 * 1000;
+  const sampleMs = actualDepartureMs - 45 * 60 * 1000;
+  const historyDir = join(dataDir, 'ferry-history');
+  await mkdir(historyDir, { recursive: true });
+  await writeFerryHistoryFixture(historyDir, historyDate, {
+    date: historyDate,
+    generatedAt: new Date(actualDepartureMs + 20 * 60 * 1000).toISOString(),
+    sampledAtMs: actualDepartureMs + 20 * 60 * 1000,
+    trips: [ferryTestTrip(historyDate, 'clinton-to-mukilteo', 5, 14, scheduledDepartureMs, {
+      actualDepartureMs,
+      arrivalMs: actualDepartureMs + 20 * 60 * 1000,
+      arrivalBasis: 'gps-observed-terminal',
+      vesselName: 'Suquamish',
+      vesselId: 123,
+    })],
+    predictionSnapshots: [{
+      observedAt: new Date(sampleMs).toISOString(),
+      observedAtMs: sampleMs,
+      modelVersion: '1.23.0',
+      routeKey: 'whidbey',
+      entries: [{
+        key: `5:${scheduledDepartureMs}`,
+        direction: 'clinton-to-mukilteo',
+        fromTerminalId: 5,
+        toTerminalId: 14,
+        scheduledDepartureMs,
+        modelProjectedDepartureMs: scheduledDepartureMs + 8 * 60 * 1000,
+        modelStatus: 'projected',
+        modelTimingSource: 'gps-vessel-state',
+        modelVesselName: 'Suquamish',
+        modelEtaMs: scheduledDepartureMs - 2 * 60 * 1000,
+        modelTurnaroundMs: 10 * 60 * 1000,
+        wsfScheduledDepartureMs: scheduledDepartureMs,
+        wsfEtaMs: scheduledDepartureMs - 3 * 60 * 1000,
+        wsfVesselName: 'Suquamish',
+      }],
+    }],
+    vesselSamples: [],
+    currentVessels: [],
+  });
+
+  const d = await getJson(`/api/ferry/departure-metrics?date=${historyDate}`);
+  assert.equal(d.date, historyDate, 'metrics date matches request');
+  assert.equal(d.snapshotCount, 1, 'reports retained prediction snapshot count');
+  assert.equal(d.series.length, 1, 'returns one trip series');
+  assert.equal(d.series[0].fromTerminalName, 'Clinton', 'series carries terminal label');
+  assert.equal(d.series[0].points.length, 1, 'returns one prediction sample');
+  assert.equal(d.series[0].points[0].minutesBeforeDeparture, 45, 'x-axis is minutes before actual departure');
+  assert.equal(d.series[0].points[0].modelErrorMinutes, 3, 'model error is projected minus actual departure');
+  assert.equal(d.series[0].points[0].wsfScheduleErrorMinutes, -5, 'WSF schedule error is scheduled minus actual departure');
+  assert.equal(d.series[0].points[0].modelTimingSource, 'gps-vessel-state', 'keeps model basis for tooltips and analysis');
+
+  const source = await readFile(join(__dirname, '../server.js'), 'utf8');
+  assert.match(source, /predictionSnapshots: mergeFerryPredictionSnapshots/, 'records prediction snapshots in the durable history day');
+  assert.match(source, /function ferryDepartureMetricsPayload/, 'has a dedicated metrics payload builder');
+  assert.match(source, /app\.get\('\/api\/ferry\/departure-metrics'/, 'registers the Whidbey metrics endpoint');
+  assert.match(source, /app\.get\('\/api\/bainbridge\/ferry\/departure-metrics'/, 'registers the Bainbridge metrics endpoint');
+
+  const html = await readFile(join(__dirname, '../public/ferry-history.html'), 'utf8');
+  assert.match(html, /Departure Estimate Error/, 'history page includes the estimate-error section');
+  assert.match(html, /departure-metrics/, 'history page fetches the metrics API');
+  assert.match(html, /modelErrorMinutes/, 'history chart draws model error series');
+  assert.match(html, /wsfScheduleErrorMinutes/, 'history chart draws WSF schedule error series');
+});
+
 test('ferry/departures endpoint — GPS-chain corrections never assign one vessel to simultaneous terminal departures', async () => {
   const historyDate = '2026-06-24';
   const sampledAtMs = Date.UTC(2026, 5, 24, 22, 15);

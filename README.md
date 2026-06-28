@@ -196,6 +196,12 @@ folders such as `data/ferry-history/2026/06/2026-06-20.json`. There is no
 automated history cleanup; manually remove old files from the data volume if
 you want to reclaim space.
 
+Each ferry-history sample also stores the dashboard model's departure
+projection for visible upcoming sailings. The history page uses those snapshots
+to chart departure-estimate error for each recorded trip: minutes before actual
+departure on the x-axis and prediction error in minutes on the y-axis, with the
+dashboard model and WSF scheduled departure shown together for comparison.
+
 Cache files are written to `dataDir` in `config.json`, or local `./data` when
 `dataDir` is omitted. For Railway persistence across deploys, mount a Railway
 Volume at `/app/data` and set `"dataDir": "/app/data"` in `config.json`; local
@@ -222,6 +228,7 @@ Each card shows an inline age tag after the title. Thresholds are per-source:
 | `GET /api/ferry/clinton/space` | Drive-up space by departure (Clinton) |
 | `GET /api/ferry/mukilteo/space` | Drive-up space by departure (Mukilteo) |
 | `GET /api/ferry` | Legacy alias for `/api/ferry/clinton` |
+| `GET /api/ferry/departure-metrics` | Departure prediction error series for the history page |
 | `GET /api/messages` | Active user-managed crawl messages; admins may pass `?includeInactive=1` |
 | `POST /api/messages` | Add a user-managed crawl message, with optional `startDate`/`endDate`/`color` (Google admin auth required) |
 | `PUT /api/messages/:id` | Update a user-managed crawl message, including optional `startDate`/`endDate`/`color` (Google admin auth required) |
