@@ -678,6 +678,10 @@ function readAnalyticsJsonLines(filePath) {
 
 function recentAnalyticsEvents(limit = 200) {
   const boundedLimit = Math.max(1, Math.min(1000, Number(limit) || 200));
+  return allAnalyticsEvents().slice(0, boundedLimit);
+}
+
+function allAnalyticsEvents() {
   const files = listAnalyticsLogFiles()
     .map(filePath => {
       try {
@@ -705,8 +709,49 @@ function recentAnalyticsEvents(limit = 200) {
       ...event,
       geo: event.geo || (event.ip ? geoByIp.get(event.ip) || null : null),
     }))
-    .sort((a, b) => Date.parse(b.recordedAt || '') - Date.parse(a.recordedAt || ''))
-    .slice(0, boundedLimit);
+    .sort((a, b) => Date.parse(b.recordedAt || '') - Date.parse(a.recordedAt || ''));
+}
+
+function currentAnalyticsConnections(nowMs = Date.now()) {
+  const CONNECTION_STALE_MS = 75 * 60 * 1000;
+  const byView = new Map();
+  for (const event of allAnalyticsEvents()) {
+    if (!event.viewId || !['view_start', 'view_heartbeat', 'view_end'].includes(event.event)) continue;
+    const recordedMs = Date.parse(event.recordedAt || '');
+    if (!Number.isFinite(recordedMs)) continue;
+    const existing = byView.get(event.viewId) || { first: event, last: event, firstMs: recordedMs, lastMs: recordedMs };
+    if (recordedMs < existing.firstMs) {
+      existing.first = event;
+      existing.firstMs = recordedMs;
+    }
+    if (recordedMs > existing.lastMs) {
+      existing.last = event;
+      existing.lastMs = recordedMs;
+    }
+    byView.set(event.viewId, existing);
+  }
+
+  const connections = [...byView.values()]
+    .filter(view => view.last.event !== 'view_end' && nowMs - view.lastMs <= CONNECTION_STALE_MS)
+    .map(view => ({
+      viewId: view.last.viewId,
+      sessionId: view.last.sessionId || view.first.sessionId || '',
+      page: view.last.page || view.first.page || '',
+      ip: view.last.ip || view.first.ip || '',
+      actor: view.last.actor || view.first.actor || 'public',
+      adminEmail: view.last.adminEmail || view.first.adminEmail || null,
+      startedAt: view.first.recordedAt,
+      lastSeenAt: view.last.recordedAt,
+      durationMs: Math.max(Number(view.last.elapsedMs) || 0, nowMs - view.firstMs),
+      userAgent: view.last.userAgent || view.first.userAgent || '',
+    }))
+    .sort((a, b) => Date.parse(b.lastSeenAt || '') - Date.parse(a.lastSeenAt || ''));
+
+  return {
+    count: connections.length,
+    listed: connections.length < 10,
+    connections: connections.length < 10 ? connections : [],
+  };
 }
 
 function clientIp(req) {
@@ -1129,6 +1174,7 @@ app.delete('/api/admin/session', (req, res) => {
 
 app.get('/api/analytics/recent', requireAdmin, (req, res) => {
   res.json({
+    currentConnections: currentAnalyticsConnections(),
     events: recentAnalyticsEvents(req.query.limit),
   });
 });

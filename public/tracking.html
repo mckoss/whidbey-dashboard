@@ -81,6 +81,34 @@
       gap: 0.6rem;
       margin-top: 1rem;
     }
+    .connection-summary {
+      display: grid;
+      gap: 0.45rem;
+      margin-top: 1rem;
+      padding: 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 0.45rem;
+      background: rgba(255,255,255,0.025);
+    }
+    .connection-count {
+      color: var(--accent);
+      font-weight: 700;
+    }
+    .connection-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+    }
+    .connection-chip {
+      display: inline-flex;
+      gap: 0.35rem;
+      align-items: center;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 0.18rem 0.5rem;
+      color: var(--text);
+      font-size: 0.82rem;
+    }
     .event-row {
       display: grid;
       grid-template-columns: minmax(10rem, 0.9fr) minmax(8rem, 0.65fr) minmax(10rem, 1fr) minmax(7rem, 0.55fr) minmax(9rem, 0.65fr) minmax(12rem, 1fr);
@@ -162,6 +190,9 @@
         </div>
         <div id="status" class="status" role="status"></div>
       </div>
+      <div id="connections" class="connection-summary">
+        <div class="connection-count">Current connections: loading...</div>
+      </div>
       <div class="event-list">
         <div class="event-row header">
           <div>Time</div>
@@ -179,6 +210,7 @@
   <script>
     const eventsEl = document.getElementById('events');
     const statusEl = document.getElementById('status');
+    const connectionsEl = document.getElementById('connections');
     const refreshButton = document.getElementById('refresh');
     const limitEl = document.getElementById('limit');
 
@@ -253,6 +285,30 @@
       </div>`;
     }
 
+    function renderConnection(connection = {}) {
+      const duration = formatDuration(connection.durationMs);
+      const page = connection.page ? ` ${connection.page}` : '';
+      return `<span class="connection-chip">
+        <span>${escapeHtml(connection.ip || 'unknown IP')}</span>
+        <span class="dim">${escapeHtml(duration)}${escapeHtml(page)}</span>
+      </span>`;
+    }
+
+    function renderConnections(current = {}) {
+      const count = Number(current.count) || 0;
+      const connections = Array.isArray(current.connections) ? current.connections : [];
+      const summary = `<div class="connection-count">Current connections: ${count}</div>`;
+      if (count === 0) {
+        connectionsEl.innerHTML = `${summary}<div class="dim">No active dashboard views seen in the last 75 minutes.</div>`;
+        return;
+      }
+      if (!current.listed) {
+        connectionsEl.innerHTML = `${summary}<div class="dim">Active connection list hidden while count is 10 or higher.</div>`;
+        return;
+      }
+      connectionsEl.innerHTML = `${summary}<div class="connection-list">${connections.map(renderConnection).join('')}</div>`;
+    }
+
     async function loadEvents() {
       statusEl.textContent = 'Loading...';
       statusEl.classList.remove('error');
@@ -269,6 +325,7 @@
           throw new Error(`HTTP ${res.status}`);
         }
         const data = await res.json();
+        renderConnections(data.currentConnections || {});
         const events = Array.isArray(data.events) ? data.events : [];
         eventsEl.innerHTML = events.length ? events.map(renderEvent).join('') : '<div class="empty">No tracking events yet.</div>';
         statusEl.textContent = `Loaded ${events.length} events.`;

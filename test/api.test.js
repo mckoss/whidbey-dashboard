@@ -1760,6 +1760,7 @@ test('analytics recent endpoint — requires admin auth and returns newest event
   const blocked = await fetch(`${BASE}/api/analytics/recent`);
   assert.equal(blocked.status, 401, 'rejects anonymous analytics history reads');
 
+  const activeViewId = 'view-active-current';
   await fetch(`${BASE}/api/analytics/view`, {
     method: 'POST',
     headers: {
@@ -1770,9 +1771,39 @@ test('analytics recent endpoint — requires admin auth and returns newest event
       event: 'view_start',
       page: '/tracking-test',
       sessionId: 'session-recent',
-      viewId: 'view-recent',
+      viewId: activeViewId,
       elapsedMs: 0,
       userAgent: 'node-test-recent',
+    }),
+  });
+  await fetch(`${BASE}/api/analytics/view`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Forwarded-For': '203.0.113.46',
+    },
+    body: JSON.stringify({
+      event: 'view_start',
+      page: '/tracking-ended',
+      sessionId: 'session-ended',
+      viewId: 'view-ended-current',
+      elapsedMs: 0,
+      userAgent: 'node-test-ended',
+    }),
+  });
+  await fetch(`${BASE}/api/analytics/view`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Forwarded-For': '203.0.113.46',
+    },
+    body: JSON.stringify({
+      event: 'view_end',
+      page: '/tracking-ended',
+      sessionId: 'session-ended',
+      viewId: 'view-ended-current',
+      elapsedMs: 2000,
+      userAgent: 'node-test-ended',
     }),
   });
 
@@ -1786,6 +1817,12 @@ test('analytics recent endpoint — requires admin auth and returns newest event
   assert.ok(data.events.some(event => event.page === '/tracking-test'), 'includes newly logged view');
   const times = data.events.map(event => Date.parse(event.recordedAt));
   assert.deepEqual(times, [...times].sort((a, b) => b - a), 'events are sorted newest first');
+  assert.ok(data.currentConnections.count >= 1, 'returns active connection count');
+  assert.equal(data.currentConnections.listed, true, 'enumerates small active connection sets');
+  assert.ok(data.currentConnections.connections.some(connection => connection.viewId === activeViewId && connection.ip === '203.0.113.45'),
+    'lists active connection IPs');
+  assert.ok(!data.currentConnections.connections.some(connection => connection.viewId === 'view-ended-current'),
+    'does not list ended connections as current');
 });
 
 test('html responses — inject dashboard analytics heartbeat script', async () => {
@@ -1965,6 +2002,8 @@ test('tracking page — requires admin session and renders recent analytics UI',
   const html = await res.text();
   assert.match(html, /Whidbey Dashboard Tracking/, 'page is named tracking');
   assert.match(html, /\/api\/analytics\/recent\?limit=/, 'loads recent analytics events');
+  assert.match(html, /Current connections:/, 'renders current connection summary');
+  assert.match(html, /connection-chip/, 'can enumerate current connection IPs when fewer than 10');
   assert.match(html, /view_heartbeat/, 'has event rendering for hourly heartbeats');
   assert.match(html, /credentials:\s*'same-origin'/, 'sends admin session cookie with tracking requests');
 
