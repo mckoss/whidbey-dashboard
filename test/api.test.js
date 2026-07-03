@@ -58,8 +58,75 @@ function testWeatherPayload() {
   };
 }
 
+function testNwsHourlyPayload() {
+  const periods = [];
+  const entries = [
+    ['2026-07-02T12:00:00-07:00', 68, '7 mph', 'WSW', 'Mostly Sunny', 5, 58],
+    ['2026-07-02T13:00:00-07:00', 70, '8 mph', 'WSW', 'Partly Sunny', 7, 56],
+    ['2026-07-02T14:00:00-07:00', 72, '9 mph', 'W', 'Partly Sunny', 10, 54],
+    ['2026-07-02T15:00:00-07:00', 71, '8 mph', 'W', 'Partly Sunny', 12, 55],
+    ['2026-07-02T16:00:00-07:00', 69, '6 mph', 'W', 'Mostly Cloudy', 15, 60],
+    ['2026-07-03T12:00:00-07:00', 69, '11 mph', 'SW', 'Mostly Cloudy', 15, 62],
+    ['2026-07-03T13:00:00-07:00', 66, '10 mph', 'SW', 'Light Rain', 30, 70],
+    ['2026-07-04T12:00:00-07:00', 70, '8 mph', 'NW', 'Sunny', 2, 55],
+    ['2026-07-04T13:00:00-07:00', 67, '7 mph', 'NW', 'Sunny', 1, 57],
+  ];
+  for (const [startTime, temperature, windSpeed, windDirection, shortForecast, precip, humidity] of entries) {
+    periods.push({
+      startTime,
+      temperature,
+      windSpeed,
+      windDirection,
+      shortForecast,
+      probabilityOfPrecipitation: { value: precip },
+      relativeHumidity: { value: humidity },
+    });
+  }
+  return { properties: { generatedAt: '2026-07-02T19:00:00Z', periods } };
+}
+
+function testNwsObservationPayload() {
+  return {
+    properties: {
+      timestamp: '2026-07-02T19:00:00Z',
+      textDescription: 'Partly Sunny',
+      temperature: { value: 20 },
+      windSpeed: { value: 11.265 },
+      windDirection: { value: 250 },
+      relativeHumidity: { value: 58 },
+    },
+  };
+}
+
 async function startWeatherFixture() {
   weatherServer = createServer((req, res) => {
+    if (req.url?.startsWith('/points/')) {
+      res.writeHead(200, { 'Content-Type': 'application/geo+json' });
+      res.end(JSON.stringify({
+        properties: {
+          forecastHourly: `${weatherBaseUrl}/gridpoints/SEW/127,85/forecast/hourly`,
+          observationStations: `${weatherBaseUrl}/gridpoints/SEW/127,85/stations`,
+        },
+      }));
+      return;
+    }
+    if (req.url === '/gridpoints/SEW/127,85/forecast/hourly') {
+      res.writeHead(200, { 'Content-Type': 'application/geo+json' });
+      res.end(JSON.stringify(testNwsHourlyPayload()));
+      return;
+    }
+    if (req.url === '/gridpoints/SEW/127,85/stations') {
+      res.writeHead(200, { 'Content-Type': 'application/geo+json' });
+      res.end(JSON.stringify({
+        features: [{ id: `${weatherBaseUrl}/stations/KTEST`, properties: { stationIdentifier: 'KTEST' } }],
+      }));
+      return;
+    }
+    if (req.url === '/stations/KTEST/observations/latest') {
+      res.writeHead(200, { 'Content-Type': 'application/geo+json' });
+      res.end(JSON.stringify(testNwsObservationPayload()));
+      return;
+    }
     if (!req.url?.startsWith('/v1/forecast')) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'not found' }));
@@ -82,6 +149,7 @@ before(async () => {
   await writeFile(configFile, JSON.stringify({
     port: 3001,
     dataDir,
+    nwsBaseUrl: weatherBaseUrl,
     openMeteoBaseUrl: weatherBaseUrl,
     googleClientId: 'test-google-client-id',
     adminUsers: ['mike@example.com'],
@@ -179,6 +247,8 @@ function pacificOperationalDate(date = new Date()) {
 test('weather endpoint — returns current temperature and 3-day forecast', async () => {
   const d = await getJson('/api/weather');
 
+  assert.equal(d.source, 'NWS', 'uses NWS as the primary weather source');
+
   // current conditions
   assert.ok(d.current, 'has current object');
   assert.ok(typeof d.current.temperature_2m === 'number', 'current.temperature_2m is a number');
@@ -194,6 +264,10 @@ test('weather endpoint — returns current temperature and 3-day forecast', asyn
   assert.ok(Array.isArray(d.daily.temperature_2m_min), 'daily.temperature_2m_min is array');
   assert.ok(d.daily.temperature_2m_max[0] >= d.daily.temperature_2m_min[0],
     'daily max >= daily min');
+  assert.match(d.daily.sunrise[0], /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}-\d{2}:\d{2}$/,
+    'daily sunrise is a timestamp with explicit Pacific offset');
+  assert.match(d.daily.sunset[0], /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}-\d{2}:\d{2}$/,
+    'daily sunset is a timestamp with explicit Pacific offset');
 });
 
 test('tides endpoint — returns predictions array with H/L types', async () => {

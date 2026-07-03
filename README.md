@@ -7,8 +7,8 @@ See the hosted version at [whidbey-dashboard.mckoss.com](https://whidbey-dashboa
 ## Features
 
 - 🕐 Real-time digital clock (12-hour, am/pm)
-- 🌤 3-day weather forecast with current conditions (Open-Meteo)
-- 🌅 Sunrise & sunset times (from Open-Meteo daily data, shown in weather card header)
+- 🌤 3-day weather forecast with current conditions (NWS primary, Open-Meteo fallback)
+- 🌅 Sunrise & sunset times (calculated locally, shown in weather card header)
 - 🌕 Moon phase display — SVG rendered client-side with pure geometry, no images
 - 🌊 Tide predictions — hi/lo table + sparkline + thermometer (NOAA Hansville station)
 - ⛴ Bidirectional ferry: Clinton→Mukilteo and Mukilteo→Clinton, with live space occupancy
@@ -179,7 +179,7 @@ even if another Google account successfully signs in.
 
 | Data | Source | API Key | Client Refresh | Server Cache |
 |------|--------|---------|---------------|-------------|
-| Weather | [Open-Meteo](https://open-meteo.com) | No | 1 hour | 1 hour |
+| Weather | [NWS API](https://api.weather.gov) primary, [Open-Meteo](https://open-meteo.com) fallback | No | 1 hour | 1 hour |
 | Tides (hi/lo) | [NOAA CO-OPS](https://tidesandcurrents.noaa.gov) station 9445526 | No | 2 hours | 2 hours |
 | Tides (hourly) | NOAA (cosine-interpolated from hi/lo) | No | 2 hours | 2 hours |
 | Ferry schedule | [WSDOT Traveler API](https://www.wsdot.wa.gov/ferries/api/) | Yes (free) | 30 sec | 30 sec |
@@ -280,6 +280,7 @@ This keeps the frontend fully self-contained and avoids any external moon-image 
 
 - NOAA station 9445526 (Hansville) is a subordinate station — only provides hi/lo predictions, not hourly. Hourly data is generated server-side via cosine interpolation.
 - NOAA sometimes returns HTTP 200 with an error body instead of a proper error code. The server guards against caching these.
+- Weather uses NWS as the primary source and Open-Meteo as fallback. Sunrise/sunset are calculated server-side from latitude/longitude.
 - `window._sunriseMs` / `window._sunsetMs` are globals used by both the sparkline and the weather card.
 - Ferry WSF API uses `/Date(ms)/` format for timestamps.
 - The `preserveAspectRatio="none"` on sparkline/thermometer SVGs is intentional — they stretch to fill their flex containers.

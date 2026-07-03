@@ -40,6 +40,8 @@ const CONFIG = {
   sessionSecret: configuredSessionSecret || randomUUID(),
   sessionSecretConfigured: Boolean(configuredSessionSecret),
   noaaStation: String(configValue('noaaStation', '9445526')),
+  nwsBaseUrl: String(configValue('nwsBaseUrl', 'https://api.weather.gov')).replace(/\/+$/, ''),
+  nwsUserAgent: String(configValue('nwsUserAgent', 'whidbey-dashboard (mckoss.com)')).trim(),
   openMeteoBaseUrl: String(configValue('openMeteoBaseUrl', 'https://api.open-meteo.com')).replace(/\/+$/, ''),
   lat: Number(configValue('lat', 47.9748)),
   lon: Number(configValue('lon', -122.3534)),
@@ -1443,9 +1445,137 @@ function tidesHourlyEndpoint(route = DEFAULT_FERRY_ROUTE) {
   });
 }
 
-// ── Weather (Open-Meteo) ───────────────────────────────────────────────
+// ── Weather (NWS primary, Open-Meteo fallback) ─────────────────────────
 function weatherEndpoint(route = DEFAULT_FERRY_ROUTE) {
   return cachedEndpointStaleWhileRefresh(route.weather.cacheKey, 60 * 60 * 1000, async () => {
+    try {
+      return await fetchNwsWeather(route);
+    } catch (e) {
+      console.warn(`[weather] NWS failed for ${route.key}: ${e.message}; falling back to Open-Meteo`);
+      return fetchOpenMeteoWeather(route);
+    }
+  });
+}
+
+async function fetchNwsJson(url) {
+  const res = await fetchWithRetry(url, {
+    headers: {
+      Accept: 'application/geo+json',
+      'User-Agent': CONFIG.nwsUserAgent,
+    },
+  });
+  return res.json();
+}
+
+async function fetchNwsWeather(route) {
+  const pointUrl = `${CONFIG.nwsBaseUrl}/points/${route.weather.lat},${route.weather.lon}`;
+  const point = await fetchNwsJson(pointUrl);
+  const hourlyUrl = point.properties?.forecastHourly;
+  const stationsUrl = point.properties?.observationStations;
+  if (!hourlyUrl) throw new Error('NWS point response did not include forecastHourly');
+
+  const [hourly, observation] = await Promise.all([
+    fetchNwsJson(hourlyUrl),
+    fetchNwsObservation(stationsUrl).catch(e => {
+      console.warn(`[weather] NWS observation unavailable for ${route.key}: ${e.message}`);
+      return null;
+    }),
+  ]);
+
+  const periods = hourly.properties?.periods || [];
+  if (!periods.length) throw new Error('NWS hourly forecast returned no periods');
+  return normalizeNwsWeather(route, periods, observation);
+}
+
+async function fetchNwsObservation(stationsUrl) {
+  if (!stationsUrl) return null;
+  const stations = await fetchNwsJson(stationsUrl);
+  const station = (stations.features || [])[0];
+  const obsUrl = station?.id ? `${station.id}/observations/latest` : null;
+  if (!obsUrl) return null;
+  const observation = await fetchNwsJson(obsUrl);
+  return observation.properties || null;
+}
+
+function normalizeNwsWeather(route, periods, observation) {
+  const hourly = normalizeNwsHourly(periods);
+  const currentPeriod = periods[0] || {};
+  const current = normalizeNwsCurrent(currentPeriod, observation);
+  const daily = normalizeNwsDaily(route, periods);
+  return {
+    latitude: route.weather.lat,
+    longitude: route.weather.lon,
+    timezone: CONFIG.timezone,
+    source: 'NWS',
+    current,
+    hourly,
+    daily,
+  };
+}
+
+function normalizeNwsCurrent(period, observation = null) {
+  const tempF = cToF(observation?.temperature?.value);
+  const windMph = kmhToMph(observation?.windSpeed?.value);
+  return {
+    time: observation?.timestamp || period.startTime || new Date().toISOString(),
+    interval: 3600,
+    temperature_2m: Number.isFinite(tempF) ? tempF : Number(period.temperature),
+    weather_code: weatherCodeFromText(observation?.textDescription || period.shortForecast),
+    wind_speed_10m: Number.isFinite(windMph) ? windMph : parseWindMph(period.windSpeed),
+    wind_direction_10m: Number.isFinite(observation?.windDirection?.value)
+      ? observation.windDirection.value
+      : windDirectionDegrees(period.windDirection),
+    relative_humidity_2m: Number.isFinite(observation?.relativeHumidity?.value)
+      ? Math.round(observation.relativeHumidity.value)
+      : (Number.isFinite(period.relativeHumidity?.value) ? period.relativeHumidity.value : null),
+  };
+}
+
+function normalizeNwsHourly(periods) {
+  return {
+    time: periods.map(period => stripSeconds(period.startTime)),
+    temperature_2m: periods.map(period => Number(period.temperature)),
+    weather_code: periods.map(period => weatherCodeFromText(period.shortForecast)),
+    wind_speed_10m: periods.map(period => parseWindMph(period.windSpeed)),
+  };
+}
+
+function normalizeNwsDaily(route, periods) {
+  const byDate = new Map();
+  for (const period of periods) {
+    const date = localDateKey(period.startTime);
+    if (!date) continue;
+    const day = byDate.get(date) || {
+      time: date,
+      temps: [],
+      precip: [],
+      winds: [],
+      windDirections: [],
+      codes: [],
+    };
+    day.temps.push(Number(period.temperature));
+    day.precip.push(Number(period.probabilityOfPrecipitation?.value ?? 0));
+    day.winds.push(parseWindMph(period.windSpeed));
+    day.windDirections.push(windDirectionDegrees(period.windDirection));
+    day.codes.push(weatherCodeFromText(period.shortForecast));
+    byDate.set(date, day);
+  }
+
+  const days = [...byDate.values()].slice(0, 3);
+  return {
+    time: days.map(day => day.time),
+    weather_code: days.map(day => dominantWeatherCode(day.codes)),
+    temperature_2m_max: days.map(day => Math.max(...day.temps.filter(Number.isFinite))),
+    temperature_2m_min: days.map(day => Math.min(...day.temps.filter(Number.isFinite))),
+    precipitation_probability_max: days.map(day => Math.max(...day.precip.filter(Number.isFinite), 0)),
+    wind_speed_10m_max: days.map(day => Math.max(...day.winds.filter(Number.isFinite), 0)),
+    wind_direction_10m_dominant: days.map(day => dominantWindDirection(day.windDirections)),
+    sunrise: days.map(day => solarTimeIso(day.time, route.weather.lat, route.weather.lon, true)),
+    sunset: days.map(day => solarTimeIso(day.time, route.weather.lat, route.weather.lon, false)),
+  };
+}
+
+async function fetchOpenMeteoWeather(route) {
   const url = `${CONFIG.openMeteoBaseUrl}/v1/forecast` +
     `?latitude=${route.weather.lat}&longitude=${route.weather.lon}` +
     `&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max,wind_direction_10m_dominant,sunrise,sunset` +
@@ -1455,15 +1585,145 @@ function weatherEndpoint(route = DEFAULT_FERRY_ROUTE) {
     `&timezone=${encodeURIComponent(CONFIG.timezone)}&forecast_days=3`;
   const r = await fetchWithRetry(url);
   const data = await r.json();
-  // Stamp sunrise/sunset with explicit Pacific offset so clients parse unambiguously
   const offset = pacificOffset();
   if (data.daily?.sunrise) {
     data.daily.sunrise = data.daily.sunrise.map(s => s + ':00' + offset);
     data.daily.sunset  = data.daily.sunset.map(s  => s + ':00' + offset);
   }
-  return data;
-  });
+  return { ...data, source: 'Open-Meteo' };
 }
+
+function cToF(celsius) {
+  return Number.isFinite(celsius) ? (celsius * 9 / 5) + 32 : null;
+}
+
+function kmhToMph(kmh) {
+  return Number.isFinite(kmh) ? kmh * 0.621371 : null;
+}
+
+function parseWindMph(text) {
+  const values = String(text || '').match(/\d+(?:\.\d+)?/g)?.map(Number) || [];
+  return values.length ? Math.max(...values) : 0;
+}
+
+function windDirectionDegrees(text) {
+  const directions = {
+    N: 0, NNE: 22.5, NE: 45, ENE: 67.5,
+    E: 90, ESE: 112.5, SE: 135, SSE: 157.5,
+    S: 180, SSW: 202.5, SW: 225, WSW: 247.5,
+    W: 270, WNW: 292.5, NW: 315, NNW: 337.5,
+  };
+  return directions[String(text || '').trim().toUpperCase()] ?? 0;
+}
+
+function weatherCodeFromText(text) {
+  const value = String(text || '').toLowerCase();
+  if (value.includes('thunder')) return 95;
+  if (value.includes('snow') || value.includes('sleet') || value.includes('ice')) return 71;
+  if (value.includes('rain') || value.includes('shower')) return 61;
+  if (value.includes('drizzle')) return 51;
+  if (value.includes('fog') || value.includes('mist') || value.includes('haze')) return 45;
+  if (value.includes('cloudy') || value.includes('overcast')) return 3;
+  if (value.includes('partly')) return 2;
+  if (value.includes('mostly sunny') || value.includes('mostly clear')) return 1;
+  if (value.includes('sunny') || value.includes('clear')) return 0;
+  return 3;
+}
+
+function dominantWeatherCode(codes) {
+  const valid = codes.filter(Number.isFinite);
+  if (!valid.length) return 3;
+  return valid.sort((a, b) => b - a)[0];
+}
+
+function dominantWindDirection(directions) {
+  const valid = directions.filter(Number.isFinite);
+  if (!valid.length) return 0;
+  const x = valid.reduce((sum, deg) => sum + Math.cos(deg * Math.PI / 180), 0);
+  const y = valid.reduce((sum, deg) => sum + Math.sin(deg * Math.PI / 180), 0);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+function stripSeconds(iso) {
+  return String(iso || '').replace(/:00([+-]\d\d:\d\d|Z)$/, '$1');
+}
+
+function localDateKey(iso) {
+  return String(iso || '').slice(0, 10);
+}
+
+function solarTimeIso(date, lat, lon, sunrise) {
+  const [year, month, day] = date.split('-').map(Number);
+  const utcMs = solarEventUtcMs(year, month, day, lat, lon, sunrise);
+  if (!Number.isFinite(utcMs)) return `${date}T12:00:00${pacificOffset()}`;
+  return formatInTimeZoneWithOffset(new Date(utcMs), CONFIG.timezone);
+}
+
+function solarEventUtcMs(year, month, day, lat, lon, sunrise) {
+  const dateMs = Date.UTC(year, month - 1, day);
+  const startMs = Date.UTC(year, 0, 0);
+  const n = Math.floor((dateMs - startMs) / 86400000);
+  const lngHour = lon / 15;
+  const t = n + ((sunrise ? 6 : 18) - lngHour) / 24;
+  const m = (0.9856 * t) - 3.289;
+  let l = m + (1.916 * sinDeg(m)) + (0.020 * sinDeg(2 * m)) + 282.634;
+  l = normalizeDegrees(l);
+  let ra = atanDeg(0.91764 * tanDeg(l));
+  ra = normalizeDegrees(ra);
+  ra += Math.floor(l / 90) * 90 - Math.floor(ra / 90) * 90;
+  ra /= 15;
+  const sinDec = 0.39782 * sinDeg(l);
+  const cosDec = Math.cos(Math.asin(sinDec));
+  const cosH = (cosDeg(90.833) - (sinDec * sinDeg(lat))) / (cosDec * cosDeg(lat));
+  if (cosH > 1 || cosH < -1) return NaN;
+  let h = sunrise ? 360 - acosDeg(cosH) : acosDeg(cosH);
+  h /= 15;
+  const localMeanTime = h + ra - (0.06571 * t) - 6.622;
+  const utcHour = normalizeHours(localMeanTime - lngHour);
+  return dateMs + Math.round(utcHour * 3600000);
+}
+
+function formatInTimeZoneWithOffset(date, timeZone) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(date).map(part => [part.type, part.value]));
+  const offset = timeZoneOffset(date, timeZone);
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}${offset}`;
+}
+
+function timeZoneOffset(date, timeZone) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    timeZoneName: 'shortOffset',
+  }).formatToParts(date).map(part => [part.type, part.value]));
+  const match = String(parts.timeZoneName || '').match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/);
+  if (!match) return pacificOffset();
+  const sign = match[1];
+  const hours = match[2].padStart(2, '0');
+  const minutes = (match[3] || '00').padStart(2, '0');
+  return `${sign}${hours}:${minutes}`;
+}
+
+function normalizeDegrees(degrees) {
+  return ((degrees % 360) + 360) % 360;
+}
+
+function normalizeHours(hours) {
+  return ((hours % 24) + 24) % 24;
+}
+
+function sinDeg(degrees) { return Math.sin(degrees * Math.PI / 180); }
+function cosDeg(degrees) { return Math.cos(degrees * Math.PI / 180); }
+function tanDeg(degrees) { return Math.tan(degrees * Math.PI / 180); }
+function acosDeg(value) { return Math.acos(value) * 180 / Math.PI; }
+function atanDeg(value) { return Math.atan(value) * 180 / Math.PI; }
 
 app.get('/api/weather', weatherEndpoint(FERRY_ROUTES.whidbey));
 app.get('/api/tides', tidesEndpoint(FERRY_ROUTES.whidbey));
