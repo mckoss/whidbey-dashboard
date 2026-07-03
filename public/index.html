@@ -887,15 +887,30 @@ function windDir(deg) {
 // ── Data freshness tracking ───────────────────────────────────────────
 const dataUpdatedAt = {};  // key → timestamp ms of last successful fresh fetch
 const staleSourceAge = {}; // key → { ageMin, seenAt } for server-provided stale data
+const dataSourceLabels = {}; // key → short source label, e.g. "nws"
 
-function markFresh(key) {
-  dataUpdatedAt[key] = Date.now();
-  delete staleSourceAge[key];
+function sourceLabel(data) {
+  const source = String(data?.source || '').trim().toLowerCase();
+  return source || '';
 }
 
-function markStale(key, ageMin) {
+function sourceSuffix(key, data = null) {
+  const label = sourceLabel(data) || dataSourceLabels[key] || '';
+  return label ? ` (${escapeHtml(label)})` : '';
+}
+
+function markFresh(key, data = null) {
+  dataUpdatedAt[key] = Date.now();
+  delete staleSourceAge[key];
+  const label = sourceLabel(data);
+  if (label) dataSourceLabels[key] = label;
+}
+
+function markStale(key, ageMin, data = null) {
   delete dataUpdatedAt[key];
   staleSourceAge[key] = { ageMin, seenAt: Date.now() };
+  const label = sourceLabel(data);
+  if (label) dataSourceLabels[key] = label;
 }
 
 // Refresh intervals per data source (minutes)
@@ -909,6 +924,7 @@ const REFRESH_INTERVALS = {
 function ageTag(key, staleData) {
   // Inline age indicator - only warns when data is older than its refresh interval.
   const thresholdMin = REFRESH_INTERVALS[key] || 5;
+  const source = sourceSuffix(key, staleData);
   let ageMin;
   if (staleData && staleData._stale) {
     ageMin = staleData._staleAgeMinutes;
@@ -918,13 +934,13 @@ function ageTag(key, staleData) {
       ageMin = stale.ageMin + Math.round((Date.now() - stale.seenAt) / 60000);
     } else {
       const t = dataUpdatedAt[key];
-      if (!t) return `<span class="age-tag fresh" id="${key}-age">✓ live</span>`;
+      if (!t) return `<span class="age-tag fresh" id="${key}-age">✓ live${source}</span>`;
       ageMin = Math.round((Date.now() - t) / 60000);
     }
   }
-  if (ageMin <= thresholdMin) return `<span class="age-tag fresh" id="${key}-age">✓ live</span>`;
-  if (ageMin <= thresholdMin * 2.5) return `<span class="age-tag warn" id="${key}-age">⚠ ${ageMin}m old</span>`;
-  return `<span class="age-tag old" id="${key}-age">⚠ ${ageMin}m old</span>`;
+  if (ageMin <= thresholdMin) return `<span class="age-tag fresh" id="${key}-age">✓ live${source}</span>`;
+  if (ageMin <= thresholdMin * 2.5) return `<span class="age-tag warn" id="${key}-age">⚠ ${ageMin}m old${source}</span>`;
+  return `<span class="age-tag old" id="${key}-age">⚠ ${ageMin}m old${source}</span>`;
 }
 
 // ── Tide coverage age tag (data-driven, not fetch-age) ──────────────────────
@@ -990,8 +1006,8 @@ async function loadWeather() {
       };
     });
 
-    if (d._stale) markStale('weather', d._staleAgeMinutes);
-    else markFresh('weather');
+    if (d._stale) markStale('weather', d._staleAgeMinutes, d);
+    else markFresh('weather', d);
     if (d.daily?.sunrise?.[0]) {
       window._sunriseMs = new Date(d.daily.sunrise[0]).getTime();
       window._sunsetMs  = new Date(d.daily.sunset[0]).getTime();
