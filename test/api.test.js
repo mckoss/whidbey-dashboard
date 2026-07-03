@@ -268,6 +268,10 @@ test('weather endpoint — returns current temperature and 3-day forecast', asyn
     'daily sunrise is a timestamp with explicit Pacific offset');
   assert.match(d.daily.sunset[0], /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}-\d{2}:\d{2}$/,
     'daily sunset is a timestamp with explicit Pacific offset');
+  assert.ok(d.daily.sunrise[0].startsWith(`${d.daily.time[0]}T`),
+    'daily sunrise stays on the forecast local date');
+  assert.ok(d.daily.sunset[0].startsWith(`${d.daily.time[0]}T`),
+    'daily sunset stays on the forecast local date');
 });
 
 test('tides endpoint — returns predictions array with H/L types', async () => {

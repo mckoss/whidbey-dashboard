@@ -1654,8 +1654,10 @@ function localDateKey(iso) {
 
 function solarTimeIso(date, lat, lon, sunrise) {
   const [year, month, day] = date.split('-').map(Number);
-  const utcMs = solarEventUtcMs(year, month, day, lat, lon, sunrise);
+  let utcMs = solarEventUtcMs(year, month, day, lat, lon, sunrise);
   if (!Number.isFinite(utcMs)) return `${date}T12:00:00${pacificOffset()}`;
+  while (localDateInTimeZone(new Date(utcMs), CONFIG.timezone) < date) utcMs += 86400000;
+  while (localDateInTimeZone(new Date(utcMs), CONFIG.timezone) > date) utcMs -= 86400000;
   return formatInTimeZoneWithOffset(new Date(utcMs), CONFIG.timezone);
 }
 
@@ -1679,7 +1681,7 @@ function solarEventUtcMs(year, month, day, lat, lon, sunrise) {
   let h = sunrise ? 360 - acosDeg(cosH) : acosDeg(cosH);
   h /= 15;
   const localMeanTime = h + ra - (0.06571 * t) - 6.622;
-  const utcHour = normalizeHours(localMeanTime - lngHour);
+  const utcHour = localMeanTime - lngHour;
   return dateMs + Math.round(utcHour * 3600000);
 }
 
@@ -1698,6 +1700,16 @@ function formatInTimeZoneWithOffset(date, timeZone) {
   return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}${offset}`;
 }
 
+function localDateInTimeZone(date, timeZone) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date).map(part => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
 function timeZoneOffset(date, timeZone) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
     timeZone,
@@ -1713,10 +1725,6 @@ function timeZoneOffset(date, timeZone) {
 
 function normalizeDegrees(degrees) {
   return ((degrees % 360) + 360) % 360;
-}
-
-function normalizeHours(hours) {
-  return ((hours % 24) + 24) % 24;
 }
 
 function sinDeg(degrees) { return Math.sin(degrees * Math.PI / 180); }
