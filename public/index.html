@@ -886,9 +886,16 @@ function windDir(deg) {
 
 // ── Data freshness tracking ───────────────────────────────────────────
 const dataUpdatedAt = {};  // key → timestamp ms of last successful fresh fetch
+const staleSourceAge = {}; // key → { ageMin, seenAt } for server-provided stale data
 
 function markFresh(key) {
   dataUpdatedAt[key] = Date.now();
+  delete staleSourceAge[key];
+}
+
+function markStale(key, ageMin) {
+  delete dataUpdatedAt[key];
+  staleSourceAge[key] = { ageMin, seenAt: Date.now() };
 }
 
 // Refresh intervals per data source (minutes)
@@ -906,9 +913,14 @@ function ageTag(key, staleData) {
   if (staleData && staleData._stale) {
     ageMin = staleData._staleAgeMinutes;
   } else {
-    const t = dataUpdatedAt[key];
-    if (!t) return `<span class="age-tag fresh" id="${key}-age">✓ live</span>`;
-    ageMin = Math.round((Date.now() - t) / 60000);
+    const stale = staleSourceAge[key];
+    if (stale) {
+      ageMin = stale.ageMin + Math.round((Date.now() - stale.seenAt) / 60000);
+    } else {
+      const t = dataUpdatedAt[key];
+      if (!t) return `<span class="age-tag fresh" id="${key}-age">✓ live</span>`;
+      ageMin = Math.round((Date.now() - t) / 60000);
+    }
   }
   if (ageMin <= thresholdMin) return `<span class="age-tag fresh" id="${key}-age">✓ live</span>`;
   if (ageMin <= thresholdMin * 2.5) return `<span class="age-tag warn" id="${key}-age">⚠ ${ageMin}m old</span>`;
@@ -978,7 +990,8 @@ async function loadWeather() {
       };
     });
 
-    if (!d._stale) markFresh('weather');
+    if (d._stale) markStale('weather', d._staleAgeMinutes);
+    else markFresh('weather');
     if (d.daily?.sunrise?.[0]) {
       window._sunriseMs = new Date(d.daily.sunrise[0]).getTime();
       window._sunsetMs  = new Date(d.daily.sunset[0]).getTime();
