@@ -40,6 +40,7 @@ const CONFIG = {
   sessionSecret: configuredSessionSecret || randomUUID(),
   sessionSecretConfigured: Boolean(configuredSessionSecret),
   noaaStation: String(configValue('noaaStation', '9445526')),
+  openMeteoBaseUrl: String(configValue('openMeteoBaseUrl', 'https://api.open-meteo.com')).replace(/\/+$/, ''),
   lat: Number(configValue('lat', 47.9748)),
   lon: Number(configValue('lon', -122.3534)),
   wsfDepartingTerminal: Number(configValue('wsfDepartingTerminal', 5)),
@@ -897,17 +898,23 @@ function injectAnalyticsScript(html) {
 
 // ── Fetch with retry ────────────────────────────────────────────────────
 async function fetchWithRetry(url, options = {}, retries = 1) {
+  const { timeoutMs = 8000, ...fetchOptions } = options;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, options);
+    const res = await fetch(url, { ...fetchOptions, signal: controller.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res;
   } catch (err) {
+    const message = err.name === 'AbortError' ? `timeout after ${timeoutMs}ms` : err.message;
     if (retries > 0) {
-      console.warn(`[retry] ${url} — ${err.message}`);
+      console.warn(`[retry] ${url} — ${message}`);
       await new Promise(r => setTimeout(r, 1000));
       return fetchWithRetry(url, options, retries - 1);
     }
-    throw err;
+    throw new Error(message);
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -1438,8 +1445,8 @@ function tidesHourlyEndpoint(route = DEFAULT_FERRY_ROUTE) {
 
 // ── Weather (Open-Meteo) ───────────────────────────────────────────────
 function weatherEndpoint(route = DEFAULT_FERRY_ROUTE) {
-  return cachedEndpoint(route.weather.cacheKey, 60 * 60 * 1000, async () => {
-  const url = `https://api.open-meteo.com/v1/forecast` +
+  return cachedEndpointStaleWhileRefresh(route.weather.cacheKey, 60 * 60 * 1000, async () => {
+  const url = `${CONFIG.openMeteoBaseUrl}/v1/forecast` +
     `?latitude=${route.weather.lat}&longitude=${route.weather.lon}` +
     `&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max,wind_direction_10m_dominant,sunrise,sunset` +
     `&hourly=temperature_2m,weather_code,wind_speed_10m` +

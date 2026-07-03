@@ -10,6 +10,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
 import vm from 'node:vm';
@@ -20,14 +21,68 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const BASE = 'http://localhost:3001'; // use 3001 to avoid conflicting with running server
 let serverProcess;
 let dataDir;
+let weatherServer;
+let weatherBaseUrl;
+
+function testWeatherPayload() {
+  return {
+    latitude: 47.9748,
+    longitude: -122.3534,
+    timezone: 'America/Los_Angeles',
+    current: {
+      time: '2026-07-02T12:00',
+      interval: 900,
+      temperature_2m: 68.4,
+      weather_code: 1,
+      wind_speed_10m: 7.2,
+      wind_direction_10m: 250,
+      relative_humidity_2m: 58,
+    },
+    daily: {
+      time: ['2026-07-02', '2026-07-03', '2026-07-04'],
+      weather_code: [1, 2, 3],
+      temperature_2m_max: [72, 69, 70],
+      temperature_2m_min: [55, 54, 53],
+      precipitation_probability_max: [5, 15, 25],
+      wind_speed_10m_max: [9, 11, 8],
+      wind_direction_10m_dominant: [250, 230, 210],
+      sunrise: ['2026-07-02T05:16', '2026-07-03T05:17', '2026-07-04T05:18'],
+      sunset: ['2026-07-02T21:12', '2026-07-03T21:11', '2026-07-04T21:11'],
+    },
+    hourly: {
+      time: ['2026-07-02T12:00'],
+      temperature_2m: [68.4],
+      weather_code: [1],
+      wind_speed_10m: [7.2],
+    },
+  };
+}
+
+async function startWeatherFixture() {
+  weatherServer = createServer((req, res) => {
+    if (!req.url?.startsWith('/v1/forecast')) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'not found' }));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(testWeatherPayload()));
+  });
+  await new Promise(resolve => weatherServer.listen(0, '127.0.0.1', resolve));
+  const { port } = weatherServer.address();
+  weatherBaseUrl = `http://127.0.0.1:${port}`;
+}
 
 // ── Server lifecycle ───────────────────────────────────────────────────
 before(async () => {
+  await startWeatherFixture();
+
   dataDir = await mkdtemp(join(tmpdir(), 'whidbey-dashboard-test-'));
   const configFile = join(dataDir, 'config.json');
   await writeFile(configFile, JSON.stringify({
     port: 3001,
     dataDir,
+    openMeteoBaseUrl: weatherBaseUrl,
     googleClientId: 'test-google-client-id',
     adminUsers: ['mike@example.com'],
     adminTestTokens: {
@@ -67,6 +122,7 @@ after(async () => {
     serverProcess.kill('SIGTERM');
     await sleep(500);
   }
+  if (weatherServer) await new Promise(resolve => weatherServer.close(resolve));
   if (dataDir) await rm(dataDir, { recursive: true, force: true });
 });
 
@@ -1269,10 +1325,10 @@ test('bainbridge departures — live GPS anchors to latest terminal schedule, no
 });
 
 test('bainbridge departures — operational chain uses Bainbridge crossing time, not Whidbey interval', async () => {
-  const historyDate = '2026-07-02';
-  const sampledAtMs = Date.UTC(2026, 6, 3, 1, 10); // 6:10 PM PDT
-  const b1840 = Date.UTC(2026, 6, 3, 1, 40);
-  const s1910 = Date.UTC(2026, 6, 3, 2, 10);
+  const historyDate = '2026-07-08';
+  const sampledAtMs = Date.UTC(2026, 6, 9, 1, 10); // 6:10 PM PDT
+  const b1840 = Date.UTC(2026, 6, 9, 1, 40);
+  const s1910 = Date.UTC(2026, 6, 9, 2, 10);
   const historyDir = join(dataDir, 'ferry-history-bainbridge');
   await mkdir(historyDir, { recursive: true });
   await writeFerryHistoryFixture(historyDir, historyDate, {
@@ -1297,8 +1353,8 @@ test('bainbridge departures — operational chain uses Bainbridge crossing time,
       }),
     ],
     vesselSamples: [
-      bainbridgeTestSample(Date.UTC(2026, 6, 3, 1, 0), 'Wenatchee', 37, 0.86, { arrivingTerminalId: 3, atDock: false }),
-      bainbridgeTestSample(Date.UTC(2026, 6, 3, 1, 5), 'Wenatchee', 37, 0.91, { arrivingTerminalId: 3, atDock: false }),
+      bainbridgeTestSample(Date.UTC(2026, 6, 9, 1, 0), 'Wenatchee', 37, 0.86, { arrivingTerminalId: 3, atDock: false }),
+      bainbridgeTestSample(Date.UTC(2026, 6, 9, 1, 5), 'Wenatchee', 37, 0.91, { arrivingTerminalId: 3, atDock: false }),
       bainbridgeTestSample(sampledAtMs, 'Wenatchee', 37, 0.96, { arrivingTerminalId: 3, atDock: false }),
     ],
     currentVessels: [],
