@@ -94,6 +94,7 @@ const FERRY_ROUTES = {
   },
 };
 const DEFAULT_FERRY_ROUTE = FERRY_ROUTES.whidbey;
+const WEATHER_CACHE_SCHEMA = 'nws-solar-v2';
 const TERMINAL_NAMES = new Map(Object.values(FERRY_ROUTES).flatMap(route => [
   [route.primary.id, route.primary.name],
   [route.secondary.id, route.secondary.name],
@@ -1069,15 +1070,15 @@ function refreshCacheInBackground(cacheKey, ttlMs, fetcher, req) {
   backgroundRefreshes.set(cacheKey, refresh);
 }
 
-function cachedEndpointStaleWhileRefresh(cacheKey, ttlMs, fetcher) {
+function cachedEndpointStaleWhileRefresh(cacheKey, ttlMs, fetcher, isUsableCacheEntry = () => true) {
   return async (req, res) => {
     const hit = getCached(cacheKey);
-    if (hit) {
+    if (hit && isUsableCacheEntry(hit)) {
       return res.json(hit.data);
     }
 
     const stale = getStale(cacheKey);
-    if (stale) {
+    if (stale && isUsableCacheEntry(stale)) {
       refreshCacheInBackground(cacheKey, ttlMs, fetcher, req);
       const ageMin = Math.round((Date.now() - stale.cachedAt) / 60000);
       return res.json({ ...stale.data, _stale: true, _staleAgeMinutes: ageMin, _refreshing: true });
@@ -1449,12 +1450,20 @@ function tidesHourlyEndpoint(route = DEFAULT_FERRY_ROUTE) {
 function weatherEndpoint(route = DEFAULT_FERRY_ROUTE) {
   return cachedEndpointStaleWhileRefresh(route.weather.cacheKey, 60 * 60 * 1000, async () => {
     try {
-      return await fetchNwsWeather(route);
+      return markWeatherCacheSchema(await fetchNwsWeather(route));
     } catch (e) {
       console.warn(`[weather] NWS failed for ${route.key}: ${e.message}; falling back to Open-Meteo`);
-      return fetchOpenMeteoWeather(route);
+      return markWeatherCacheSchema(await fetchOpenMeteoWeather(route));
     }
-  });
+  }, isUsableWeatherCache);
+}
+
+function markWeatherCacheSchema(data) {
+  return { ...data, _weatherCacheSchema: WEATHER_CACHE_SCHEMA };
+}
+
+function isUsableWeatherCache(entry) {
+  return entry?.data?._weatherCacheSchema === WEATHER_CACHE_SCHEMA;
 }
 
 async function fetchNwsJson(url) {
