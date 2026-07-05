@@ -435,13 +435,16 @@
       display: inline-flex;
       align-items: center;
       width: max-content;
+    }
+    .ferry-alert-ticker.ticker-ready .ferry-alert-track {
       animation: ferryAlertScroll var(--ticker-duration, 42s) linear infinite;
+    }
+    .ferry-alert-ticker:not(.ticker-ready) .ferry-alert-track {
+      transform: translateX(var(--ticker-enter, 100vw));
     }
     .ferry-alert-copy {
       display: inline-flex;
       align-items: center;
-      flex: 0 0 var(--ticker-copy-width, auto);
-      width: var(--ticker-copy-width, auto);
       box-sizing: border-box;
       gap: 2.2rem;
       padding-right: 2.2rem;
@@ -471,8 +474,8 @@
       opacity: 0.92;
     }
     @keyframes ferryAlertScroll {
-      from { transform: translateX(0); }
-      to   { transform: translateX(var(--ticker-translate, -50%)); }
+      from { transform: translateX(var(--ticker-enter, 100vw)); }
+      to   { transform: translateX(var(--ticker-exit, -100%)); }
     }
 
     /* Late departure: red estimated time + smaller original scheduled time below */
@@ -1551,7 +1554,7 @@ function renderFerryAlerts(alerts = []) {
   }).join('');
   const visibleText = displayTextParts.join('   ');
   const tickerDurationSeconds = Math.max(minTickerDurationSeconds, Math.round(visibleText.length / tickerCharsPerSecond));
-  return `<div class="ferry-alert-ticker" style="--ticker-duration: ${tickerDurationSeconds}s"><div class="ferry-alert-track"><div class="ferry-alert-copy">${items}</div><div class="ferry-alert-copy" aria-hidden="true">${items}</div></div></div>`;
+  return `<div class="ferry-alert-ticker" style="--ticker-duration: ${tickerDurationSeconds}s"><div class="ferry-alert-track"><div class="ferry-alert-copy">${items}</div></div></div>`;
 }
 
 function normalizeFerryAlertDisplayText(value = '') {
@@ -1616,10 +1619,14 @@ function adjustFerryAlertTickerSpeed(root) {
   const minTickerDurationSeconds = 4;
   const pixelsPerCharacter = textPixelWidth / textCharCount;
   const pixelsPerSecond = pixelsPerCharacter * targetCharsPerSecond;
-  const durationSeconds = Math.max(minTickerDurationSeconds, copyPixelWidth / pixelsPerSecond);
-  ticker.style.setProperty('--ticker-copy-width', `${copyPixelWidth}px`);
+  const tickerPixelWidth = ticker.getBoundingClientRect().width || ticker.clientWidth;
+  if (!tickerPixelWidth) return;
+  const travelPixelWidth = tickerPixelWidth + copyPixelWidth;
+  const durationSeconds = Math.max(minTickerDurationSeconds, travelPixelWidth / pixelsPerSecond);
+  ticker.style.setProperty('--ticker-enter', `${tickerPixelWidth}px`);
+  ticker.style.setProperty('--ticker-exit', `-${copyPixelWidth}px`);
   ticker.style.setProperty('--ticker-duration', `${Math.round(durationSeconds)}s`);
-  ticker.style.setProperty('--ticker-translate', `-${copyPixelWidth}px`);
+  ticker.classList.add('ticker-ready');
 
   if (!track.dataset.swapListenerAttached) {
     track.dataset.swapListenerAttached = 'true';

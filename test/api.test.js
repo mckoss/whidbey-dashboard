@@ -2716,9 +2716,9 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
   assert.match(ticker, /Good morning\. How are you doing\?/, 'renders general WSF notice text');
   assert.match(ticker, /Dinner at 6:30\./, 'renders user-added crawl messages');
   assert.doesNotMatch(ticker, /Dinner at 6:30\.: Dinner at 6:30\./, 'user-added crawl messages are not formatted as duplicated title/detail text');
-  assert.match(ticker, /Good morning\. How are you doing\?[\s\S]*Dinner at 6:30\./, 'user-added crawl messages are appended after WSF alerts before the wrap copy');
+  assert.match(ticker, /Good morning\. How are you doing\?[\s\S]*Dinner at 6:30\./, 'user-added crawl messages are appended after WSF alerts in the crawl');
   assert.match(ticker, new RegExp(`--ticker-duration: ${expectedTickerDuration}s`), 'sets ticker speed from visible text at 15 cps');
-  assert.equal((ticker.match(/ferry-alert-copy/g) || []).length, 2, 'duplicates content so the scroll wraps');
+  assert.equal((ticker.match(/class="ferry-alert-copy"/g) || []).length, 1, 'renders one measured crawl copy');
   assert.doesNotMatch(ticker, /ferry-alert-ticker danger/, 'mixed ticker does not make every alert red');
   assert.match(ticker, /ferry-alert-item danger[\s\S]*One vessel canceled/, 'disruptive alert item is red');
   assert.match(ticker, /ferry-alert-item(?! danger)[^>]*><span class="ferry-alert-detail">Pets: New pet rules effective May 20\./, 'informational all-routes item stays yellow');
@@ -2727,8 +2727,8 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
   assert.match(ticker, /ferry-alert-item user-message" style="color: orange"><span class="ferry-alert-detail">Dinner at 6:30\./, 'user message color renders as item color');
   assert.equal(
     (ticker.match(/Construction activity at Clinton terminal June 8 - July 3/g) || []).length,
-    2,
-    'trailing punctuation differences do not duplicate alert title/detail within each ticker copy'
+    1,
+    'trailing punctuation differences do not duplicate alert title/detail within the ticker copy'
   );
   assert.match(html, /\.ferry-alert-item\s*\{[\s\S]*?color:\s*inherit;/, 'alert item text inherits ticker severity color');
   assert.match(html, /\.ferry-alert-item\.danger\s*\{[\s\S]*?color:\s*var\(--danger\);/, 'only disruptive alert items use danger red');
@@ -2738,15 +2738,17 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
   assert.match(html, /@media \(min-width:\s*1000px\) and \(min-height:\s*600px\)[\s\S]*?\.ferry-alert-item\s*\{[\s\S]*?font-size:\s*1\.56rem;/, 'large displays double the ferry crawl font size');
 });
 
-test('static HTML — ferry ticker scrolls by measured copy width', async () => {
+test('static HTML — ferry ticker scrolls from the right edge by measured pixel distance', async () => {
   const { readFileSync } = await import('fs');
   const { dirname: dn, join: jn } = await import('path');
   const { fileURLToPath: fu } = await import('url');
   const dir = dn(fu(import.meta.url));
   const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
 
-  assert.match(html, /--ticker-copy-width/, 'pins both ticker copies to one measured width');
-  assert.match(html, /--ticker-translate/, 'uses a measured pixel distance for the loop');
+  assert.match(html, /--ticker-enter/, 'sets the measured right-edge starting position');
+  assert.match(html, /--ticker-exit/, 'sets the measured left-edge ending position');
+  assert.match(html, /ticker\.classList\.add\('ticker-ready'\)/, 'starts animation only after measuring the row');
+  assert.match(html, /tickerPixelWidth \+ copyPixelWidth/, 'duration is based on the full right-to-left travel distance');
   assert.doesNotMatch(html, /to\s*\{\s*transform:\s*translateX\(-50%\)/, 'does not animate by percentage width');
 });
 
