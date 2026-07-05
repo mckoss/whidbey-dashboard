@@ -439,7 +439,16 @@
     .ferry-alert-ticker.ticker-ready .ferry-alert-track {
       animation: ferryAlertScroll var(--ticker-duration, 42s) linear infinite;
     }
-    .ferry-alert-ticker:not(.ticker-ready) .ferry-alert-track {
+    .ferry-alert-ticker.ticker-static .ferry-alert-track {
+      width: 100%;
+      justify-content: center;
+      transform: none;
+      animation: none;
+    }
+    .ferry-alert-ticker.ticker-static .ferry-alert-copy {
+      padding-right: 0;
+    }
+    .ferry-alert-ticker:not(.ticker-ready):not(.ticker-static) .ferry-alert-track {
       transform: translateX(var(--ticker-enter, 100vw));
     }
     .ferry-alert-copy {
@@ -1615,17 +1624,24 @@ function adjustFerryAlertTickerSpeed(root) {
   const copyPixelWidth = copy.getBoundingClientRect().width || copy.scrollWidth;
   if (!textPixelWidth || !textCharCount || !copyPixelWidth) return;
 
+  const tickerPixelWidth = ticker.getBoundingClientRect().width || ticker.clientWidth;
+  if (!tickerPixelWidth) return;
+  if (copyPixelWidth <= tickerPixelWidth) {
+    ticker.classList.add('ticker-static');
+    ticker.classList.remove('ticker-ready');
+    return;
+  }
+
   const targetCharsPerSecond = 15;
   const minTickerDurationSeconds = 4;
   const pixelsPerCharacter = textPixelWidth / textCharCount;
   const pixelsPerSecond = pixelsPerCharacter * targetCharsPerSecond;
-  const tickerPixelWidth = ticker.getBoundingClientRect().width || ticker.clientWidth;
-  if (!tickerPixelWidth) return;
   const travelPixelWidth = tickerPixelWidth + copyPixelWidth;
   const durationSeconds = Math.max(minTickerDurationSeconds, travelPixelWidth / pixelsPerSecond);
   ticker.style.setProperty('--ticker-enter', `${tickerPixelWidth}px`);
   ticker.style.setProperty('--ticker-exit', `-${copyPixelWidth}px`);
   ticker.style.setProperty('--ticker-duration', `${Math.round(durationSeconds)}s`);
+  ticker.classList.remove('ticker-static');
   ticker.classList.add('ticker-ready');
 
   if (!track.dataset.swapListenerAttached) {
@@ -1642,6 +1658,11 @@ function updateFerryAlerts(alerts = []) {
 
   const activeTrack = el.querySelector('.ferry-alert-track');
   if (!activeTrack || currentFerryAlertSignature === null) {
+    applyFerryAlerts(alerts, signature);
+    return;
+  }
+  const activeTicker = el.querySelector('.ferry-alert-ticker');
+  if (activeTicker && activeTicker.classList.contains('ticker-static')) {
     applyFerryAlerts(alerts, signature);
     return;
   }

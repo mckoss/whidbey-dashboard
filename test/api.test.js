@@ -2745,10 +2745,16 @@ test('static HTML — ferry ticker scrolls from the right edge by measured pixel
   const dir = dn(fu(import.meta.url));
   const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
 
+  assert.match(html, /ticker-static/, 'has a static ticker mode for crawl text that fits onscreen');
+  assert.match(html, /\.ferry-alert-ticker:not\(\.ticker-ready\):not\(\.ticker-static\) \.ferry-alert-track/,
+    'unmeasured offscreen transform does not override static ticker mode');
+  assert.match(html, /copyPixelWidth <= tickerPixelWidth/, 'chooses static mode when the measured crawl fits');
   assert.match(html, /--ticker-enter/, 'sets the measured right-edge starting position');
   assert.match(html, /--ticker-exit/, 'sets the measured left-edge ending position');
   assert.match(html, /ticker\.classList\.add\('ticker-ready'\)/, 'starts animation only after measuring the row');
   assert.match(html, /tickerPixelWidth \+ copyPixelWidth/, 'duration is based on the full right-to-left travel distance');
+  assert.match(html, /classList\.contains\('ticker-static'\)[\s\S]*?applyFerryAlerts\(alerts, signature\)/,
+    'static ticker updates immediately because there is no animation boundary');
   assert.doesNotMatch(html, /to\s*\{\s*transform:\s*translateX\(-50%\)/, 'does not animate by percentage width');
 });
 
