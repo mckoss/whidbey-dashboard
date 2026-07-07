@@ -114,6 +114,10 @@ NOAA sometimes returns HTTP 200 with an error body — the server guards against
 
 Added to the weather card header (☀️/🌙 icons, stacked vertically). Data comes from Open-Meteo's `daily.sunrise/sunset` fields — no separate endpoint. Values stored as `window._sunriseMs` / `window._sunsetMs` globals, shared by the weather card and the sparkline day/night rendering.
 
+### Seawater Temperature
+
+The Whidbey weather card includes observed seawater temperature from NOAA CO-OPS Port Townsend station `9444900`. Hansville `9445526` is still the right local tide-prediction station, but it does not publish the `water_temperature` product. Keep seawater temperature as a compact right-aligned weather-title badge so it does not add height to the weather card.
+
 ### Color Palette
 
 - `--accent: #38bdf8` (sky blue) — tide highs, accents

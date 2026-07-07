@@ -118,6 +118,26 @@
       align-items: center;
       gap: 0.5rem;
     }
+    .weather-title {
+      justify-content: space-between;
+    }
+    .weather-title-main {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .seawater-temp {
+      margin-left: auto;
+      color: var(--accent);
+      font-size: 0.72rem;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.08em;
+      white-space: nowrap;
+    }
+    .seawater-temp-label {
+      color: var(--dim);
+    }
 
     .stale-badge {
       font-size: 0.65rem;
@@ -448,8 +468,11 @@
     .ferry-alert-ticker.ticker-static .ferry-alert-copy {
       padding-right: 0;
     }
+    .ferry-alert-ticker.ticker-static .ferry-alert-copy[aria-hidden="true"] {
+      display: none;
+    }
     .ferry-alert-ticker:not(.ticker-ready):not(.ticker-static) .ferry-alert-track {
-      transform: translateX(var(--ticker-enter, 100vw));
+      transform: translateX(0);
     }
     .ferry-alert-copy {
       display: inline-flex;
@@ -457,6 +480,7 @@
       box-sizing: border-box;
       gap: 2.2rem;
       padding-right: 2.2rem;
+      flex: 0 0 auto;
     }
     .ferry-alert-item {
       display: inline-flex;
@@ -483,7 +507,7 @@
       opacity: 0.92;
     }
     @keyframes ferryAlertScroll {
-      from { transform: translateX(var(--ticker-enter, 100vw)); }
+      from { transform: translateX(0); }
       to   { transform: translateX(var(--ticker-exit, -100%)); }
     }
 
@@ -744,6 +768,7 @@ const FERRY_ROUTE = window.__FERRY_ROUTE__ || {
   historyPath: '/ferry-history',
   apiPrefix: '/api/ferry',
   weatherPath: '/api/weather',
+  seawaterPath: '/api/seawater-temperature',
   tidesPath: '/api/tides',
   tidesHourlyPath: '/api/tides/hourly',
   weatherLabel: 'Clinton, WA',
@@ -995,12 +1020,57 @@ function staleBadge(data) {
   return '';
 }
 
+async function loadSeawaterTemperature() {
+  if (!FERRY_ROUTE.seawaterPath) return null;
+  const res = await fetch(FERRY_ROUTE.seawaterPath);
+  if (res.ok === false) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  return data;
+}
+
+function renderSeawaterTemperature(data) {
+  if (!Number.isFinite(data?.temperatureF)) return '';
+  const station = data.station?.label || data.station?.name || 'Port Townsend';
+  const observed = data.observedAt
+    ? new Date(data.observedAt).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true })
+    : '';
+  const title = `${data.source || 'NOAA'} ${station}${observed ? ` ${observed}` : ''}`;
+  return `<span id="seawater-temp" class="seawater-temp" title="${escapeHtml(title)}"><span class="seawater-temp-label">Sea</span> ${Math.round(data.temperatureF)}°F</span>`;
+}
+
+function updateSeawaterTemperatureDisplay(data) {
+  const html = renderSeawaterTemperature(data);
+  const el = document.getElementById('seawater-temp');
+  if (el) {
+    el.outerHTML = html;
+    return;
+  }
+  if (!html) return;
+  const title = document.querySelector('#weather .weather-title');
+  if (title) title.insertAdjacentHTML('beforeend', html);
+}
+
+async function refreshSeawaterTemperature() {
+  try {
+    updateSeawaterTemperatureDisplay(await loadSeawaterTemperature());
+  } catch (e) {
+    console.warn('[seawater] refresh failed:', e.message);
+    updateSeawaterTemperatureDisplay(null);
+  }
+}
+
 // ── Weather ────────────────────────────────────────────────────────────
 async function loadWeather() {
   const el = document.getElementById('weather');
   try {
-    const res = await fetch(FERRY_ROUTE.weatherPath || '/api/weather');
-    const d = await res.json();
+    const [d, seawater] = await Promise.all([
+      fetch(FERRY_ROUTE.weatherPath || '/api/weather').then(res => res.json()),
+      loadSeawaterTemperature().catch(e => {
+        console.warn('[seawater] load failed:', e.message);
+        return null;
+      }),
+    ]);
     const cur = d.current;
     const daily = d.daily;
 
@@ -1032,7 +1102,10 @@ async function loadWeather() {
       if (sunEl) sunEl.innerHTML = `<span>${sunIcon} ${riseStr}</span><span>${moonIcon} ${setStr}</span>`;
     }
     el.innerHTML = `
-      <div class="card-title">Weather · ${escapeHtml(FERRY_ROUTE.weatherLabel || 'Clinton, WA')} ${ageTag('weather', d)}</div>
+      <div class="card-title weather-title">
+        <span class="weather-title-main">Weather · ${escapeHtml(FERRY_ROUTE.weatherLabel || 'Clinton, WA')} ${ageTag('weather', d)}</span>
+        ${renderSeawaterTemperature(seawater)}
+      </div>
       <div class="current-weather">
         <div class="now-icon">${weatherIcon(cur.weather_code)}</div>
         <div class="now-temp">${Math.round(cur.temperature_2m)}°F</div>
@@ -1053,6 +1126,7 @@ async function loadWeather() {
             <div class="wind">💨 ${day.wind} mph ${day.windDir}</div>
           </div>`).join('')}
       </div>`;
+    return d._stale ? { retrySoon: true } : null;
   } catch (e) {
     el.innerHTML = `<div class="card-title">Weather</div><div class="error-msg">Failed to load weather: ${e.message}</div>`;
     throw e;
@@ -1440,7 +1514,8 @@ function sailingCard(s, parsedSailings, spaceMap, vesselMap = {}, fromTerminalId
       : `<div class="sail-fill-label" style="color:var(--accent2)">${spaceLabel}</div>`;
     fillHtml = `<div class="sail-fill-wrap">${label}</div>`;
   }
-  const vesselName = timing.serverResolved?.vesselName || '';
+  const vesselSource = timing.serverResolved?.vesselSource || 'none';
+  const vesselName = vesselSource === 'schedule-row' ? '' : (timing.serverResolved?.vesselName || '');
   const vesselHtml = vesselName ? `<div class="sail-vessel">${vesselName}</div>` : '';
   return `<div class="${cssClass}">${timeHtml}${vesselHtml}<div class="sail-status">${statusText}</div>${fillHtml}</div>`;
 }
@@ -1552,7 +1627,11 @@ function renderFerryAlerts(alerts = []) {
     const additionalInfo = String(a.additionalInfo || '').trim();
     const showDetail = !a.userMessage && detail && normalizeFerryAlertDisplayText(detail) !== normalizeFerryAlertDisplayText(title);
     const displayTitle = title || detail;
-    const baseDisplayText = a.userMessage ? detail : (showDetail ? `${displayTitle}: ${detail}` : displayTitle);
+    const baseDisplayText = a.userMessage
+      ? detail
+      : (showDetail
+        ? (ferryAlertDetailStartsWithTitle(title, detail) ? detail : `${displayTitle}: ${detail}`)
+        : displayTitle);
     const displayText = additionalInfo && !a.userMessage ? `${baseDisplayText} (${additionalInfo})` : baseDisplayText;
     const danger = ferryAlertIsDanger(a);
     const color = String(a.color || '').trim();
@@ -1563,7 +1642,7 @@ function renderFerryAlerts(alerts = []) {
   }).join('');
   const visibleText = displayTextParts.join('   ');
   const tickerDurationSeconds = Math.max(minTickerDurationSeconds, Math.round(visibleText.length / tickerCharsPerSecond));
-  return `<div class="ferry-alert-ticker" style="--ticker-duration: ${tickerDurationSeconds}s"><div class="ferry-alert-track"><div class="ferry-alert-copy">${items}</div></div></div>`;
+  return `<div class="ferry-alert-ticker" style="--ticker-duration: ${tickerDurationSeconds}s"><div class="ferry-alert-track"><div class="ferry-alert-copy">${items}</div><div class="ferry-alert-copy" aria-hidden="true">${items}</div></div></div>`;
 }
 
 function normalizeFerryAlertDisplayText(value = '') {
@@ -1571,6 +1650,23 @@ function normalizeFerryAlertDisplayText(value = '') {
     .replace(/\s+/g, ' ')
     .replace(/[.。]+$/g, '')
     .trim();
+}
+
+function normalizeFerryAlertComparableText(value = '') {
+  return String(value)
+    .toLowerCase()
+    .replace(/&amp;/g, 'and')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function ferryAlertDetailStartsWithTitle(title = '', detail = '') {
+  const normalizedTitle = normalizeFerryAlertComparableText(title);
+  const normalizedDetail = normalizeFerryAlertComparableText(detail);
+  return normalizedTitle &&
+    normalizedDetail &&
+    (normalizedDetail === normalizedTitle || normalizedDetail.startsWith(`${normalizedTitle} `));
 }
 
 function ferryAlertIsDanger(alert = {}) {
@@ -1636,9 +1732,8 @@ function adjustFerryAlertTickerSpeed(root) {
   const minTickerDurationSeconds = 4;
   const pixelsPerCharacter = textPixelWidth / textCharCount;
   const pixelsPerSecond = pixelsPerCharacter * targetCharsPerSecond;
-  const travelPixelWidth = tickerPixelWidth + copyPixelWidth;
+  const travelPixelWidth = copyPixelWidth;
   const durationSeconds = Math.max(minTickerDurationSeconds, travelPixelWidth / pixelsPerSecond);
-  ticker.style.setProperty('--ticker-enter', `${tickerPixelWidth}px`);
   ticker.style.setProperty('--ticker-exit', `-${copyPixelWidth}px`);
   ticker.style.setProperty('--ticker-duration', `${Math.round(durationSeconds)}s`);
   ticker.classList.remove('ticker-static');
@@ -1797,9 +1892,9 @@ function scheduleLoader(fn, normalMs) {
   let timer = null;
   async function run() {
     try {
-      await fn();
+      const result = await fn();
       loaderSuccess[fn.name] = true;
-      timer = setTimeout(run, normalMs);
+      timer = setTimeout(run, result?.retrySoon ? RETRY_MS : normalMs);
     } catch (e) {
       loaderSuccess[fn.name] = false;
       timer = setTimeout(run, RETRY_MS);
@@ -1809,6 +1904,7 @@ function scheduleLoader(fn, normalMs) {
 }
 
 scheduleLoader(loadWeather, 60 * 60 * 1000);   // 1 hour, retry 5 min
+scheduleLoader(refreshSeawaterTemperature, 10 * 60 * 1000); // 10 min, retry 5 min
 scheduleLoader(loadTides,  120 * 60 * 1000);   // 2 hours, retry 5 min
 scheduleLoader(loadFerry,   30 * 1000);        // 30 sec,  retry 5 min
 

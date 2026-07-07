@@ -67,6 +67,7 @@ const FERRY_ROUTES = {
     crossingEstimateMs: 20 * 60 * 1000,
     weather: { label: 'Clinton, WA', lat: CONFIG.lat, lon: CONFIG.lon, cacheKey: 'weather' },
     tides: { label: 'Hansville', station: CONFIG.noaaStation, cacheKey: 'tides' },
+    seawater: { label: 'Port Townsend', station: '9444900', cacheKey: 'seawater_temperature_whidbey' },
     primary: { slug: 'clinton', name: 'Clinton', id: CONFIG.wsfDepartingTerminal, lat: 47.9755, lon: -122.3493 },
     secondary: { slug: 'mukilteo', name: 'Mukilteo', id: CONFIG.wsfArrivingTerminal, lat: 47.9485, lon: -122.3046 },
   },
@@ -95,6 +96,7 @@ const FERRY_ROUTES = {
 };
 const DEFAULT_FERRY_ROUTE = FERRY_ROUTES.whidbey;
 const WEATHER_CACHE_SCHEMA = 'nws-solar-v2';
+const SEAWATER_TEMPERATURE_CACHE_MS = 10 * 60 * 1000;
 const TERMINAL_NAMES = new Map(Object.values(FERRY_ROUTES).flatMap(route => [
   [route.primary.id, route.primary.name],
   [route.secondary.id, route.secondary.name],
@@ -1446,6 +1448,43 @@ function tidesHourlyEndpoint(route = DEFAULT_FERRY_ROUTE) {
   });
 }
 
+// ── Seawater temperature (observed NOAA CO-OPS station) ────────────────
+function seawaterTemperatureEndpoint(route = DEFAULT_FERRY_ROUTE) {
+  return cachedEndpoint(route.seawater.cacheKey, SEAWATER_TEMPERATURE_CACHE_MS, async () => {
+    return fetchNoaaSeawaterTemperature(route);
+  });
+}
+
+async function fetchNoaaSeawaterTemperature(route = DEFAULT_FERRY_ROUTE) {
+  if (!route.seawater) throw new Error('Seawater temperature is not configured for this route');
+  const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter` +
+    `?date=latest&station=${route.seawater.station}` +
+    `&product=water_temperature&units=english&time_zone=lst_ldt` +
+    `&application=whidbey_dashboard&format=json`;
+  const r = await fetchWithRetry(url);
+  const data = await r.json();
+  if (data.error) throw new Error(data.error.message || 'NOAA returned error');
+  const reading = Array.isArray(data.data) ? data.data[0] : null;
+  const temperatureF = Number(reading?.v);
+  if (!reading?.t || !Number.isFinite(temperatureF)) {
+    throw new Error('NOAA returned no seawater temperature reading');
+  }
+  return {
+    source: 'NOAA CO-OPS',
+    station: {
+      id: String(data.metadata?.id || route.seawater.station),
+      name: String(data.metadata?.name || route.seawater.label),
+      label: route.seawater.label,
+      lat: data.metadata?.lat ? Number(data.metadata.lat) : null,
+      lon: data.metadata?.lon ? Number(data.metadata.lon) : null,
+    },
+    temperatureF,
+    observedAt: reading.t.replace(' ', 'T') + ':00' + pacificOffset(),
+    observedAtLocal: reading.t,
+    units: 'F',
+  };
+}
+
 // ── Weather (NWS primary, Open-Meteo fallback) ─────────────────────────
 function weatherEndpoint(route = DEFAULT_FERRY_ROUTE) {
   return cachedEndpointStaleWhileRefresh(route.weather.cacheKey, 60 * 60 * 1000, async () => {
@@ -1743,6 +1782,7 @@ function acosDeg(value) { return Math.acos(value) * 180 / Math.PI; }
 function atanDeg(value) { return Math.atan(value) * 180 / Math.PI; }
 
 app.get('/api/weather', weatherEndpoint(FERRY_ROUTES.whidbey));
+app.get('/api/seawater-temperature', seawaterTemperatureEndpoint(FERRY_ROUTES.whidbey));
 app.get('/api/tides', tidesEndpoint(FERRY_ROUTES.whidbey));
 app.get('/api/tides/hourly', tidesHourlyEndpoint(FERRY_ROUTES.whidbey));
 app.get('/api/bainbridge/ferry/weather', weatherEndpoint(FERRY_ROUTES.bainbridge));
@@ -2088,6 +2128,9 @@ function ferryRouteClientConfig(route = DEFAULT_FERRY_ROUTE) {
     routeId: route.routeId,
     crossingEstimateMs: route.crossingEstimateMs,
     weatherPath: route.key === DEFAULT_FERRY_ROUTE.key ? '/api/weather' : `${route.apiPrefix}/weather`,
+    seawaterPath: route.seawater
+      ? (route.key === DEFAULT_FERRY_ROUTE.key ? '/api/seawater-temperature' : `${route.apiPrefix}/seawater-temperature`)
+      : null,
     tidesPath: route.key === DEFAULT_FERRY_ROUTE.key ? '/api/tides' : `${route.apiPrefix}/tides`,
     tidesHourlyPath: route.key === DEFAULT_FERRY_ROUTE.key ? '/api/tides/hourly' : `${route.apiPrefix}/tides/hourly`,
     weatherLabel: route.weather.label,
@@ -3308,6 +3351,8 @@ function ferryResolvedSailingSummary(day, nowMs = Date.now(), summaries = {}) {
     }
 
     const vessel = resolvedVessels[key] || {};
+    const vesselSource = vessel.source || 'none';
+    const displayVesselName = vesselSource === 'schedule-row' ? '' : (vessel.vesselName || '');
     resolved[key] = {
       direction: trip.direction,
       fromTerminalId: trip.fromTerminalId,
@@ -3325,9 +3370,9 @@ function ferryResolvedSailingSummary(day, nowMs = Date.now(), summaries = {}) {
       isMissed: status === 'missed',
       isUnknown: status === 'unknown',
       isReturning: status === 'returning',
-      vesselName: vessel.vesselName || '',
-      vesselId: vessel.vesselId || null,
-      vesselSource: vessel.source || 'none',
+      vesselName: displayVesselName,
+      vesselId: displayVesselName ? (vessel.vesselId || null) : null,
+      vesselSource,
     };
   }
 

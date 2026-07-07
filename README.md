@@ -8,6 +8,7 @@ See the hosted version at [whidbey-dashboard.mckoss.com](https://whidbey-dashboa
 
 - 🕐 Real-time digital clock (12-hour, am/pm)
 - 🌤 3-day weather forecast with current conditions (NWS primary, Open-Meteo fallback)
+- 🌊 Observed seawater temperature from NOAA Port Townsend in the weather header
 - 🌅 Sunrise & sunset times (calculated locally, shown in weather card header)
 - 🌕 Moon phase display — SVG rendered client-side with pure geometry, no images
 - 🌊 Tide predictions — hi/lo table + sparkline + thermometer (NOAA Hansville station)
@@ -180,6 +181,7 @@ even if another Google account successfully signs in.
 | Data | Source | API Key | Client Refresh | Server Cache |
 |------|--------|---------|---------------|-------------|
 | Weather | [NWS API](https://api.weather.gov) primary, [Open-Meteo](https://open-meteo.com) fallback | No | 1 hour | 1 hour |
+| Seawater temperature | [NOAA CO-OPS](https://tidesandcurrents.noaa.gov) station 9444900 (Port Townsend) | No | 10 min | 10 min |
 | Tides (hi/lo) | [NOAA CO-OPS](https://tidesandcurrents.noaa.gov) station 9445526 | No | 2 hours | 2 hours |
 | Tides (hourly) | NOAA (cosine-interpolated from hi/lo) | No | 2 hours | 2 hours |
 | Ferry schedule | [WSDOT Traveler API](https://www.wsdot.wa.gov/ferries/api/) | Yes (free) | 30 sec | 30 sec |
@@ -221,6 +223,7 @@ Each card shows an inline age tag after the title. Thresholds are per-source:
 | Endpoint | Description |
 |----------|-------------|
 | `GET /api/weather` | 3-day forecast + current conditions + sunrise/sunset |
+| `GET /api/seawater-temperature` | Latest observed seawater temperature from NOAA Port Townsend |
 | `GET /api/tides` | Hi/lo predictions, 3 days |
 | `GET /api/tides/hourly` | Cosine-interpolated hourly predictions, 52h |
 | `GET /api/ferry/clinton` | Clinton→Mukilteo schedule (today) |

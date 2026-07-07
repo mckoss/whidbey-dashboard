@@ -274,6 +274,25 @@ test('weather endpoint — returns current temperature and 3-day forecast', asyn
     'daily sunset stays on the forecast local date');
 });
 
+test('seawater-temperature endpoint — returns Port Townsend observed seawater temperature', async () => {
+  const d = await getJson('/api/seawater-temperature');
+
+  assert.equal(d.source, 'NOAA CO-OPS', 'uses NOAA CO-OPS observed data');
+  assert.equal(d.station.id, '9444900', 'uses Port Townsend station');
+  assert.equal(d.station.label, 'Port Townsend', 'labels the station for display');
+  assert.ok(Number.isFinite(d.temperatureF), 'temperatureF is numeric');
+  assert.ok(d.temperatureF > 30 && d.temperatureF < 80,
+    `seawater temperature ${d.temperatureF}°F is in plausible Puget Sound range`);
+  assert.match(d.observedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}-\d{2}:\d{2}$/,
+    'observedAt is a timestamp with explicit Pacific offset');
+
+  const source = await readFile(join(__dirname, '../public/index.html'), 'utf8');
+  assert.match(source, /seawaterPath: '\/api\/seawater-temperature'/,
+    'client default route knows the seawater temperature endpoint');
+  assert.match(source, /class="seawater-temp"/,
+    'weather heading renders a compact seawater temperature badge');
+});
+
 test('tides endpoint — returns predictions array with H/L types', async () => {
   const d = await getJson('/api/tides');
 
@@ -1488,10 +1507,10 @@ test('ferry/departures endpoint — approach-zone vessel is not available until 
 });
 
 test('ferry/departures endpoint — newly docked vessel waits for terminal turnaround before availability', async () => {
-  const historyDate = '2026-07-06';
-  const sampledAtMs = Date.UTC(2026, 6, 6, 16, 0);
-  const dockArrivalMs = Date.UTC(2026, 6, 6, 15, 58);
-  const m1605 = Date.UTC(2026, 6, 6, 16, 5);
+  const historyDate = '2026-07-05';
+  const sampledAtMs = Date.UTC(2026, 6, 5, 16, 0);
+  const dockArrivalMs = Date.UTC(2026, 6, 5, 15, 58);
+  const m1605 = Date.UTC(2026, 6, 5, 16, 5);
   const expectedDepartureMs = dockArrivalMs + 10 * 60 * 1000;
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
@@ -1503,7 +1522,7 @@ test('ferry/departures endpoint — newly docked vessel waits for terminal turna
       ferryTestTrip(historyDate, 'mukilteo-to-clinton', 14, 5, m1605),
     ],
     vesselSamples: [
-      ferryTestSample(Date.UTC(2026, 6, 6, 15, 54), 'Tokitae', 68, 0.94, { arrivingTerminalId: 14, atDock: false }),
+      ferryTestSample(Date.UTC(2026, 6, 5, 15, 54), 'Tokitae', 68, 0.94, { arrivingTerminalId: 14, atDock: false }),
       ferryTestSample(dockArrivalMs, 'Tokitae', 68, 1, { arrivingTerminalId: 14, atDock: true }),
       ferryTestSample(sampledAtMs, 'Tokitae', 68, 1, { arrivingTerminalId: 14, atDock: true }),
     ],
@@ -1524,10 +1543,10 @@ test('ferry/departures endpoint — newly docked vessel waits for terminal turna
 });
 
 test('ferry/departures endpoint — still-docked vessel keeps a future departure floor after dwell estimate expires', async () => {
-  const historyDate = '2026-07-07';
-  const sampledAtMs = Date.UTC(2026, 6, 7, 16, 0);
-  const dockArrivalMs = Date.UTC(2026, 6, 7, 15, 40);
-  const m1545 = Date.UTC(2026, 6, 7, 15, 45);
+  const historyDate = '2026-07-04';
+  const sampledAtMs = Date.UTC(2026, 6, 4, 16, 0);
+  const dockArrivalMs = Date.UTC(2026, 6, 4, 15, 40);
+  const m1545 = Date.UTC(2026, 6, 4, 15, 45);
   const expectedDepartureMs = sampledAtMs + 60 * 1000;
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
@@ -1537,7 +1556,7 @@ test('ferry/departures endpoint — still-docked vessel keeps a future departure
     sampledAtMs,
     vesselSamples: [
       ferryTestSample(dockArrivalMs, 'Tokitae', 68, 1, { arrivingTerminalId: 14, atDock: true }),
-      ferryTestSample(Date.UTC(2026, 6, 7, 15, 50), 'Tokitae', 68, 1, { arrivingTerminalId: 14, atDock: true }),
+      ferryTestSample(Date.UTC(2026, 6, 4, 15, 50), 'Tokitae', 68, 1, { arrivingTerminalId: 14, atDock: true }),
       ferryTestSample(sampledAtMs, 'Tokitae', 68, 1, { arrivingTerminalId: 14, atDock: true }),
     ],
     currentVessels: [],
@@ -2117,6 +2136,10 @@ test('static HTML — index.html contains required elements', async () => {
   assert.match(html, /\/api\/messages\?route=\$\{encodeURIComponent\(FERRY_ROUTE\.key\)\}/,
     'dashboard fetches crawl messages for the active ferry route');
   assert.match(html, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s*minmax\(0,\s*1fr\)/, 'main grid columns can shrink to viewport');
+  assert.match(html, /return d\._stale \? \{ retrySoon: true \} : null;/,
+    'stale weather responses ask the scheduler to retry soon');
+  assert.match(html, /result\?\.retrySoon \? RETRY_MS : normalMs/,
+    'scheduler supports successful loads that still need a quick retry');
   assert.ok(html.includes('Whidbey'), 'mentions Whidbey');
 });
 
@@ -2690,6 +2713,10 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
     },
     { title: 'Title-only advisory', text: '' },
     { title: 'Terminal status', text: '2 Hour Wait for Drivers' },
+    {
+      title: 'Vessels running 20-25 minutes behind schedule',
+      text: 'Vessels running 20-25 minutes behind schedule. View the Real-Time Map.',
+    },
     { title: 'General notice', text: 'Good morning. How are you doing?' },
     { title: '', text: 'Dinner at 6:30.', color: 'orange', userMessage: true },
   ];
@@ -2699,8 +2726,12 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
     const detail = String(a.text || '').trim();
     const additionalInfo = String(a.additionalInfo || '').trim();
     const normalize = (value) => String(value).replace(/\s+/g, ' ').replace(/[.。]+$/g, '').trim();
+    const comparable = (value) => String(value).toLowerCase().replace(/&amp;/g, 'and').replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+    const detailStartsWithTitle = comparable(title) && comparable(detail).startsWith(`${comparable(title)} `);
     if (a.userMessage) return detail;
-    const text = detail && normalize(detail) !== normalize(title) ? `${title || detail}: ${detail}` : (title || detail);
+    const text = detail && normalize(detail) !== normalize(title)
+      ? (detailStartsWithTitle ? detail : `${title || detail}: ${detail}`)
+      : (title || detail);
     return additionalInfo ? `${text} (${additionalInfo})` : text;
   };
   const visibleText = alerts
@@ -2714,11 +2745,16 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
   assert.match(ticker, /<span class="ferry-alert-detail">Low tide warning: Loading may be restricted\.<\/span>/, 'meaningfully different detail uses title-colon-detail text');
   assert.doesNotMatch(ticker, /<span class="ferry-alert-title">Low tide warning<\/span>/, 'meaningfully different title is not rendered bold separately');
   assert.match(ticker, /Good morning\. How are you doing\?/, 'renders general WSF notice text');
+  assert.match(ticker, /Vessels running 20-25 minutes behind schedule\. View the Real-Time Map\./,
+    'title-prefix details render with the repeated title only once');
+  assert.doesNotMatch(ticker, /Vessels running 20-25 minutes behind schedule: Vessels running 20-25 minutes behind schedule/,
+    'title-prefix details are not rendered as title-colon-repeated-detail');
   assert.match(ticker, /Dinner at 6:30\./, 'renders user-added crawl messages');
   assert.doesNotMatch(ticker, /Dinner at 6:30\.: Dinner at 6:30\./, 'user-added crawl messages are not formatted as duplicated title/detail text');
   assert.match(ticker, /Good morning\. How are you doing\?[\s\S]*Dinner at 6:30\./, 'user-added crawl messages are appended after WSF alerts in the crawl');
   assert.match(ticker, new RegExp(`--ticker-duration: ${expectedTickerDuration}s`), 'sets ticker speed from visible text at 15 cps');
-  assert.equal((ticker.match(/class="ferry-alert-copy"/g) || []).length, 1, 'renders one measured crawl copy');
+  assert.equal((ticker.match(/class="ferry-alert-copy"/g) || []).length, 2, 'renders measured and duplicate crawl copies');
+  assert.equal((ticker.match(/aria-hidden="true"/g) || []).length, 1, 'marks the duplicate crawl copy hidden from assistive tech');
   assert.doesNotMatch(ticker, /ferry-alert-ticker danger/, 'mixed ticker does not make every alert red');
   assert.match(ticker, /ferry-alert-item danger[\s\S]*One vessel canceled/, 'disruptive alert item is red');
   assert.match(ticker, /ferry-alert-item(?! danger)[^>]*><span class="ferry-alert-detail">Pets: New pet rules effective May 20\./, 'informational all-routes item stays yellow');
@@ -2727,8 +2763,8 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
   assert.match(ticker, /ferry-alert-item user-message" style="color: orange"><span class="ferry-alert-detail">Dinner at 6:30\./, 'user message color renders as item color');
   assert.equal(
     (ticker.match(/Construction activity at Clinton terminal June 8 - July 3/g) || []).length,
-    1,
-    'trailing punctuation differences do not duplicate alert title/detail within the ticker copy'
+    2,
+    'trailing punctuation differences do not duplicate alert title/detail within either ticker copy'
   );
   assert.match(html, /\.ferry-alert-item\s*\{[\s\S]*?color:\s*inherit;/, 'alert item text inherits ticker severity color');
   assert.match(html, /\.ferry-alert-item\.danger\s*\{[\s\S]*?color:\s*var\(--danger\);/, 'only disruptive alert items use danger red');
@@ -2738,7 +2774,7 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
   assert.match(html, /@media \(min-width:\s*1000px\) and \(min-height:\s*600px\)[\s\S]*?\.ferry-alert-item\s*\{[\s\S]*?font-size:\s*1\.56rem;/, 'large displays double the ferry crawl font size');
 });
 
-test('static HTML — ferry ticker scrolls from the right edge by measured pixel distance', async () => {
+test('static HTML — ferry ticker wraps continuously by measured copy width', async () => {
   const { readFileSync } = await import('fs');
   const { dirname: dn, join: jn } = await import('path');
   const { fileURLToPath: fu } = await import('url');
@@ -2746,13 +2782,14 @@ test('static HTML — ferry ticker scrolls from the right edge by measured pixel
   const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
 
   assert.match(html, /ticker-static/, 'has a static ticker mode for crawl text that fits onscreen');
-  assert.match(html, /\.ferry-alert-ticker:not\(\.ticker-ready\):not\(\.ticker-static\) \.ferry-alert-track/,
-    'unmeasured offscreen transform does not override static ticker mode');
+  assert.match(html, /\.ferry-alert-ticker:not\(\.ticker-ready\):not\(\.ticker-static\) \.ferry-alert-track[\s\S]*?translateX\(0\)/,
+    'unmeasured ticker starts visible instead of leaving a blank lead-in');
+  assert.match(html, /\.ferry-alert-ticker\.ticker-static \.ferry-alert-copy\[aria-hidden="true"\][\s\S]*?display:\s*none;/,
+    'static ticker hides the duplicate wrap copy');
   assert.match(html, /copyPixelWidth <= tickerPixelWidth/, 'chooses static mode when the measured crawl fits');
-  assert.match(html, /--ticker-enter/, 'sets the measured right-edge starting position');
   assert.match(html, /--ticker-exit/, 'sets the measured left-edge ending position');
   assert.match(html, /ticker\.classList\.add\('ticker-ready'\)/, 'starts animation only after measuring the row');
-  assert.match(html, /tickerPixelWidth \+ copyPixelWidth/, 'duration is based on the full right-to-left travel distance');
+  assert.match(html, /const travelPixelWidth = copyPixelWidth;/, 'duration is based on one seamless copy loop');
   assert.match(html, /classList\.contains\('ticker-static'\)[\s\S]*?applyFerryAlerts\(alerts, signature\)/,
     'static ticker updates immediately because there is no animation boundary');
   assert.doesNotMatch(html, /to\s*\{\s*transform:\s*translateX\(-50%\)/, 'does not animate by percentage width');
@@ -3920,6 +3957,65 @@ test('late ferry logic — departed delayed sailing shows actual and scheduled t
   assert.match(card, /sail-time-actual">5:40 PM/, 'shows the actual/best-known departure time');
   assert.match(card, /sail-time-sched">\(was 5:05 PM\)/, 'keeps the scheduled time for history');
   assert.doesNotMatch(card, /sail-time-est"/, 'confirmed historical delay is not styled as red estimate');
+});
+
+test('late ferry logic — schedule-only vessel names are not rendered on live chips', async () => {
+  const { readFileSync } = await import('fs');
+  const { dirname: dn, join: jn } = await import('path');
+  const { fileURLToPath: fu } = await import('url');
+  const dir = dn(fu(import.meta.url));
+  const html = readFileSync(jn(dir, '..', 'public', 'index.html'), 'utf8');
+  const script = html.match(/<script[^>]*>([\s\S]*?)<\/script>/)[1];
+
+  const fixedNow = Date.UTC(2026, 6, 7, 23, 30); // 4:30 PM PDT
+  class FakeDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [fixedNow])); }
+    static now() { return fixedNow; }
+  }
+  Object.assign(FakeDate, Date);
+
+  const nullEl = { style: {}, className: '', textContent: '', innerHTML: '', querySelector: () => null };
+  const context = {
+    console,
+    Date: FakeDate,
+    setInterval: () => 0,
+    setTimeout: () => 0,
+    clearInterval: () => {},
+    fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
+    document: {
+      getElementById: () => nullEl,
+      querySelector: () => nullEl,
+      createElement: () => ({}),
+      head: { appendChild: () => {} },
+    },
+    window: {},
+  };
+  vm.createContext(context);
+  vm.runInContext(script + `\nthis.__lateTest = { buildVesselMap, sailingCard };`, context);
+
+  const sailingMs = Date.UTC(2026, 6, 8, 3, 0); // 8:00 PM PDT
+  const sailing = {
+    sailTime: new Date(sailingMs),
+    DepartingTime: `/Date(${sailingMs})/`,
+  };
+  const vesselMap = context.__lateTest.buildVesselMap(null, {
+    resolvedSailings: {
+      [`14:${sailingMs}`]: {
+        fromTerminalId: 14,
+        toTerminalId: 5,
+        scheduledDepartureMs: sailingMs,
+        effectiveDepartureMs: sailingMs,
+        status: 'scheduled',
+        timingSource: 'schedule-row',
+        vesselName: 'Suquamish',
+        vesselSource: 'schedule-row',
+      },
+    },
+  });
+
+  const card = context.__lateTest.sailingCard(sailing, [sailing], {}, vesselMap, 14);
+  assert.match(card, /<div class="sail-time">8:00 PM<\/div>/, 'renders the scheduled sailing time');
+  assert.doesNotMatch(card, /sail-vessel">Suquamish<\/div>/, 'does not present a nominal schedule-row vessel as live assignment');
 });
 
 test('weather endpoint — second request is served from cache', async () => {
