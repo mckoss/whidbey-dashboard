@@ -213,11 +213,13 @@ otherwise.
 
 ## Staleness Indicators
 
-Each card shows an inline age tag after the title. Thresholds are per-source:
+Cards stay quiet during normal refreshes and short-lived cache use. Inline
+warnings appear only for persistent or actionable feed problems:
 
-- **Fresh (✓ live):** within 1× the refresh interval
-- **Amber (⚠ Xm old):** 1.5× the refresh interval
-- **Red/pulsing (⚠ Xm old):** beyond 2.5× the refresh interval
+- **Weather:** hidden unless weather data is at least 3 hours old.
+- **Ferry:** hidden unless ferry data is at least 10 minutes old.
+- **Tides:** hidden while cached predictions still cover at least 1 hour ahead;
+  red only when tide prediction coverage is expired or within 1 hour of expiring.
 
 ## API Endpoints
 

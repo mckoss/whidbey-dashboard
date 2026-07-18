@@ -2207,6 +2207,18 @@ test('static HTML — index.html contains required elements', async () => {
   assert.ok(html.includes('Whidbey'), 'mentions Whidbey');
 });
 
+test('static HTML — data warnings stay quiet until problems are actionable', async () => {
+  const html = await readFile(join(__dirname, '../public/index.html'), 'utf8');
+
+  assert.match(html, /const PERSISTENT_STALE_MINUTES = \{[\s\S]*?'weather': 180,[\s\S]*?'ferry-clinton': 10,[\s\S]*?'ferry-mukilteo': 10,/,
+    'weather and ferry badges use persistent-warning thresholds');
+  assert.match(html, /if \(coverageH < 1\)\s+return `<span class="age-tag old"\s+id="tides-age">⚠ Tide data expires &lt;1h<\/span>`;/,
+    'tides warn only when cached prediction coverage is under an hour');
+  for (const noisyText of ['NOAA CACHE', 'CACHE ${Math.floor(coverageH)}H', '✓ live']) {
+    assert.ok(!html.includes(noisyText), `dashboard does not show noisy badge text: ${noisyText}`);
+  }
+});
+
 test('bainbridge pages — serve the shared dashboard with Bainbridge route config', async () => {
   const dashboardRes = await fetch(`${BASE}/bainbridge`);
   assert.ok(dashboardRes.ok, 'Bainbridge dashboard responds OK');

@@ -98,13 +98,15 @@ NOAA station 9445526 (Hansville) is a subordinate station — it only provides h
 
 ### Staleness Indicators
 
-Each card has an inline age tag after its title. The staleness system is **per-source** — each data type only warns when it's older than its own refresh interval:
+Each card has an inline age tag after its title, but quiet is the normal state.
+Do not show freshness or slightly-stale badges. The dashboard should warn only
+when a feed problem is persistent enough to matter to someone glancing at it:
 
-| Source | Refresh | Amber (⚠) | Red (pulsing ⚠) |
-|--------|---------|-----------|-----------------|
-| Weather | 1 hour | >90 min (1.5×) | >2.5 hours (2.5×) |
-| Tides | 2 hours | >3 hours (1.5×) | >5 hours (2.5×) |
-| Ferry | 5 min | >7.5 min (1.5×) | >12.5 min (2.5×) |
+| Source | Refresh | Visible Warning |
+|--------|---------|-----------------|
+| Weather | 1 hour | Weather data at least 3 hours old |
+| Tides | 2 hours | Prediction coverage expired or under 1 hour remaining |
+| Ferry | 30 sec | Ferry data at least 10 minutes old |
 
 Server-side cache TTLs match client refresh intervals. Data query windows include headroom (e.g., tide hourly fetches 52h for 48h display + 2h refresh buffer).
 
