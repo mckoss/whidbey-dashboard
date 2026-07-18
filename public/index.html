@@ -942,6 +942,7 @@ const PERSISTENT_STALE_MINUTES = {
   'ferry-clinton': 10,
   'ferry-mukilteo': 10,
 };
+const TIDE_SPARKLINE_HOURS = 72;
 const TIDE_GRAPH_WARNING_LEAD_HOURS = 1;
 
 const AGE_TAG_LABELS = {
@@ -978,14 +979,20 @@ function tideAgeTag() {
   if (!_lastHourlyPredictions || !_lastHourlyPredictions.length) {
     return `<span class="age-tag old" id="tides-age">⚠ Tide data unavailable</span>`;
   }
+  const firstPt = _lastHourlyPredictions[0];
   const lastPt = _lastHourlyPredictions[_lastHourlyPredictions.length - 1];
+  const graphEndMs = new Date(firstPt.t).getTime() + TIDE_SPARKLINE_HOURS * 3600000;
   const nowMs = Date.now();
-  const coverageMs = new Date(lastPt.t).getTime() - nowMs;
+  const lastMs = new Date(lastPt.t).getTime();
+  const coverageMs = lastMs - nowMs;
   const coverageH = coverageMs / 3600000;
   if (coverageH < 0) return `<span class="age-tag old" id="tides-age">⚠ Tide data expired</span>`;
+  const endTime = new Date(lastPt.t).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
   if (coverageH < TIDE_GRAPH_WARNING_LEAD_HOURS) {
-    const endTime = new Date(lastPt.t).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
     return `<span class="age-tag old" id="tides-age">⚠ Tide data ends ${endTime}</span>`;
+  }
+  if (lastMs < graphEndMs - 30 * 60 * 1000) {
+    return `<span class="age-tag warn" id="tides-age">⚠ Tide data ends ${endTime}</span>`;
   }
   return `<span class="age-tag quiet" id="tides-age"></span>`;
 }
@@ -1189,40 +1196,47 @@ function buildThermometer(currentFt, minFt, maxFt, rising) {
 function buildSparkline(hourlyPredictions) {
   if (!hourlyPredictions || hourlyPredictions.length < 2) return '';
 
-  const values = hourlyPredictions.map(p => parseFloat(p.v));
-  const times  = hourlyPredictions.map(p => new Date(p.t));
-  const minV = Math.min(...values);
-  const maxV = Math.max(...values);
-  const range = maxV - minV || 1;
+  const samples = hourlyPredictions
+    .map(p => ({ t: new Date(p.t), v: parseFloat(p.v) }))
+    .filter(p => Number.isFinite(p.t.getTime()) && Number.isFinite(p.v))
+    .sort((a, b) => a.t - b.t);
+  if (samples.length < 2) return '';
+
+  const times  = samples.map(p => p.t);
 
   const W = 400, H = 56, PAD_T = 2, PAD_B = 12, PAD_X = 2;
   const plotH = H - PAD_T - PAD_B;
-  const n = values.length;
 
-  const xOf = i => PAD_X + (i / (n - 1)) * (W - PAD_X * 2);
+  // Keep the x-axis invariant. If data runs out, the right edge stays empty
+  // instead of stretching the remaining tide curve across the full graph.
+  const startMs2 = times[0].getTime();
+  const endMs2 = startMs2 + TIDE_SPARKLINE_HOURS * 3600 * 1000;
+  const totalMs = endMs2 - startMs2;
+  const xOfMs = ms => PAD_X + Math.max(0, Math.min(1, (ms - startMs2) / totalMs)) * (W - PAD_X * 2);
+
+  const visibleSamples = samples.filter(p => p.t.getTime() >= startMs2 && p.t.getTime() <= endMs2);
+  if (visibleSamples.length < 2) return '';
+  const values = visibleSamples.map(p => p.v);
+  const minV = Math.min(...values);
+  const maxV = Math.max(...values);
+  const range = maxV - minV || 1;
   const yOf = v => PAD_T + plotH * (1 - (v - minV) / range);
-
-  const pts = values.map((v, i) => `${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`);
+  const pts = visibleSamples.map(p => `${xOfMs(p.t.getTime()).toFixed(1)},${yOf(p.v).toFixed(1)}`);
+  const firstX = xOfMs(visibleSamples[0].t.getTime()).toFixed(1);
+  const lastX = xOfMs(visibleSamples[visibleSamples.length - 1].t.getTime()).toFixed(1);
 
   // "Now" marker
   const nowMs = Date.now();
-  const nowIdx = times.findIndex(t => t.getTime() > nowMs);
   let nowLine = '';
-  if (nowIdx > 0) {
-    const nx = xOf(nowIdx);
+  if (nowMs >= startMs2 && nowMs <= endMs2) {
+    const nx = xOfMs(nowMs);
     nowLine = `<line x1="${nx.toFixed(1)}" y1="${PAD_T}" x2="${nx.toFixed(1)}" y2="${PAD_T+plotH}" stroke="#8899aa" stroke-width="1.5" stroke-dasharray="3,2"/>`;
   }
-
-  // Time range (shared by tick marks and daylight band)
-  const startMs2 = times[0].getTime();
-  const endMs2   = times[n-1].getTime();
-  const totalMs  = endMs2 - startMs2;
 
   // Key time markers: 6am, noon, 6pm, midnight - bold lines, minimal labels
   let ticks = '';
   // Find next occurrence of 6, 12, 18, 0 hours from start
   const keyHours = [0, 6, 12, 18];
-  const startDt = new Date(startMs2);
   // iterate hours across the full range
   for (let ms = startMs2; ms <= endMs2; ms += 3600 * 1000) {
     const pacStr = new Date(ms).toLocaleString('sv-SE', { timeZone: TZ });
@@ -1230,8 +1244,7 @@ function buildSparkline(hourlyPredictions) {
     if (!keyHours.includes(h)) continue;
     const min = parseInt(pacStr.slice(14, 16));
     if (min !== 0) continue;
-    const frac = (ms - startMs2) / totalMs;
-    const tx = (PAD_X + frac * (W - PAD_X * 2)).toFixed(1);
+    const tx = xOfMs(ms).toFixed(1);
     const isMidOrNoon = h === 0 || h === 12;
     const sw = isMidOrNoon ? 1.5 : 0.75;
     const opacity = isMidOrNoon ? 0.45 : 0.25;
@@ -1243,7 +1256,14 @@ function buildSparkline(hourlyPredictions) {
     ticks += `<text x="${tx}" y="${H-1}" text-anchor="middle" font-size="7" fill="${textColor}">${label}</text>`;
   }
 
-  const area = `M${pts[0]} L${pts.join(' L')} L${xOf(n-1).toFixed(1)},${PAD_T+plotH} L${PAD_X},${PAD_T+plotH} Z`;
+  const lastDataMs = visibleSamples[visibleSamples.length - 1].t.getTime();
+  const missingX = xOfMs(lastDataMs);
+  const hasMissingRightEdge = lastDataMs < endMs2 - 30 * 60 * 1000;
+  const missingRegion = hasMissingRightEdge
+    ? `<rect x="${missingX.toFixed(1)}" y="${PAD_T}" width="${(W - PAD_X - missingX).toFixed(1)}" height="${plotH}" fill="#2f2818"/><line x1="${missingX.toFixed(1)}" y1="${PAD_T}" x2="${missingX.toFixed(1)}" y2="${PAD_T+plotH}" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="3,2"/>`
+    : '';
+
+  const area = `M${pts[0]} L${pts.join(' L')} L${lastX},${PAD_T+plotH} L${firstX},${PAD_T+plotH} Z`;
   const line = `M${pts[0]} L${pts.join(' L')}`;
 
   return `<svg id="tide-sparkline" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
@@ -1254,6 +1274,7 @@ function buildSparkline(hourlyPredictions) {
         <stop offset="100%" stop-color="#0c1a2e"/>
       </linearGradient>
     </defs>
+    ${missingRegion}
     <path d="${area}" fill="url(#tideGrad)"/>
     <path d="${line}" fill="none" stroke="#7dd3fc" stroke-width="2" stroke-linejoin="round"/>
     ${ticks}

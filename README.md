@@ -188,7 +188,9 @@ even if another Google account successfully signs in.
 | Ferry schedule | [WSDOT Traveler API](https://www.wsdot.wa.gov/ferries/api/) | Yes (free) | 30 sec | 30 sec |
 | Ferry space | WSDOT Traveler API | Yes (free) | 30 sec | 30 sec |
 
-Data windows include headroom beyond the refresh interval (e.g., tide hourly fetches 52h for a 48h display with 2h refresh cycle).
+Data windows include headroom beyond the refresh interval. The tide sparkline
+uses a fixed 72-hour window so the shape and scale do not change when the
+available prediction range is shorter.
 
 Ferry history records raw WSDOT vessel GPS samples when `/api/ferry/history`
 is hit. Production also uses `scripts/ferry-history-keepalive.sh` from system
@@ -218,10 +220,13 @@ warnings appear only for persistent or actionable feed problems:
 
 - **Weather:** hidden unless weather data is at least 3 hours old.
 - **Ferry:** hidden unless ferry data is at least 10 minutes old.
-- **Tides:** hidden while cached predictions still support the current and
-  near-term tide display. NOAA tide predictions are deterministic; when NOAA is
-  unavailable, the hourly sparkline is regenerated from cached high/low events
-  rather than warning about old fetch age.
+- **Tides:** hidden when the full 72-hour sparkline window is available. If
+  prediction data ends before that fixed window, the graph marks the missing
+  right edge and shows an amber end-time warning. If data is unavailable,
+  expired, or ending within 1 hour, the warning turns red. NOAA tide predictions
+  are deterministic; when NOAA is unavailable, the hourly sparkline is
+  regenerated from cached high/low events rather than warning about old fetch
+  age.
 
 ## API Endpoints
 
@@ -230,7 +235,7 @@ warnings appear only for persistent or actionable feed problems:
 | `GET /api/weather` | 3-day forecast + current conditions + sunrise/sunset |
 | `GET /api/seawater-temperature` | Latest observed seawater temperature from NOAA Port Townsend |
 | `GET /api/tides` | Hi/lo predictions, 3 days |
-| `GET /api/tides/hourly` | Cosine-interpolated hourly predictions, 52h |
+| `GET /api/tides/hourly` | Cosine-interpolated hourly predictions, up to 72h |
 | `GET /api/ferry/clinton` | Clinton→Mukilteo schedule (today) |
 | `GET /api/ferry/mukilteo` | Mukilteo→Clinton schedule (today) |
 | `GET /api/ferry/clinton/space` | Drive-up space by departure (Clinton) |
@@ -276,7 +281,9 @@ This keeps the frontend fully self-contained and avoids any external moon-image 
 ## Tide Display
 
 - Hi/lo table: exactly 4 rows, past events dimmed
-- Sparkline: 48h of cosine-interpolated hourly data
+- Sparkline: fixed 72h window of cosine-interpolated hourly data
+- Missing future tide coverage is shown as a blank/amber right edge; the x-axis
+  scale does not stretch to fill unavailable data.
 - Thermometer: vertical bar with gradient fill matching sparkline, inset from rounded tube outline
 - Arrow (▲/▼) at waterline indicates rising/falling
 - Axis labels: blue for high, purple for low (matching table colors)

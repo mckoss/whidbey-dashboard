@@ -1444,7 +1444,7 @@ function tidesEndpoint(route = DEFAULT_FERRY_ROUTE) {
   });
 }
 
-// ── Tides (hourly interpolated, 48h) — for sparkline graph ──────────────
+// ── Tides (hourly interpolated, 72h) — for sparkline graph ──────────────
 // Some stations are subordinate stations (hi/lo only).
 // We generate smooth hourly points via cosine interpolation between hi/lo events.
 function tidesHourlyEndpoint(route = DEFAULT_FERRY_ROUTE) {

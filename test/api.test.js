@@ -2212,12 +2212,22 @@ test('static HTML — data warnings stay quiet until problems are actionable', a
 
   assert.match(html, /const PERSISTENT_STALE_MINUTES = \{[\s\S]*?'weather': 180,[\s\S]*?'ferry-clinton': 10,[\s\S]*?'ferry-mukilteo': 10,/,
     'weather and ferry badges use persistent-warning thresholds');
+  assert.match(html, /const TIDE_SPARKLINE_HOURS = 72;/,
+    'tide sparkline keeps the historical 72-hour graph window');
   assert.match(html, /const TIDE_GRAPH_WARNING_LEAD_HOURS = 1;/,
-    'tides warn only when near-term tide data is about to run out');
+    'tides use a stronger warning when near-term tide data is about to run out');
   assert.match(html, /if \(coverageH < TIDE_GRAPH_WARNING_LEAD_HOURS\) \{/,
     'tides warn when tide data ends within an hour');
+  assert.match(html, /const graphEndMs = new Date\(firstPt\.t\)\.getTime\(\) \+ TIDE_SPARKLINE_HOURS \* 3600000;/,
+    'tides compare coverage against the fixed graph window end');
+  assert.match(html, /if \(lastMs < graphEndMs - 30 \* 60 \* 1000\) \{/,
+    'tides show an amber warning when the fixed graph window is incomplete');
   assert.doesNotMatch(html, /visibleTideHourlyPredictions/,
     'sparkline is not truncated to only the currently remaining forecast');
+  assert.match(html, /instead of stretching the remaining tide curve across the full graph/,
+    'sparkline documents invariant x-axis behavior');
+  assert.match(html, /const missingRegion = hasMissingRightEdge/,
+    'sparkline marks missing right-edge tide data');
   for (const noisyText of ['NOAA CACHE', 'CACHE ${Math.floor(coverageH)}H', '✓ live']) {
     assert.ok(!html.includes(noisyText), `dashboard does not show noisy badge text: ${noisyText}`);
   }

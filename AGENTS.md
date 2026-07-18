@@ -81,7 +81,12 @@ Repo-specific ferry-status lessons like this belong in this `AGENTS.md`, not in 
 
 NOAA station 9445526 (Hansville) is a subordinate station — it only provides hi/lo predictions, not hourly readings. The server generates hourly points via **cosine interpolation** between hi/lo events (smoother than linear, closer to real tidal curves).
 
-**Sparkline:** 48h of hourly data rendered as SVG. Key features:
+**Sparkline:** fixed 72h window of hourly data rendered as SVG. The x-axis
+domain must not stretch when the available prediction range is shorter; draw
+the data through its real end time and mark the missing right edge in amber.
+Old NOAA fetch age is not itself a warning because tide predictions are
+deterministic, but missing coverage within the fixed display window should be
+visible. Key features:
 - Gradient fill matching the thermometer (teal → deep navy)
 - Time markers at 6am, noon, 6pm, midnight (bold/dashed distinction)
 - Now-line (white dashed vertical)
