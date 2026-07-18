@@ -218,8 +218,9 @@ warnings appear only for persistent or actionable feed problems:
 
 - **Weather:** hidden unless weather data is at least 3 hours old.
 - **Ferry:** hidden unless ferry data is at least 10 minutes old.
-- **Tides:** hidden while cached predictions still cover at least 1 hour ahead;
-  red only when tide prediction coverage is expired or within 1 hour of expiring.
+- **Tides:** hidden while the 48-hour graph window is fully covered plus 1 hour
+  of lead time; warns when the graph is incomplete or will become incomplete
+  within the next hour.
 
 ## API Endpoints
 

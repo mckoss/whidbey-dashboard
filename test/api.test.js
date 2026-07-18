@@ -2212,8 +2212,14 @@ test('static HTML — data warnings stay quiet until problems are actionable', a
 
   assert.match(html, /const PERSISTENT_STALE_MINUTES = \{[\s\S]*?'weather': 180,[\s\S]*?'ferry-clinton': 10,[\s\S]*?'ferry-mukilteo': 10,/,
     'weather and ferry badges use persistent-warning thresholds');
-  assert.match(html, /if \(coverageH < 1\)\s+return `<span class="age-tag old"\s+id="tides-age">⚠ Tide data expires &lt;1h<\/span>`;/,
-    'tides warn only when cached prediction coverage is under an hour');
+  assert.match(html, /const TIDE_GRAPH_HOURS = 48;/,
+    'tides define a 48-hour graph display window');
+  assert.match(html, /const TIDE_GRAPH_WARNING_LEAD_HOURS = 1;/,
+    'tides warn before the graph window becomes incomplete');
+  assert.match(html, /if \(coverageH < TIDE_GRAPH_HOURS\) \{/,
+    'tides warn when the visible graph window is incomplete');
+  assert.match(html, /if \(coverageH < requiredH\) return `<span class="age-tag warn" id="tides-age">⚠ Tide graph expires &lt;1h<\/span>`;/,
+    'tides warn when the graph window will become incomplete within an hour');
   for (const noisyText of ['NOAA CACHE', 'CACHE ${Math.floor(coverageH)}H', '✓ live']) {
     assert.ok(!html.includes(noisyText), `dashboard does not show noisy badge text: ${noisyText}`);
   }
