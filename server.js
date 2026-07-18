@@ -98,6 +98,7 @@ const FERRY_ROUTES = {
 const DEFAULT_FERRY_ROUTE = FERRY_ROUTES.whidbey;
 const WEATHER_CACHE_SCHEMA = 'nws-solar-v2';
 const SEAWATER_TEMPERATURE_CACHE_MS = 10 * 60 * 1000;
+const TIDE_CACHE_MS = 2 * 60 * 60 * 1000;
 const TERMINAL_NAMES = new Map(Object.values(FERRY_ROUTES).flatMap(route => [
   [route.primary.id, route.primary.name],
   [route.secondary.id, route.secondary.name],
@@ -1363,8 +1364,7 @@ function filterFerrySamplesForRoute(samples, route = DEFAULT_FERRY_ROUTE) {
 }
 
 // ── Tides (hi/lo, 3 days) ─────────────────────────────────────────────
-function tidesEndpoint(route = DEFAULT_FERRY_ROUTE) {
-  return cachedEndpoint(route.tides.cacheKey, 2 * 60 * 60 * 1000, async () => {
+async function fetchNoaaTidePredictions(route = DEFAULT_FERRY_ROUTE) {
   const today = new Date();
   // Include yesterday so early-morning displays have a previous tide event for
   // current-height/thermometer interpolation before today's first high/low.
@@ -1378,10 +1378,69 @@ function tidesEndpoint(route = DEFAULT_FERRY_ROUTE) {
   const r = await fetchWithRetry(url);
   const data = await r.json();
   if (data.error) throw new Error(data.error.message || 'NOAA returned error');
+  if (!data.predictions) throw new Error('NOAA returned no predictions');
+  return data;
+}
+
+function normalizeTidePredictions(data) {
   // Stamp each prediction with explicit Pacific offset so clients parse unambiguously
   const offset = pacificOffset();
-  const predictions = data.predictions.map(p => ({ ...p, t: p.t.replace(' ', 'T') + ':00' + offset }));
+  const predictions = data.predictions.map(p => {
+    const raw = String(p.t || '');
+    const t = raw.includes('T') && /[+-]\d\d:\d\d$/.test(raw)
+      ? raw
+      : raw.replace(' ', 'T') + ':00' + offset;
+    return { ...p, t };
+  });
   return { ...data, predictions };
+}
+
+function tideEventFakeUtcMs(t) {
+  const local = String(t || '').replace(' ', 'T').slice(0, 16);
+  return new Date(`${local}:00Z`).getTime();
+}
+
+function buildHourlyTideData(data) {
+  const normalized = normalizeTidePredictions(data);
+  const events = normalized.predictions
+    .map(p => ({ t: tideEventFakeUtcMs(p.t), v: parseFloat(p.v) }))
+    .filter(p => Number.isFinite(p.t) && Number.isFinite(p.v))
+    .sort((a, b) => a.t - b.t);
+  if (!events.length) throw new Error('NOAA returned no usable tide predictions');
+
+  const offset = pacificOffset();
+  const predictions = [];
+  const nowPac = new Date().toLocaleString('sv-SE', { timeZone: CONFIG.timezone });
+  const startMs = new Date(nowPac.slice(0, 13) + ':00:00Z').getTime();
+  const endMs = Math.min(startMs + 72 * 3600 * 1000, events[events.length - 1].t);
+
+  for (let ms = startMs; ms <= endMs; ms += 3600 * 1000) {
+    let before = null, after = null;
+    for (let i = 0; i < events.length; i++) {
+      if (events[i].t <= ms) before = events[i];
+      if (events[i].t > ms && !after) after = events[i];
+    }
+    if (!before && !after) continue;
+    let v;
+    if (before && after) {
+      const t = (ms - before.t) / (after.t - before.t);
+      v = before.v + (after.v - before.v) * (1 - Math.cos(Math.PI * t)) / 2;
+    } else {
+      v = (before || after).v;
+    }
+    const dt = new Date(ms);
+    const tStr = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth()+1).padStart(2,'0')}-${String(dt.getUTCDate()).padStart(2,'0')}` +
+      `T${String(dt.getUTCHours()).padStart(2,'0')}:${String(dt.getUTCMinutes()).padStart(2,'0')}:00${offset}`;
+    predictions.push({ t: tStr, v: v.toFixed(3) });
+  }
+
+  return { predictions, interpolated: true };
+}
+
+function tidesEndpoint(route = DEFAULT_FERRY_ROUTE) {
+  return cachedEndpoint(route.tides.cacheKey, TIDE_CACHE_MS, async () => {
+  const data = await fetchNoaaTidePredictions(route);
+  return normalizeTidePredictions(data);
   });
 }
 
@@ -1389,64 +1448,33 @@ function tidesEndpoint(route = DEFAULT_FERRY_ROUTE) {
 // Some stations are subordinate stations (hi/lo only).
 // We generate smooth hourly points via cosine interpolation between hi/lo events.
 function tidesHourlyEndpoint(route = DEFAULT_FERRY_ROUTE) {
-  return cachedEndpoint(`${route.tides.cacheKey}_hourly`, 2 * 60 * 60 * 1000, async () => {
-  const today = new Date();
-  // Include yesterday so the hourly interpolation has a real event before the
-  // first tide of the current day instead of flattening to that first event.
-  const begin = formatDate(new Date(today.getTime() - 86400000));
-  const end = formatDate(new Date(today.getTime() + 3 * 86400000));
-  const url = `${CONFIG.noaaBaseUrl}/api/prod/datagetter` +
-    `?begin_date=${begin}&end_date=${end}` +
-    `&station=${route.tides.station}` +
-    `&product=predictions&datum=MLLW&time_zone=lst_ldt` +
-    `&interval=hilo&units=english&application=whidbey_dashboard&format=json`;
-  const r = await fetchWithRetry(url);
-  const data = await r.json();
-  if (data.error) throw new Error(data.error.message || 'NOAA returned error');
-  if (!data.predictions) throw new Error('NOAA returned no predictions');
+  const cacheKey = `${route.tides.cacheKey}_hourly`;
+  return async (req, res) => {
+    const hit = getCached(cacheKey);
+    if (hit) return res.json(hit.data);
 
-  // NOAA returns lst_ldt Pacific times like "2026-04-24 14:00". Treat as fake-UTC
-  // (append Z) so all arithmetic is consistent regardless of server timezone.
-  const events = data.predictions.map(p => ({
-    t: new Date(p.t.replace(' ', 'T') + 'Z').getTime(),
-    v: parseFloat(p.v),
-  }));
+    try {
+      const data = buildHourlyTideData(await fetchNoaaTidePredictions(route));
+      setCache(cacheKey, data, TIDE_CACHE_MS);
+      return res.json(data);
+    } catch (e) {
+      const staleHilo = getStale(route.tides.cacheKey);
+      if (staleHilo?.data?.predictions) {
+        console.warn(`[stale] deriving ${cacheKey} from stale ${route.tides.cacheKey}: ${e.message}`);
+        const ageMin = Math.round((Date.now() - staleHilo.cachedAt) / 60000);
+        const data = buildHourlyTideData(staleHilo.data);
+        return res.json({ ...data, _stale: true, _staleAgeMinutes: ageMin, _derivedFromStaleHighLow: true });
+      }
 
-  // Get current Pacific hour as a fake-UTC epoch so loop ms values stay in Pacific space.
-  const offset = pacificOffset();
-  const predictions = [];
-  const nowPac = new Date().toLocaleString('sv-SE', { timeZone: CONFIG.timezone });
-  const startMs = new Date(nowPac.slice(0, 13) + ':00:00Z').getTime();
-  const endMs = startMs + 72 * 3600 * 1000; // 48h display + 24h headroom
-
-  for (let ms = startMs; ms <= endMs; ms += 3600 * 1000) {
-    // Find surrounding events
-    let before = null, after = null;
-    for (let i = 0; i < events.length; i++) {
-      if (events[i].t <= ms) before = events[i];
-      if (events[i].t > ms && !after) after = events[i];
+      const stale = getStale(cacheKey);
+      if (stale) {
+        console.warn(`[stale] serving stale ${cacheKey}: ${e.message}`);
+        const ageMin = Math.round((Date.now() - stale.cachedAt) / 60000);
+        return res.json({ ...stale.data, _stale: true, _staleAgeMinutes: ageMin });
+      }
+      res.status(500).json({ error: e.message });
     }
-    let v;
-    if (before && after) {
-      const t = (ms - before.t) / (after.t - before.t);
-      v = before.v + (after.v - before.v) * (1 - Math.cos(Math.PI * t)) / 2;
-    } else if (before) {
-      v = before.v;
-    } else if (after) {
-      v = after.v;
-    } else {
-      continue;
-    }
-    const dt = new Date(ms);
-    // ms is fake-UTC (Pacific wall-clock value treated as UTC), so getUTC* returns Pacific values
-    // Append explicit offset so clients parse the timestamp unambiguously regardless of their timezone
-    const tStr = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth()+1).padStart(2,'0')}-${String(dt.getUTCDate()).padStart(2,'0')}` +
-      `T${String(dt.getUTCHours()).padStart(2,'0')}:${String(dt.getUTCMinutes()).padStart(2,'0')}:00${offset}`;
-    predictions.push({ t: tStr, v: v.toFixed(3) });
-  }
-
-  return { predictions, interpolated: true };
-  });
+  };
 }
 
 // ── Seawater temperature (observed NOAA CO-OPS station) ────────────────

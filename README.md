@@ -218,9 +218,10 @@ warnings appear only for persistent or actionable feed problems:
 
 - **Weather:** hidden unless weather data is at least 3 hours old.
 - **Ferry:** hidden unless ferry data is at least 10 minutes old.
-- **Tides:** hidden while future tide forecast coverage reaches at least 48
-  hours plus 1 hour of lead time. The sparkline may show the whole cached tide
-  series, including past context; the warning is about the future forecast end.
+- **Tides:** hidden while cached predictions still support the current and
+  near-term tide display. NOAA tide predictions are deterministic; when NOAA is
+  unavailable, the hourly sparkline is regenerated from cached high/low events
+  rather than warning about old fetch age.
 
 ## API Endpoints
 
