@@ -1302,6 +1302,40 @@ function getTideDirection(predictions) {
 let _lastHourlyPredictions = null;
 let _lastHiloPredictions   = null;
 
+// ── Shared crawl message state ────────────────────────────────────────
+let routeFerryAlerts = [];
+let userCrawlMessages = [];
+let dataFeedCrawlMessages = [];
+
+function syncCrawlMessages() {
+  updateFerryAlerts([...routeFerryAlerts, ...userCrawlMessages, ...dataFeedCrawlMessages]);
+}
+
+function setDataFeedCrawlMessage(id, message) {
+  dataFeedCrawlMessages = dataFeedCrawlMessages.filter(item => item.id !== id);
+  if (message) dataFeedCrawlMessages.push(message);
+  syncCrawlMessages();
+}
+
+function sourceErrorText(...payloads) {
+  for (const payload of payloads) {
+    const text = String(payload?._sourceError || '').trim();
+    if (text) return text;
+  }
+  return '';
+}
+
+function noaaErrorCrawlMessage(...payloads) {
+  const text = sourceErrorText(...payloads);
+  return text ? {
+    id: 'noaa-tide-error',
+    title: '',
+    text: `NOAA error: ${text}`,
+    color: 'var(--warn)',
+    userMessage: true,
+  } : null;
+}
+
 // ── Tides ──────────────────────────────────────────────────────────────
 async function loadTides() {
   const el = document.getElementById('tides');
@@ -1313,6 +1347,7 @@ async function loadTides() {
 
     const hilo = hiloRes.status === 'fulfilled' ? hiloRes.value : null;
     const hourly = hourlyRes.status === 'fulfilled' ? hourlyRes.value : null;
+    setDataFeedCrawlMessage('noaa-tide-error', noaaErrorCrawlMessage(hilo, hourly));
 
     if (!hilo || !hilo.predictions) {
       el.innerHTML = `<div class="card-title">Tides · ${escapeHtml(FERRY_ROUTE.tideLabel || 'Hansville')} ${tideAgeTag()}</div><div class="error-msg">${hilo?.error?.message || 'No tide data'}</div>`;
@@ -1379,6 +1414,7 @@ async function loadTides() {
       <div class="tide-list">${items}</div>`;
 
   } catch (e) {
+    setDataFeedCrawlMessage('noaa-tide-error', null);
     el.innerHTML = `<div class="card-title">Tides · ${escapeHtml(FERRY_ROUTE.tideLabel || 'Hansville')} ${tideAgeTag()}</div><div class="error-msg">Failed: ${e.message}</div>`;
     throw e;
   }
@@ -1845,8 +1881,8 @@ async function loadFerry() {
   const clintonSp    = (clintonSpace.status === 'fulfilled' && !clintonSpace.value?.error)  ? clintonSpace.value  : {};
   const mukilteoData = mukilteoSched.status === 'fulfilled' ? mukilteoSched.value : null;
   const mukilteoSp   = (mukilteoSpace.status === 'fulfilled' && !mukilteoSpace.value?.error) ? mukilteoSpace.value : {};
-  const routeAlerts  = (ferryAlerts.status === 'fulfilled' && Array.isArray(ferryAlerts.value?.alerts)) ? ferryAlerts.value.alerts : [];
-  const crawlMessages = (userMessages.status === 'fulfilled' && Array.isArray(userMessages.value?.messages))
+  routeFerryAlerts  = (ferryAlerts.status === 'fulfilled' && Array.isArray(ferryAlerts.value?.alerts)) ? ferryAlerts.value.alerts : [];
+  userCrawlMessages = (userMessages.status === 'fulfilled' && Array.isArray(userMessages.value?.messages))
     ? userMessages.value.messages.map(message => ({ id: message.id, title: '', text: message.text, color: message.color, userMessage: true }))
     : [];
   const clintonSpaceMissing = !hasUsableSpaceData(clintonSp);
@@ -1855,7 +1891,7 @@ async function loadFerry() {
   // Build the server interpretation map; raw vessel-position matching is a
   // compatibility fallback only and is not fetched by the live dashboard.
   const vesselMap    = buildVesselMap(null, departureData);
-  updateFerryAlerts([...routeAlerts, ...crawlMessages]);
+  syncCrawlMessages();
 
   if (clintonData?.error === 'WSF_API_KEY not configured') {
     document.getElementById('ferry').innerHTML = `<div class="no-ferry-key">Ferry schedule requires a free WSDOT API key. <a href="https://www.wsdot.wa.gov/traffic/api/" target="_blank">Register here</a>, then add to <code>.env</code> as <code>WSF_API_KEY</code>.</div>`;

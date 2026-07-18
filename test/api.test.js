@@ -2199,6 +2199,10 @@ test('static HTML — index.html contains required elements', async () => {
   assert.match(html, /#ferry-alert-ticker\s*\{[\s\S]*?min-width:\s*0;/, 'ticker grid item cannot widen the dashboard');
   assert.match(html, /\/api\/messages\?route=\$\{encodeURIComponent\(FERRY_ROUTE\.key\)\}/,
     'dashboard fetches crawl messages for the active ferry route');
+  assert.match(html, /noaaErrorCrawlMessage/,
+    'dashboard can add NOAA source errors to the crawl');
+  assert.match(html, /NOAA error: \$\{text\}/,
+    'NOAA source errors render with a plain crawl prefix');
   assert.match(html, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s*minmax\(0,\s*1fr\)/, 'main grid columns can shrink to viewport');
   assert.match(html, /return d\._stale \? \{ retrySoon: true \} : null;/,
     'stale weather responses ask the scheduler to retry soon');
@@ -2235,6 +2239,10 @@ test('static HTML — data warnings stay quiet until problems are actionable', a
   for (const noisyText of ['NOAA CACHE', 'CACHE ${Math.floor(coverageH)}H', '✓ live']) {
     assert.ok(!html.includes(noisyText), `dashboard does not show noisy badge text: ${noisyText}`);
   }
+
+  const server = await readFile(join(__dirname, '../server.js'), 'utf8');
+  assert.match(server, /_sourceError:\s*e\.message/,
+    'stale tide responses carry upstream NOAA error text for the crawl');
 });
 
 test('bainbridge pages — serve the shared dashboard with Bainbridge route config', async () => {
@@ -2790,7 +2798,17 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
     window: {},
   };
   vm.createContext(context);
-  vm.runInContext(script + `\nthis.__alertTest = { renderFerryAlerts };`, context);
+  vm.runInContext(script + `\nthis.__alertTest = { renderFerryAlerts, noaaErrorCrawlMessage };`, context);
+
+  const noaaCrawlMessage = context.__alertTest.noaaErrorCrawlMessage({
+    _sourceError: 'No Predictions data was found. Please make sure the Datum input is valid.',
+  });
+  assert.equal(noaaCrawlMessage.id, 'noaa-tide-error', 'NOAA source error crawl has a stable id');
+  assert.equal(noaaCrawlMessage.title, '', 'NOAA source error crawl has no separate title');
+  assert.equal(noaaCrawlMessage.text, 'NOAA error: No Predictions data was found. Please make sure the Datum input is valid.',
+    'NOAA source errors become a plain warning crawl message');
+  assert.equal(noaaCrawlMessage.color, 'var(--warn)', 'NOAA source error crawl uses warning color');
+  assert.equal(noaaCrawlMessage.userMessage, true, 'NOAA source error crawl renders like other plain crawl messages');
 
   const alerts = [
     {
@@ -2813,6 +2831,7 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
     },
     { title: 'General notice', text: 'Good morning. How are you doing?' },
     { title: '', text: 'Dinner at 6:30.', color: 'orange', userMessage: true },
+    noaaCrawlMessage,
   ];
   const ticker = context.__alertTest.renderFerryAlerts(alerts);
   const visibleAlertText = (a) => {
@@ -2844,6 +2863,8 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
   assert.doesNotMatch(ticker, /Vessels running 20-25 minutes behind schedule: Vessels running 20-25 minutes behind schedule/,
     'title-prefix details are not rendered as title-colon-repeated-detail');
   assert.match(ticker, /Dinner at 6:30\./, 'renders user-added crawl messages');
+  assert.match(ticker, /NOAA error: No Predictions data was found\. Please make sure the Datum input is valid\./,
+    'renders NOAA source errors in the crawl');
   assert.doesNotMatch(ticker, /Dinner at 6:30\.: Dinner at 6:30\./, 'user-added crawl messages are not formatted as duplicated title/detail text');
   assert.match(ticker, /Good morning\. How are you doing\?[\s\S]*Dinner at 6:30\./, 'user-added crawl messages are appended after WSF alerts in the crawl');
   assert.match(ticker, new RegExp(`--ticker-duration: ${expectedTickerDuration}s`), 'sets ticker speed from visible text at 15 cps');

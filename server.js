@@ -1050,7 +1050,7 @@ function cachedEndpoint(cacheKey, ttlMs, fetcher) {
       if (stale) {
         console.warn(`[stale] serving stale ${cacheKey}: ${e.message}`);
         const ageMin = Math.round((Date.now() - stale.cachedAt) / 60000);
-        return res.json({ ...stale.data, _stale: true, _staleAgeMinutes: ageMin });
+        return res.json({ ...stale.data, _stale: true, _staleAgeMinutes: ageMin, _sourceError: e.message });
       }
       res.status(500).json({ error: e.message });
     }
@@ -1463,14 +1463,14 @@ function tidesHourlyEndpoint(route = DEFAULT_FERRY_ROUTE) {
         console.warn(`[stale] deriving ${cacheKey} from stale ${route.tides.cacheKey}: ${e.message}`);
         const ageMin = Math.round((Date.now() - staleHilo.cachedAt) / 60000);
         const data = buildHourlyTideData(staleHilo.data);
-        return res.json({ ...data, _stale: true, _staleAgeMinutes: ageMin, _derivedFromStaleHighLow: true });
+        return res.json({ ...data, _stale: true, _staleAgeMinutes: ageMin, _derivedFromStaleHighLow: true, _sourceError: e.message });
       }
 
       const stale = getStale(cacheKey);
       if (stale) {
         console.warn(`[stale] serving stale ${cacheKey}: ${e.message}`);
         const ageMin = Math.round((Date.now() - stale.cachedAt) / 60000);
-        return res.json({ ...stale.data, _stale: true, _staleAgeMinutes: ageMin });
+        return res.json({ ...stale.data, _stale: true, _staleAgeMinutes: ageMin, _sourceError: e.message });
       }
       res.status(500).json({ error: e.message });
     }
