@@ -984,12 +984,12 @@ function tideAgeTag() {
   const coverageMs = new Date(lastPt.t).getTime() - nowMs;
   const coverageH = coverageMs / 3600000;
   const requiredH = TIDE_GRAPH_HOURS + TIDE_GRAPH_WARNING_LEAD_HOURS;
-  if (coverageH < 0) return `<span class="age-tag old" id="tides-age">⚠ Tide graph expired</span>`;
+  if (coverageH < 0) return `<span class="age-tag old" id="tides-age">⚠ Tide forecast expired</span>`;
   if (coverageH < TIDE_GRAPH_HOURS) {
     const endTime = new Date(lastPt.t).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
-    return `<span class="age-tag old" id="tides-age">⚠ Tide graph ends ${endTime}</span>`;
+    return `<span class="age-tag old" id="tides-age">⚠ Tide forecast ends ${endTime}</span>`;
   }
-  if (coverageH < requiredH) return `<span class="age-tag warn" id="tides-age">⚠ Tide graph expires &lt;1h</span>`;
+  if (coverageH < requiredH) return `<span class="age-tag warn" id="tides-age">⚠ Tide forecast expires &lt;1h</span>`;
   return `<span class="age-tag quiet" id="tides-age"></span>`;
 }
 
@@ -1264,15 +1264,6 @@ function buildSparkline(hourlyPredictions) {
   </svg>`;
 }
 
-function visibleTideHourlyPredictions(hourlyPredictions) {
-  const nowMs = Date.now();
-  const endMs = nowMs + TIDE_GRAPH_HOURS * 3600 * 1000;
-  return (hourlyPredictions || []).filter(p => {
-    const ms = new Date(p.t).getTime();
-    return ms >= nowMs && ms <= endMs;
-  });
-}
-
 // ── Tide direction + current height ────────────────────────────────
 function getTideDirection(predictions) {
   const now = Date.now();
@@ -1322,8 +1313,7 @@ async function loadTides() {
     const overallMax = Math.max(...allHeights);
 
     let visualHtml = '';
-    const visibleHourly = visibleTideHourlyPredictions(hourly?.predictions);
-    if (dir && visibleHourly.length >= 2) {
+    if (dir && hourly?.predictions) {
       const thermo = buildThermometer(dir.currentFt, overallMin, overallMax, dir.rising);
       visualHtml = `<div class="tide-visual">
         <div class="tide-now">
@@ -1334,10 +1324,10 @@ async function loadTides() {
         <div class="tide-thermo-wrap">
           ${thermo}
         </div>
-        <div class="tide-sparkline-wrap">${buildSparkline(visibleHourly)}</div>
+        <div class="tide-sparkline-wrap">${buildSparkline(hourly.predictions)}</div>
       </div>`;
-    } else if (visibleHourly.length >= 2) {
-      visualHtml = `<div class="tide-visual"><div class="tide-sparkline-wrap">${buildSparkline(visibleHourly)}</div></div>`;
+    } else if (hourly?.predictions) {
+      visualHtml = `<div class="tide-visual"><div class="tide-sparkline-wrap">${buildSparkline(hourly.predictions)}</div></div>`;
     }
 
     const cutoff48h = new Date(now.getTime() + 48 * 3600 * 1000);
@@ -1888,7 +1878,7 @@ function refreshTideVisual() {
     <div class="tide-thermo-wrap">
       ${buildThermometer(dir.currentFt, Math.min(...allH), Math.max(...allH), dir.rising)}
     </div>
-    <div class="tide-sparkline-wrap">${buildSparkline(visibleTideHourlyPredictions(_lastHourlyPredictions))}</div>`;
+    <div class="tide-sparkline-wrap">${buildSparkline(_lastHourlyPredictions)}</div>`;
 }
 setInterval(refreshTideVisual, 60 * 1000);
 

@@ -218,9 +218,9 @@ warnings appear only for persistent or actionable feed problems:
 
 - **Weather:** hidden unless weather data is at least 3 hours old.
 - **Ferry:** hidden unless ferry data is at least 10 minutes old.
-- **Tides:** hidden while the 48-hour graph window is fully covered plus 1 hour
-  of lead time; warns when the graph is incomplete or will become incomplete
-  within the next hour.
+- **Tides:** hidden while future tide forecast coverage reaches at least 48
+  hours plus 1 hour of lead time. The sparkline may show the whole cached tide
+  series, including past context; the warning is about the future forecast end.
 
 ## API Endpoints
 

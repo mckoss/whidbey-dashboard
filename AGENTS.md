@@ -105,10 +105,10 @@ when a feed problem is persistent enough to matter to someone glancing at it:
 | Source | Refresh | Visible Warning |
 |--------|---------|-----------------|
 | Weather | 1 hour | Weather data at least 3 hours old |
-| Tides | 2 hours | 48h graph window incomplete or within 1h of becoming incomplete |
+| Tides | 2 hours | Future forecast coverage is under 48h or within 1h of falling under 48h |
 | Ferry | 30 sec | Ferry data at least 10 minutes old |
 
-Server-side cache TTLs match client refresh intervals. Data query windows include headroom. The tide sparkline displays the next 48h explicitly; warn when cached prediction coverage does not reach at least 49h from now.
+Server-side cache TTLs match client refresh intervals. Data query windows include headroom. The tide sparkline may show the full cached hourly series, including past context, so it preserves the multi-day shape when NOAA is stale. Warn based on the future forecast end: cached prediction coverage should reach at least 49h from now to avoid a visible warning.
 
 NOAA sometimes returns HTTP 200 with an error body — the server guards against caching these by checking for `.error` in the response.
 
