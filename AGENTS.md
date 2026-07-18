@@ -83,7 +83,7 @@ NOAA station 9445526 (Hansville) is a subordinate station — it only provides h
 
 **Sparkline:** fixed 72h window of hourly data rendered as SVG. The x-axis
 domain must not stretch when the available prediction range is shorter; draw
-the data through its real end time and mark the missing right edge in amber.
+the data through its real end time and leave the missing right edge blank.
 Old NOAA fetch age is not itself a warning because tide predictions are
 deterministic, but missing coverage within the fixed display window should be
 visible. Key features:

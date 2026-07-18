@@ -221,8 +221,8 @@ warnings appear only for persistent or actionable feed problems:
 - **Weather:** hidden unless weather data is at least 3 hours old.
 - **Ferry:** hidden unless ferry data is at least 10 minutes old.
 - **Tides:** hidden when the full 72-hour sparkline window is available. If
-  prediction data ends before that fixed window, the graph marks the missing
-  right edge and shows an amber end-time warning. If data is unavailable,
+  prediction data ends before that fixed window, the graph leaves the missing
+  right edge blank and shows a relative end-time warning. If data is unavailable,
   expired, or ending within 1 hour, the warning turns red. NOAA tide predictions
   are deterministic; when NOAA is unavailable, the hourly sparkline is
   regenerated from cached high/low events rather than warning about old fetch
@@ -282,8 +282,8 @@ This keeps the frontend fully self-contained and avoids any external moon-image 
 
 - Hi/lo table: exactly 4 rows, past events dimmed
 - Sparkline: fixed 72h window of cosine-interpolated hourly data
-- Missing future tide coverage is shown as a blank/amber right edge; the x-axis
-  scale does not stretch to fill unavailable data.
+- Missing future tide coverage is shown as a blank right edge; the x-axis scale
+  does not stretch to fill unavailable data.
 - Thermometer: vertical bar with gradient fill matching sparkline, inset from rounded tube outline
 - Arrow (▲/▼) at waterline indicates rising/falling
 - Axis labels: blue for high, purple for low (matching table colors)

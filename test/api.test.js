@@ -2222,12 +2222,16 @@ test('static HTML — data warnings stay quiet until problems are actionable', a
     'tides compare coverage against the fixed graph window end');
   assert.match(html, /if \(lastMs < graphEndMs - 30 \* 60 \* 1000\) \{/,
     'tides show an amber warning when the fixed graph window is incomplete');
+  assert.match(html, /Tide data ends in \$\{endText\}/,
+    'tide end warning uses relative time instead of an ambiguous clock time');
   assert.doesNotMatch(html, /visibleTideHourlyPredictions/,
     'sparkline is not truncated to only the currently remaining forecast');
-  assert.match(html, /instead of stretching the remaining tide curve across the full graph/,
+  assert.match(html, /right edge stays blank[\s\S]*instead of stretching the remaining tide curve across the full graph/,
     'sparkline documents invariant x-axis behavior');
-  assert.match(html, /const missingRegion = hasMissingRightEdge/,
-    'sparkline marks missing right-edge tide data');
+  assert.doesNotMatch(html, /missingRegion/,
+    'sparkline leaves missing right-edge tide data blank');
+  assert.doesNotMatch(html, /fill="#2f2818"/,
+    'sparkline does not paint a colored missing-data block');
   for (const noisyText of ['NOAA CACHE', 'CACHE ${Math.floor(coverageH)}H', '✓ live']) {
     assert.ok(!html.includes(noisyText), `dashboard does not show noisy badge text: ${noisyText}`);
   }

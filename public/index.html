@@ -975,6 +975,13 @@ function ageTag(key, staleData) {
 }
 
 // ── Tide coverage age tag (data-driven, not fetch-age) ──────────────────────
+function formatTideCoverageMs(ms) {
+  if (ms < 90 * 60 * 1000) {
+    return `${Math.max(1, Math.round(ms / 60000))}m`;
+  }
+  return `${Math.max(1, Math.round(ms / 3600000))}h`;
+}
+
 function tideAgeTag() {
   if (!_lastHourlyPredictions || !_lastHourlyPredictions.length) {
     return `<span class="age-tag old" id="tides-age">⚠ Tide data unavailable</span>`;
@@ -987,12 +994,12 @@ function tideAgeTag() {
   const coverageMs = lastMs - nowMs;
   const coverageH = coverageMs / 3600000;
   if (coverageH < 0) return `<span class="age-tag old" id="tides-age">⚠ Tide data expired</span>`;
-  const endTime = new Date(lastPt.t).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
+  const endText = formatTideCoverageMs(coverageMs);
   if (coverageH < TIDE_GRAPH_WARNING_LEAD_HOURS) {
-    return `<span class="age-tag old" id="tides-age">⚠ Tide data ends ${endTime}</span>`;
+    return `<span class="age-tag old" id="tides-age">⚠ Tide data ends in ${endText}</span>`;
   }
   if (lastMs < graphEndMs - 30 * 60 * 1000) {
-    return `<span class="age-tag warn" id="tides-age">⚠ Tide data ends ${endTime}</span>`;
+    return `<span class="age-tag warn" id="tides-age">⚠ Tide data ends in ${endText}</span>`;
   }
   return `<span class="age-tag quiet" id="tides-age"></span>`;
 }
@@ -1207,7 +1214,7 @@ function buildSparkline(hourlyPredictions) {
   const W = 400, H = 56, PAD_T = 2, PAD_B = 12, PAD_X = 2;
   const plotH = H - PAD_T - PAD_B;
 
-  // Keep the x-axis invariant. If data runs out, the right edge stays empty
+  // Keep the x-axis invariant. If data runs out, the right edge stays blank
   // instead of stretching the remaining tide curve across the full graph.
   const startMs2 = times[0].getTime();
   const endMs2 = startMs2 + TIDE_SPARKLINE_HOURS * 3600 * 1000;
@@ -1256,13 +1263,6 @@ function buildSparkline(hourlyPredictions) {
     ticks += `<text x="${tx}" y="${H-1}" text-anchor="middle" font-size="7" fill="${textColor}">${label}</text>`;
   }
 
-  const lastDataMs = visibleSamples[visibleSamples.length - 1].t.getTime();
-  const missingX = xOfMs(lastDataMs);
-  const hasMissingRightEdge = lastDataMs < endMs2 - 30 * 60 * 1000;
-  const missingRegion = hasMissingRightEdge
-    ? `<rect x="${missingX.toFixed(1)}" y="${PAD_T}" width="${(W - PAD_X - missingX).toFixed(1)}" height="${plotH}" fill="#2f2818"/><line x1="${missingX.toFixed(1)}" y1="${PAD_T}" x2="${missingX.toFixed(1)}" y2="${PAD_T+plotH}" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="3,2"/>`
-    : '';
-
   const area = `M${pts[0]} L${pts.join(' L')} L${lastX},${PAD_T+plotH} L${firstX},${PAD_T+plotH} Z`;
   const line = `M${pts[0]} L${pts.join(' L')}`;
 
@@ -1274,7 +1274,6 @@ function buildSparkline(hourlyPredictions) {
         <stop offset="100%" stop-color="#0c1a2e"/>
       </linearGradient>
     </defs>
-    ${missingRegion}
     <path d="${area}" fill="url(#tideGrad)"/>
     <path d="${line}" fill="none" stroke="#7dd3fc" stroke-width="2" stroke-linejoin="round"/>
     ${ticks}
