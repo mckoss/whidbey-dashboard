@@ -2,6 +2,7 @@
   "port": 3000,
   "dataDir": "data",
   "noaaStation": "9445526",
+  "noaaBaseUrl": "https://api.tidesandcurrents.noaa.gov",
   "nwsBaseUrl": "https://api.weather.gov",
   "nwsUserAgent": "whidbey-dashboard (mckoss.com)",
   "openMeteoBaseUrl": "https://api.open-meteo.com",

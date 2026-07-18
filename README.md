@@ -35,6 +35,7 @@ Runtime configuration lives in ignored `config.json`. Copy
   "port": 3000,
   "dataDir": "data",
   "noaaStation": "9445526",
+  "noaaBaseUrl": "https://api.tidesandcurrents.noaa.gov",
   "lat": 47.9748,
   "lon": -122.3534,
   "timezone": "America/Los_Angeles",

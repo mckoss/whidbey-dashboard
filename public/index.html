@@ -925,6 +925,7 @@ function windDir(deg) {
 const dataUpdatedAt = {};  // key → timestamp ms of last successful fresh fetch
 const staleSourceAge = {}; // key → { ageMin, seenAt } for server-provided stale data
 const dataSourceLabels = {}; // key → short source label, e.g. "nws"
+let _lastTideCacheStatus = null;
 
 function sourceLabel(data) {
   const source = String(data?.source || '').trim().toLowerCase();
@@ -988,9 +989,17 @@ function tideAgeTag() {
   const lastPt = _lastHourlyPredictions[_lastHourlyPredictions.length - 1];
   const coverageMs = new Date(lastPt.t).getTime() - Date.now();
   const coverageH = coverageMs / 3600000;
+  const stale = _lastTideCacheStatus && _lastTideCacheStatus.stale;
+  const ageMin = _lastTideCacheStatus && Number.isFinite(_lastTideCacheStatus.ageMin)
+    ? _lastTideCacheStatus.ageMin + Math.round((Date.now() - _lastTideCacheStatus.seenAt) / 60000)
+    : null;
   if (coverageH < 0)  return `<span class="age-tag old"  id="tides-age">⚠ DATA EXPIRED</span>`;
-  if (coverageH < 1)  return `<span class="age-tag old"  id="tides-age">⚠ &lt;1H LEFT</span>`;
-  if (coverageH < 24) return `<span class="age-tag warn" id="tides-age">⚠ ${Math.floor(coverageH)}H LEFT</span>`;
+  if (coverageH < 1)  return `<span class="age-tag old"  id="tides-age">⚠ CACHE &lt;1H</span>`;
+  if (coverageH < 6)  return `<span class="age-tag old"  id="tides-age">⚠ CACHE ${Math.floor(coverageH)}H</span>`;
+  if (stale) {
+    const ageText = ageMin === null ? '' : ageMin < 60 ? ` ${ageMin}M` : ` ${Math.floor(ageMin / 60)}H`;
+    return `<span class="age-tag warn" id="tides-age">⚠ NOAA CACHE${ageText}</span>`;
+  }
   return `<span class="age-tag fresh" id="tides-age">✓ live</span>`;
 }
 
@@ -1297,6 +1306,11 @@ async function loadTides() {
 
     const hilo = hiloRes.status === 'fulfilled' ? hiloRes.value : null;
     const hourly = hourlyRes.status === 'fulfilled' ? hourlyRes.value : null;
+    _lastTideCacheStatus = {
+      stale: !!(hilo?._stale || hourly?._stale),
+      ageMin: Math.max(hilo?._staleAgeMinutes || 0, hourly?._staleAgeMinutes || 0) || null,
+      seenAt: Date.now(),
+    };
 
     if (!hilo || !hilo.predictions) {
       el.innerHTML = `<div class="card-title">Tides · ${escapeHtml(FERRY_ROUTE.tideLabel || 'Hansville')} ${tideAgeTag()}</div><div class="error-msg">${hilo?.error?.message || 'No tide data'}</div>`;

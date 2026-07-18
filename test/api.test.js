@@ -23,6 +23,8 @@ let serverProcess;
 let dataDir;
 let weatherServer;
 let weatherBaseUrl;
+let noaaServer;
+let noaaBaseUrl;
 
 function testWeatherPayload() {
   return {
@@ -140,15 +142,76 @@ async function startWeatherFixture() {
   weatherBaseUrl = `http://127.0.0.1:${port}`;
 }
 
+function testTidePredictions() {
+  const base = new Date(`${pacificDate()}T00:00:00-07:00`).getTime();
+  return [
+    [-24, '5.100', 'L'],
+    [-18, '9.300', 'H'],
+    [-12, '-1.200', 'L'],
+    [-6, '10.900', 'H'],
+    [0, '4.700', 'L'],
+    [6, '8.600', 'H'],
+    [12, '0.200', 'L'],
+    [18, '11.100', 'H'],
+    [24, '3.900', 'L'],
+    [30, '7.900', 'H'],
+    [36, '1.500', 'L'],
+    [42, '10.700', 'H'],
+    [48, '3.100', 'L'],
+    [54, '7.300', 'H'],
+    [60, '2.200', 'L'],
+    [66, '10.100', 'H'],
+    [72, '2.600', 'L'],
+  ].map(([hour, v, type]) => {
+    const d = new Date(base + hour * 3600 * 1000);
+    return {
+      t: d.toLocaleString('sv-SE', { timeZone: 'America/Los_Angeles' }).slice(0, 16),
+      v,
+      type,
+    };
+  });
+}
+
+async function startNoaaFixture() {
+  noaaServer = createServer((req, res) => {
+    const url = new URL(req.url || '/', noaaBaseUrl || 'http://127.0.0.1');
+    if (url.pathname !== '/api/prod/datagetter') {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'not found' }));
+      return;
+    }
+    if (url.searchParams.get('product') === 'water_temperature') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        metadata: { id: '9444900', name: 'Port Townsend', lat: '48.1112', lon: '-122.7597' },
+        data: [{ t: `${pacificDate()} 12:00`, v: '54.5' }],
+      }));
+      return;
+    }
+    if (url.searchParams.get('product') === 'predictions') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ predictions: testTidePredictions() }));
+      return;
+    }
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: { message: 'unsupported product' } }));
+  });
+  await new Promise(resolve => noaaServer.listen(0, '127.0.0.1', resolve));
+  const { port } = noaaServer.address();
+  noaaBaseUrl = `http://127.0.0.1:${port}`;
+}
+
 // ── Server lifecycle ───────────────────────────────────────────────────
 before(async () => {
   await startWeatherFixture();
+  await startNoaaFixture();
 
   dataDir = await mkdtemp(join(tmpdir(), 'whidbey-dashboard-test-'));
   const configFile = join(dataDir, 'config.json');
   await writeFile(configFile, JSON.stringify({
     port: 3001,
     dataDir,
+    noaaBaseUrl,
     nwsBaseUrl: weatherBaseUrl,
     openMeteoBaseUrl: weatherBaseUrl,
     googleClientId: 'test-google-client-id',
@@ -191,6 +254,7 @@ after(async () => {
     await sleep(500);
   }
   if (weatherServer) await new Promise(resolve => weatherServer.close(resolve));
+  if (noaaServer) await new Promise(resolve => noaaServer.close(resolve));
   if (dataDir) await rm(dataDir, { recursive: true, force: true });
 });
 

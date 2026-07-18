@@ -40,6 +40,7 @@ const CONFIG = {
   sessionSecret: configuredSessionSecret || randomUUID(),
   sessionSecretConfigured: Boolean(configuredSessionSecret),
   noaaStation: String(configValue('noaaStation', '9445526')),
+  noaaBaseUrl: String(configValue('noaaBaseUrl', 'https://api.tidesandcurrents.noaa.gov')).replace(/\/+$/, ''),
   nwsBaseUrl: String(configValue('nwsBaseUrl', 'https://api.weather.gov')).replace(/\/+$/, ''),
   nwsUserAgent: String(configValue('nwsUserAgent', 'whidbey-dashboard (mckoss.com)')).trim(),
   openMeteoBaseUrl: String(configValue('openMeteoBaseUrl', 'https://api.open-meteo.com')).replace(/\/+$/, ''),
@@ -1369,7 +1370,7 @@ function tidesEndpoint(route = DEFAULT_FERRY_ROUTE) {
   // current-height/thermometer interpolation before today's first high/low.
   const begin = formatDate(new Date(today.getTime() - 86400000));
   const end = formatDate(new Date(today.getTime() + 3 * 86400000));
-  const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter` +
+  const url = `${CONFIG.noaaBaseUrl}/api/prod/datagetter` +
     `?begin_date=${begin}&end_date=${end}` +
     `&station=${route.tides.station}` +
     `&product=predictions&datum=MLLW&time_zone=lst_ldt` +
@@ -1394,7 +1395,7 @@ function tidesHourlyEndpoint(route = DEFAULT_FERRY_ROUTE) {
   // first tide of the current day instead of flattening to that first event.
   const begin = formatDate(new Date(today.getTime() - 86400000));
   const end = formatDate(new Date(today.getTime() + 3 * 86400000));
-  const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter` +
+  const url = `${CONFIG.noaaBaseUrl}/api/prod/datagetter` +
     `?begin_date=${begin}&end_date=${end}` +
     `&station=${route.tides.station}` +
     `&product=predictions&datum=MLLW&time_zone=lst_ldt` +
@@ -1457,7 +1458,7 @@ function seawaterTemperatureEndpoint(route = DEFAULT_FERRY_ROUTE) {
 
 async function fetchNoaaSeawaterTemperature(route = DEFAULT_FERRY_ROUTE) {
   if (!route.seawater) throw new Error('Seawater temperature is not configured for this route');
-  const url = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter` +
+  const url = `${CONFIG.noaaBaseUrl}/api/prod/datagetter` +
     `?date=latest&station=${route.seawater.station}` +
     `&product=water_temperature&units=english&time_zone=lst_ldt` +
     `&application=whidbey_dashboard&format=json`;
