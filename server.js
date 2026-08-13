@@ -3883,6 +3883,10 @@ function mergeFerryPredictionSnapshots(existingSnapshots = [], snapshot) {
     .slice(-36 * 60);
 }
 
+function roundHundredths(value) {
+  return Number.isFinite(value) ? Math.round(value * 100) / 100 : value;
+}
+
 function ferryDepartureMetricsPayload(day) {
   const route = ferryRouteForDay(day);
   const snapshots = normalizeFerryPredictionSnapshots(day.predictionSnapshots, route);
@@ -3907,27 +3911,20 @@ function ferryDepartureMetricsPayload(day) {
       const wsfScheduleErrorMinutes = Number.isFinite(entry.wsfScheduledDepartureMs)
         ? (entry.wsfScheduledDepartureMs - trip.actualDepartureMs) / 60000
         : null;
+      // Only the fields the history page's estimate chart and its hover
+      // tooltip consume; the full snapshot detail stays in the day file.
+      // Thousands of points ship per response, so extra fields and float
+      // noise directly cost TV-browser parse time.
       const point = {
-        observedAt: snapshot.observedAt,
         observedAtMs: snapshot.observedAtMs,
-        minutesBeforeDeparture,
+        minutesBeforeDeparture: roundHundredths(minutesBeforeDeparture),
         modelProjectedDepartureMs: entry.modelProjectedDepartureMs,
-        modelErrorMinutes,
-        modelStatus: entry.modelStatus,
+        modelErrorMinutes: roundHundredths(modelErrorMinutes),
         modelTimingSource: entry.modelTimingSource,
-        modelVesselName: entry.modelVesselName,
-        modelSourceStatus: entry.modelSourceStatus,
         modelEtaMs: entry.modelEtaMs,
-        modelAvailableMs: entry.modelAvailableMs,
         modelTurnaroundMs: entry.modelTurnaroundMs,
-        modelTurnaroundBasis: entry.modelTurnaroundBasis,
-        modelProgressPct: entry.modelProgressPct,
         wsfScheduledDepartureMs: entry.wsfScheduledDepartureMs,
-        wsfScheduleErrorMinutes,
-        wsfEtaMs: entry.wsfEtaMs,
-        wsfLeftDockMs: entry.wsfLeftDockMs,
-        wsfVesselName: entry.wsfVesselName,
-        modelVersion: snapshot.modelVersion,
+        wsfScheduleErrorMinutes: roundHundredths(wsfScheduleErrorMinutes),
       };
       const key = ferryDepartureKey(trip.fromTerminalId, trip.scheduledDepartureMs);
       const rows = seriesByKey.get(key) || [];
@@ -4176,6 +4173,17 @@ app.get('/api/bainbridge/ferry/departure-metrics', ferryDepartureMetricsEndpoint
 
 app.get('/ferry-history', (req, res) => {
   sendHtmlPage(res, 'ferry-history.html');
+});
+
+// Departure estimate error charts live on their own page: they exist to
+// debug the prediction model and their metrics payload is far too heavy to
+// ship with every history-page refresh.
+app.get('/estimate', (req, res) => {
+  sendHtmlPage(res, 'estimate.html');
+});
+
+app.get('/bainbridge/estimate', (req, res) => {
+  sendRoutePage(res, 'estimate.html', FERRY_ROUTES.bainbridge);
 });
 
 app.get('/bainbridge', (req, res) => {

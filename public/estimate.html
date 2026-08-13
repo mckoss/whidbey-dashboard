@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Departure Estimates</title>
+  <style>
+    :root {
+      --bg: #0a0e1a;
+      --panel: #111827;
+      --panel2: #0f172a;
+      --border: #1e2d45;
+      --text: #e2e8f0;
+      --dim: #94a3b8;
+      --accent: #38bdf8;
+      --accent2: #34d399;
+      --warn: #fbbf24;
+      --danger: #f87171;
+      --line: #334155;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", system-ui, sans-serif;
+    }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+      grid-template-areas: "title nav clock";
+      gap: 0.6rem;
+      align-items: center;
+      padding: 0.5rem 0.75rem;
+      background: rgba(10, 14, 26, 0.96);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(12px);
+    }
+
+    .title-row {
+      grid-area: title;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.1rem;
+      min-width: 0;
+    }
+
+    h1 {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      margin: 0;
+      color: var(--accent);
+      font-weight: 300;
+      font-size: clamp(1rem, 2vw, 1.45rem);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .page-logo {
+      width: 1.25em;
+      height: 1.25em;
+      flex: 0 0 auto;
+      color: var(--accent);
+    }
+
+    #version {
+      color: #64748b;
+      font-size: 0.45em;
+      letter-spacing: 0.08em;
+      text-transform: none;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+
+    .page-links {
+      display: flex;
+      gap: 0.8rem;
+    }
+
+    .nav {
+      grid-area: nav;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      flex-wrap: nowrap;
+      justify-content: center;
+      justify-self: center;
+    }
+
+    .clock-block {
+      grid-area: clock;
+      text-align: right;
+      min-width: max-content;
+      justify-self: end;
+    }
+
+    #clock {
+      font-size: 2.5rem;
+      font-weight: 200;
+      letter-spacing: 0.05em;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+      line-height: 1;
+    }
+
+    #date-display {
+      color: var(--dim);
+      font-size: 0.8rem;
+      margin-top: 0.1rem;
+    }
+
+    button,
+    input[type="date"] {
+      min-height: 1.9rem;
+      border: 1px solid var(--border);
+      border-radius: 0.35rem;
+      background: var(--panel);
+      color: var(--text);
+      font: inherit;
+      padding: 0.25rem 0.45rem;
+    }
+
+    .text-link {
+      color: var(--dim);
+      font-size: 0.82rem;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    button { cursor: pointer; }
+
+    button:hover,
+    .text-link:hover {
+      color: var(--accent);
+    }
+
+    main {
+      width: min(1180px, calc(100vw - 1.5rem));
+      margin: 0 auto;
+      padding: 0.55rem 0 1.5rem;
+      display: grid;
+      gap: 0.55rem;
+    }
+
+    section {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      overflow: hidden;
+    }
+
+    .section-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.75rem 0.85rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    h2 {
+      margin: 0;
+      color: var(--dim);
+      font-size: 0.8rem;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .meta {
+      color: var(--dim);
+      font-size: 0.82rem;
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
+
+    svg {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem 0.8rem;
+      padding: 0.7rem 0.85rem;
+      border-top: 1px solid var(--border);
+      color: var(--dim);
+      font-size: 0.82rem;
+    }
+
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      min-width: 0;
+    }
+
+    .swatch {
+      width: 0.8rem;
+      height: 0.8rem;
+      border-radius: 50%;
+      flex: 0 0 auto;
+    }
+
+    .load-chart-heading {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.55rem 0.7rem;
+      border-bottom: 1px solid var(--border);
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .load-chart-heading .meta {
+      font-size: 0.76rem;
+    }
+
+    .estimate-charts {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.75rem;
+      padding: 0.75rem;
+      background: var(--panel2);
+    }
+
+    .estimate-chart {
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 0.45rem;
+      background: var(--panel);
+    }
+
+    .estimate-chart-wrap {
+      padding: 0.6rem 0.7rem 0.55rem;
+    }
+
+    .estimate-zero-line {
+      stroke: rgba(226, 232, 240, 0.58);
+      stroke-width: 1.4;
+    }
+
+    .estimate-grid {
+      stroke: rgba(148, 163, 184, 0.22);
+      stroke-width: 1;
+    }
+
+    .estimate-line {
+      fill: none;
+      stroke-width: 2.4;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .estimate-line.wsf {
+      stroke-dasharray: 5 5;
+      opacity: 0.64;
+    }
+
+    .estimate-dot {
+      stroke: var(--panel);
+      stroke-width: 1.5;
+    }
+
+    .estimate-tooltip {
+      position: fixed;
+      z-index: 10;
+      max-width: 340px;
+      padding: 8px 10px;
+      background: var(--panel);
+      border: 1px solid rgba(148, 163, 184, 0.4);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.5;
+      pointer-events: none;
+    }
+
+    .estimate-label {
+      fill: var(--dim);
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .empty { color: var(--dim); }
+
+    .error {
+      color: var(--danger);
+      padding: 0.75rem 0.85rem;
+      border-top: 1px solid var(--border);
+    }
+
+    @media (max-width: 760px) {
+      header {
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas:
+          "title clock"
+          "nav nav";
+      }
+      .estimate-charts {
+        grid-template-columns: 1fr;
+        padding: 0.5rem;
+        gap: 0.6rem;
+      }
+      .estimate-chart-wrap { padding: 0.45rem 0.5rem 0.5rem; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="title-row">
+      <h1>
+        <svg class="page-logo" viewBox="0 0 64 64" role="img" aria-label="Washington state ferry in profile">
+          <path d="M4 42h56l-5 8H12l-8-8Z" fill="currentColor" opacity="0.95"/>
+          <path d="M14 25h33l8 11H10l4-11Z" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/>
+          <path d="M20 18h18l5 7H16l4-7Z" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/>
+          <path d="M18 32h6M29 32h6M40 32h6" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+          <path d="M6 54c5 3 10 3 15 0s10-3 15 0 10 3 15 0" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+        </svg>
+        <span id="page-title">Departure Estimates</span> <span id="version"></span>
+      </h1>
+      <div class="page-links">
+        <a class="text-link" id="main-link" href="/">Dashboard</a>
+        <a class="text-link" id="history-link" href="/ferry-history">History</a>
+      </div>
+    </div>
+    <div class="nav">
+      <button id="prev-date" type="button" title="Previous day">Prev</button>
+      <input id="date-input" type="date">
+      <button id="next-date" type="button" title="Next day">Next</button>
+    </div>
+    <div class="clock-block">
+      <div id="clock">--:--:--</div>
+      <div id="date-display">Loading...</div>
+    </div>
+  </header>
+
+  <main>
+    <section>
+      <div class="section-head">
+        <h2>Departure Estimate Error</h2>
+        <div class="meta" id="estimate-meta"></div>
+      </div>
+      <div class="estimate-charts" id="estimate-charts"></div>
+      <div class="legend" id="legend"></div>
+      <div class="error" id="error" hidden></div>
+    </section>
+  </main>
+
+  <script>
+    const FERRY_ROUTE = window.__FERRY_ROUTE__ || {
+      key: 'whidbey',
+      title: 'South Whidbey Island',
+      historyTitle: 'Ferry History',
+      dashboardPath: '/',
+      historyPath: '/ferry-history',
+      apiPrefix: '/api/ferry',
+      crossingEstimateMs: 20 * 60 * 1000,
+      terminals: {
+        primary: { slug: 'clinton', name: 'Clinton', id: 5, lat: 47.9755, lon: -122.3493 },
+        secondary: { slug: 'mukilteo', name: 'Mukilteo', id: 14, lat: 47.9485, lon: -122.3046 },
+      },
+    };
+    const PRIMARY_TERMINAL = FERRY_ROUTE.terminals.primary;
+    const SECONDARY_TERMINAL = FERRY_ROUTE.terminals.secondary;
+    const TERMINAL_ORDER = [SECONDARY_TERMINAL.name, PRIMARY_TERMINAL.name];
+    const PAGE_TITLE = (FERRY_ROUTE.historyTitle || 'Ferry History').replace(/History/, 'Estimates');
+    document.title = PAGE_TITLE;
+    document.getElementById('page-title').textContent = PAGE_TITLE;
+    document.getElementById('main-link').href = FERRY_ROUTE.dashboardPath;
+    document.getElementById('history-link').href = FERRY_ROUTE.historyPath || '/ferry-history';
+
+    const COLORS = ['#f87171', '#34d399', '#38bdf8', '#fbbf24', '#a78bfa', '#fb923c', '#22d3ee', '#f472b6'];
+    const TZ = 'America/Los_Angeles';
+
+    const estimateChartsEl = document.getElementById('estimate-charts');
+    const estimateMetaEl = document.getElementById('estimate-meta');
+    const legendEl = document.getElementById('legend');
+    const dateInput = document.getElementById('date-input');
+    const errorEl = document.getElementById('error');
+    const versionEl = document.getElementById('version');
+    const clockEl = document.getElementById('clock');
+    const dateEl = document.getElementById('date-display');
+    let refreshMs = 60 * 1000;
+    let refreshTimer = null;
+    let requestSeq = 0;
+
+    const params = new URLSearchParams(window.location.search);
+
+    document.getElementById('prev-date').addEventListener('click', () => shiftDate(-1));
+    document.getElementById('next-date').addEventListener('click', () => shiftDate(1));
+    dateInput.addEventListener('change', () => navigateTo(dateInput.value));
+
+    updateClock();
+    setInterval(updateClock, 1000);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) refreshMetrics();
+    });
+
+    loadConfig().then(() => {
+      const initialDate = validDate(params.get('date'));
+      dateInput.value = initialDate;
+      loadMetrics(initialDate, { showLoading: true });
+      if (refreshTimer) clearInterval(refreshTimer);
+      refreshTimer = setInterval(refreshMetrics, refreshMs);
+    }).catch(e => {
+      versionEl.textContent = '';
+      renderError(e.message);
+    });
+
+    async function loadConfig() {
+      try {
+        const cfg = await fetch('/api/config').then(r => r.json());
+        if (cfg.version) versionEl.textContent = 'v ' + cfg.version;
+        if (Number.isFinite(cfg.ferryHistorySampleMs) && cfg.ferryHistorySampleMs >= 10000) {
+          refreshMs = cfg.ferryHistorySampleMs;
+        }
+      } catch (e) {
+        versionEl.textContent = '';
+        throw e;
+      }
+    }
+
+    function updateClock() {
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+      clockEl.textContent = timeStr.replace(' AM', ' am').replace(' PM', ' pm');
+      dateEl.textContent = now.toLocaleDateString('en-US', { timeZone: TZ, weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+    }
+
+    function refreshMetrics() {
+      if (document.hidden) return;
+      loadMetrics(dateInput.value, { showLoading: false });
+    }
+
+    function validDate(value) {
+      return /^\d{4}-\d{2}-\d{2}$/.test(value || '') ? value : '';
+    }
+
+    function shiftDate(deltaDays) {
+      if (!validDate(dateInput.value)) return;
+      const [year, month, day] = dateInput.value.split('-').map(Number);
+      const next = new Date(Date.UTC(year, month - 1, day + deltaDays, 12));
+      navigateTo(next.toISOString().slice(0, 10));
+    }
+
+    function navigateTo(date) {
+      if (!validDate(date)) return;
+      const url = new URL(window.location.href);
+      url.searchParams.set('date', date);
+      window.location.href = url.toString();
+    }
+
+    async function loadMetrics(date, options = {}) {
+      const requestId = ++requestSeq;
+      if (options.showLoading) {
+        estimateChartsEl.innerHTML = '<div class="estimate-chart"><div class="estimate-chart-wrap empty">Loading ferry estimate metrics...</div></div>';
+      }
+      try {
+        const metricsUrl = date
+          ? `${FERRY_ROUTE.apiPrefix}/departure-metrics?date=${encodeURIComponent(date)}`
+          : `${FERRY_ROUTE.apiPrefix}/departure-metrics`;
+        const res = await fetch(metricsUrl, { cache: 'no-store' });
+        const metricsData = await res.json();
+        if (requestId !== requestSeq) return;
+        if (!res.ok && !metricsData.generatedAt) throw new Error(metricsData.error || `HTTP ${res.status}`);
+        if (validDate(metricsData.date)) dateInput.value = metricsData.date;
+        errorEl.hidden = !metricsData.error;
+        errorEl.textContent = metricsData.error || '';
+        renderEstimateCharts(metricsData);
+      } catch (e) {
+        if (requestId !== requestSeq) return;
+        renderError(e.message);
+      }
+    }
+
+    function renderError(message) {
+      estimateChartsEl.innerHTML = '<div class="estimate-chart"><div class="estimate-chart-wrap empty">No departure estimate metrics are available.</div></div>';
+      legendEl.innerHTML = '';
+      errorEl.hidden = false;
+      errorEl.textContent = message;
+    }
+
+    // Chart geometry is shared between rendering and the delegated hover
+    // tooltip, which maps pointer position back into viewBox coordinates.
+    const ESTIMATE_W = 500;
+    const ESTIMATE_H = 230;
+    const ESTIMATE_PAD = { top: 16, right: 18, bottom: 38, left: 44 };
+    const estimateChartScales = {};
+    let lastEstimateSeries = [];
+
+    function estimateAxes(maxAbs) {
+      const chartW = ESTIMATE_W - ESTIMATE_PAD.left - ESTIMATE_PAD.right;
+      const chartH = ESTIMATE_H - ESTIMATE_PAD.top - ESTIMATE_PAD.bottom;
+      return {
+        xFor: minutesBefore => ESTIMATE_PAD.left + ((90 - minutesBefore) / 90) * chartW,
+        yFor: errorMinutes => ESTIMATE_PAD.top + ((maxAbs - errorMinutes) / (maxAbs * 2)) * chartH,
+      };
+    }
+
+    function seriesVessels(series) {
+      const names = [];
+      for (const trip of series) {
+        const name = trip.vesselName || 'Unknown';
+        if (!names.includes(name)) names.push(name);
+      }
+      return names;
+    }
+
+    function renderEstimateCharts(metricsData = null) {
+      const series = Array.isArray(metricsData?.series) ? metricsData.series : [];
+      lastEstimateSeries = series;
+      const vessels = seriesVessels(series);
+      const pointCount = series.reduce((sum, trip) => sum + (trip.points || []).length, 0);
+      estimateMetaEl.textContent = pointCount
+        ? `${pointCount} prediction samples · ${metricsData.snapshotCount || 0} snapshots`
+        : 'no prediction samples yet';
+      estimateChartsEl.innerHTML = TERMINAL_ORDER.map(terminal =>
+        estimateChart(terminal, series, vessels)
+      ).join('');
+      legendEl.innerHTML = vessels.length
+        ? vessels.map(v => `<span class="legend-item"><span class="swatch" style="background:${colorFor(v, vessels)}"></span>${escapeHtml(v)}</span>`).join('')
+          + '<span class="legend-item">solid: dashboard model error · dashed: WSF schedule error</span>'
+        : '<span class="empty">Vessel colors appear once snapshots include vessel names.</span>';
+    }
+
+    function estimateChart(terminal, series, vessels) {
+      const rows = series
+        .filter(trip => trip.fromTerminalName === terminal)
+        .sort((a, b) => a.actualDepartureMs - b.actualDepartureMs);
+      const rowHtml = rows.length
+        ? estimateSvg(terminal, rows, vessels)
+        : '<div class="estimate-chart-wrap empty">No prediction snapshots for recorded departures yet.</div>';
+      return `<div class="estimate-chart" data-terminal="${escapeHtml(terminal)}">
+        <div class="load-chart-heading">
+          <span>${escapeHtml(terminal)}</span>
+          <span class="meta">${rows.length} departures</span>
+        </div>
+        ${rowHtml}
+      </div>`;
+    }
+
+    function estimateSvg(terminal, series, vessels) {
+      const width = ESTIMATE_W;
+      const height = ESTIMATE_H;
+      const pad = ESTIMATE_PAD;
+      const allErrors = series.flatMap(trip => (trip.points || []).flatMap(point =>
+        [point.modelErrorMinutes, point.wsfScheduleErrorMinutes].filter(Number.isFinite)
+      ));
+      const maxAbs = Math.max(5, Math.ceil(Math.max(...allErrors.map(Math.abs), 0) / 5) * 5);
+      estimateChartScales[terminal] = maxAbs;
+      const { xFor, yFor } = estimateAxes(maxAbs);
+      const grid = [-maxAbs, 0, maxAbs].map(value => {
+        const y = yFor(value);
+        return `<line class="${value === 0 ? 'estimate-zero-line' : 'estimate-grid'}" x1="${pad.left}" x2="${width - pad.right}" y1="${y}" y2="${y}"></line>
+          <text class="estimate-label" x="${pad.left - 7}" y="${y + 4}" text-anchor="end">${value > 0 ? '+' : ''}${value}</text>`;
+      }).join('');
+      const xTicks = [90, 60, 30, 0].map(value => {
+        const x = xFor(value);
+        return `<line class="estimate-grid" x1="${x}" x2="${x}" y1="${pad.top}" y2="${height - pad.bottom}"></line>
+          <text class="estimate-label" x="${x}" y="${height - 14}" text-anchor="middle">${value === 0 ? 'depart' : `-${value}m`}</text>`;
+      }).join('');
+      const lines = series.map((trip, index) => {
+        const color = colorFor(trip.vesselName || String(index), vessels);
+        const modelPoints = estimatePolylinePoints(trip.points, 'modelErrorMinutes', xFor, yFor);
+        const wsfPoints = estimatePolylinePoints(trip.points, 'wsfScheduleErrorMinutes', xFor, yFor);
+        const title = `${trip.vesselName || 'Unknown'} ${formatTableTimeMs(trip.actualDepartureMs)} actual, scheduled ${formatTableTimeMs(trip.scheduledDepartureMs)}`;
+        return `${modelPoints ? `<polyline class="estimate-line model" points="${modelPoints}" stroke="${color}"><title>${escapeHtml(title)} dashboard model error</title></polyline>` : ''}
+          ${wsfPoints ? `<polyline class="estimate-line wsf" points="${wsfPoints}" stroke="${color}"><title>${escapeHtml(title)} WSF scheduled-time error</title></polyline>` : ''}
+          ${estimateDots(trip, color, xFor, yFor)}`;
+      }).join('');
+      return `<div class="estimate-chart-wrap">
+        <svg viewBox="0 0 ${width} ${height}" style="aspect-ratio:${width} / ${height}" role="img" aria-label="${escapeHtml(terminal)} departure estimate error">
+          ${grid}
+          ${xTicks}
+          <text class="estimate-label" x="${pad.left}" y="12">error min</text>
+          <text class="estimate-label" x="${width - pad.right}" y="${height - 2}" text-anchor="end">minutes before actual departure</text>
+          ${lines}
+        </svg>
+      </div>`;
+    }
+
+    function estimatePolylinePoints(points = [], field, xFor, yFor) {
+      return points
+        .filter(point => Number.isFinite(point[field]) && Number.isFinite(point.minutesBeforeDeparture))
+        .sort((a, b) => b.minutesBeforeDeparture - a.minutesBeforeDeparture)
+        .map(point => `${xFor(point.minutesBeforeDeparture).toFixed(1)},${yFor(point[field]).toFixed(1)}`)
+        .join(' ');
+    }
+
+    // All of a series' sample dots live in one <path> (two arcs per dot).
+    // A <circle><title> pair per sample (~6,600 nodes rebuilt every refresh)
+    // made slow browsers crawl; sample detail comes from the shared pointer
+    // tooltip instead of per-node <title>s.
+    function estimateDots(trip, color, xFor, yFor) {
+      const d = (trip.points || [])
+        .filter(point => Number.isFinite(point.modelErrorMinutes) && Number.isFinite(point.minutesBeforeDeparture))
+        .map(point => {
+          const x = xFor(point.minutesBeforeDeparture);
+          const y = yFor(point.modelErrorMinutes);
+          return `M${(x - 2.4).toFixed(1)} ${y.toFixed(1)}a2.4 2.4 0 1 0 4.8 0a2.4 2.4 0 1 0 -4.8 0`;
+        }).join('');
+      return d ? `<path class="estimate-dot" d="${d}" fill="${color}"></path>` : '';
+    }
+
+    function estimatePointDetail(trip, point) {
+      return [
+        `${trip.vesselName || 'Unknown'} actual ${formatTableTimeMs(trip.actualDepartureMs)}`,
+        `sample ${formatTableTimeMs(point.observedAtMs)} (${point.minutesBeforeDeparture.toFixed(0)} min before)`,
+        `model ${formatTableTimeMs(point.modelProjectedDepartureMs)} (${signedMinutes(point.modelErrorMinutes)})`,
+        `WSF schedule ${formatTableTimeMs(point.wsfScheduledDepartureMs)} (${signedMinutes(point.wsfScheduleErrorMinutes)})`,
+        point.modelEtaMs ? `model ETA ${formatTableTimeMs(point.modelEtaMs)}` : '',
+        point.modelTurnaroundMs ? `turnaround ${formatMinutes(point.modelTurnaroundMs)}` : '',
+        point.modelTimingSource ? `source ${point.modelTimingSource}` : '',
+      ].filter(Boolean).join(' · ');
+    }
+
+    let estimateTooltipEl = null;
+
+    function estimateTooltip() {
+      if (!estimateTooltipEl) {
+        estimateTooltipEl = document.createElement('div');
+        estimateTooltipEl.className = 'estimate-tooltip';
+        estimateTooltipEl.hidden = true;
+        document.body.appendChild(estimateTooltipEl);
+      }
+      return estimateTooltipEl;
+    }
+
+    function hideEstimateTooltip() {
+      if (estimateTooltipEl) estimateTooltipEl.hidden = true;
+    }
+
+    function nearestEstimatePoint(terminal, vx, vy) {
+      const maxAbs = estimateChartScales[terminal];
+      if (!Number.isFinite(maxAbs)) return null;
+      const { xFor, yFor } = estimateAxes(maxAbs);
+      let best = null;
+      let bestDist = 9 * 9; // ignore the pointer unless it is near a dot
+      for (const trip of lastEstimateSeries) {
+        if (trip.fromTerminalName !== terminal) continue;
+        for (const point of trip.points || []) {
+          if (!Number.isFinite(point.modelErrorMinutes) || !Number.isFinite(point.minutesBeforeDeparture)) continue;
+          const dx = xFor(point.minutesBeforeDeparture) - vx;
+          const dy = yFor(point.modelErrorMinutes) - vy;
+          const dist = dx * dx + dy * dy;
+          if (dist < bestDist) {
+            bestDist = dist;
+            best = { trip, point };
+          }
+        }
+      }
+      return best;
+    }
+
+    estimateChartsEl.addEventListener('pointermove', evt => {
+      const svg = evt.target.closest('svg');
+      const terminal = evt.target.closest('.estimate-chart')?.dataset.terminal;
+      if (!svg || !terminal) return hideEstimateTooltip();
+      const rect = svg.getBoundingClientRect();
+      if (!rect.width || !rect.height) return hideEstimateTooltip();
+      const vx = (evt.clientX - rect.left) * (ESTIMATE_W / rect.width);
+      const vy = (evt.clientY - rect.top) * (ESTIMATE_H / rect.height);
+      const hit = nearestEstimatePoint(terminal, vx, vy);
+      if (!hit) return hideEstimateTooltip();
+      const tooltip = estimateTooltip();
+      tooltip.textContent = estimatePointDetail(hit.trip, hit.point);
+      tooltip.hidden = false;
+      const margin = 12;
+      const maxLeft = document.documentElement.clientWidth - tooltip.offsetWidth - margin;
+      tooltip.style.left = `${Math.max(margin, Math.min(evt.clientX + margin, maxLeft))}px`;
+      tooltip.style.top = `${evt.clientY + margin}px`;
+    });
+    estimateChartsEl.addEventListener('pointerleave', hideEstimateTooltip);
+
+    function colorFor(vesselName, vessels) {
+      const index = Math.max(0, vessels.indexOf(vesselName || 'Unknown'));
+      return COLORS[index % COLORS.length];
+    }
+
+    function formatTableTimeMs(ms) {
+      if (!ms) return '--';
+      return new Intl.DateTimeFormat([], { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: false }).format(new Date(ms));
+    }
+
+    function formatMinutes(ms) {
+      return ms == null ? '--' : (ms / 60000).toFixed(1);
+    }
+
+    function signedMinutes(value) {
+      if (!Number.isFinite(value)) return '--';
+      const rounded = Math.round(value);
+      return `${rounded > 0 ? '+' : ''}${rounded} min`;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, c => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+      })[c]);
+    }
+  </script>
+</body>
+</html>

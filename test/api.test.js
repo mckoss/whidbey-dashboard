@@ -894,6 +894,9 @@ test('ferry/departure-metrics endpoint — returns prediction error series from 
   assert.equal(d.series[0].points[0].modelErrorMinutes, 3, 'model error is projected minus actual departure');
   assert.equal(d.series[0].points[0].wsfScheduleErrorMinutes, -5, 'WSF schedule error is scheduled minus actual departure');
   assert.equal(d.series[0].points[0].modelTimingSource, 'gps-vessel-state', 'keeps model basis for tooltips and analysis');
+  for (const pruned of ['observedAt', 'modelStatus', 'modelVesselName', 'modelSourceStatus', 'modelVersion', 'wsfVesselName', 'wsfEtaMs', 'wsfLeftDockMs']) {
+    assert.ok(!(pruned in d.series[0].points[0]), `metrics points omit ${pruned} — thousands of points ship per response and TVs parse them every refresh`);
+  }
 
   const source = await readFile(join(__dirname, '../server.js'), 'utf8');
   assert.match(source, /predictionSnapshots: mergeFerryPredictionSnapshots/, 'records prediction snapshots in the durable history day');
@@ -901,11 +904,25 @@ test('ferry/departure-metrics endpoint — returns prediction error series from 
   assert.match(source, /app\.get\('\/api\/ferry\/departure-metrics'/, 'registers the Whidbey metrics endpoint');
   assert.match(source, /app\.get\('\/api\/bainbridge\/ferry\/departure-metrics'/, 'registers the Bainbridge metrics endpoint');
 
-  const html = await readFile(join(__dirname, '../public/ferry-history.html'), 'utf8');
-  assert.match(html, /Departure Estimate Error/, 'history page includes the estimate-error section');
-  assert.match(html, /departure-metrics/, 'history page fetches the metrics API');
-  assert.match(html, /modelErrorMinutes/, 'history chart draws model error series');
-  assert.match(html, /wsfScheduleErrorMinutes/, 'history chart draws WSF schedule error series');
+  const estimatePage = await fetch(`${BASE}/estimate`);
+  assert.equal(estimatePage.status, 200, 'serves the dedicated estimate page');
+  const estimateHtml = await estimatePage.text();
+  assert.match(estimateHtml, /Departure Estimate Error/, 'estimate page includes the estimate-error section');
+  assert.match(estimateHtml, /departure-metrics/, 'estimate page fetches the metrics API');
+  assert.match(estimateHtml, /modelErrorMinutes/, 'estimate chart draws model error series');
+  assert.match(estimateHtml, /wsfScheduleErrorMinutes/, 'estimate chart draws WSF schedule error series');
+  assert.match(estimateHtml, /<path class="estimate-dot"/, 'sample dots render as one path per series, not a node per sample (TV render speed)');
+  assert.doesNotMatch(estimateHtml, /<circle class="estimate-dot"/, 'per-sample circle nodes stay removed');
+  assert.match(estimateHtml, /estimate-tooltip/, 'sample detail comes from a shared pointer tooltip');
+
+  const bainbridgeEstimate = await fetch(`${BASE}/bainbridge/estimate`);
+  assert.equal(bainbridgeEstimate.status, 200, 'serves the Bainbridge estimate page');
+  assert.match(await bainbridgeEstimate.text(), /__FERRY_ROUTE__=/, 'Bainbridge estimate page carries injected route config');
+
+  const historyHtml = await readFile(join(__dirname, '../public/ferry-history.html'), 'utf8');
+  assert.doesNotMatch(historyHtml, /departure-metrics/, 'history page no longer downloads prediction metrics');
+  assert.doesNotMatch(historyHtml, /Departure Estimate Error/, 'history page keeps only history charts, loads, and timetables');
+  assert.match(historyHtml, /id="estimate-link"/, 'history page links to the estimate page');
 });
 
 test('ferry/departures endpoint — GPS-chain corrections never assign one vessel to simultaneous terminal departures', async () => {
