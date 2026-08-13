@@ -531,6 +531,14 @@ test('ferry/history endpoint — returns a dated trip log shell and validates da
   assert.equal(d.operationalDay.endMs - d.operationalDay.startMs, 24 * 60 * 60 * 1000, 'history file defines a 24-hour span');
   assert.equal(d.retentionDays, null, 'does not report a day-count retention limit');
   assert.equal(d.retentionPolicy, 'permanent', 'documents permanent ferry history retention');
+  assert.ok(!('predictionSnapshots' in d), 'history response omits prediction snapshots (94% of the payload; only the departure-metrics endpoint reads them, from disk)');
+
+  // The dashboard page is always over compression's 1 KB threshold, unlike a
+  // freshly-created test-server history day.
+  const compressed = await fetch(`${BASE}/`, {
+    headers: { 'Accept-Encoding': 'gzip' },
+  });
+  assert.equal(compressed.headers.get('content-encoding'), 'gzip', 'responses are gzip-compressed at the origin so Railway-billed egress shrinks');
   const [year, month] = today.split('-');
   await readFile(join(dataDir, 'ferry-history', year, month, `${today}.json`), 'utf8');
   const oldFlatFile = join(dataDir, 'ferry-history', '1999-01-01.json');
@@ -573,6 +581,8 @@ test('ferry/history endpoint — returns a dated trip log shell and validates da
   assert.match(source, /cachedWsfJson\('vesselLocations', \{\}, url\)/, 'shares the raw all-vessel WSF feed before route filtering');
   assert.match(source, /cachedWsfJson\('alerts', \{\}, url\)/, 'shares the raw all-alert WSF feed before route filtering');
   assert.match(source, /cachedEndpoint\(`\$\{route\.key\}_ferry_vessels`, WSF_API_MIN_INTERVAL_MS/, 'keeps public vessel fetches on the WSF one-minute cadence');
+  assert.match(source, /app\.use\(compression\(\)\)/, 'compresses responses at the origin, where Railway meters egress');
+  assert.match(source, /function ferryHistoryResponseDay/, 'strips prediction snapshots from history API responses');
 });
 
 test('bainbridge ferry endpoints — use separate route metadata and history storage', async () => {

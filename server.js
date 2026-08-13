@@ -1,4 +1,5 @@
 import express from 'express';
+import compression from 'compression';
 import fetch from 'node-fetch';
 import { OAuth2Client } from 'google-auth-library';
 import morgan from 'morgan';
@@ -117,6 +118,10 @@ if (!CONFIG.sessionSecretConfigured && process.env.NODE_ENV !== 'test') {
 
 // ── Request logging (stdout → Railway Log Explorer) ───────────────────
 app.use(morgan('combined'));
+// Compress at the origin: Railway meters egress on bytes leaving the
+// container (before its edge gzips), so origin compression is what
+// actually reduces the bill.
+app.use(compression());
 app.use(express.json({ limit: '16kb' }));
 
 app.post('/api/analytics/view', (req, res) => {
@@ -4071,6 +4076,15 @@ async function recordFerryHistoryDay(date = ferryHistoryDateForMs(), nowMs = Dat
   return day;
 }
 
+// predictionSnapshots stays in the on-disk day file for the
+// departure-metrics endpoint, but it dwarfs the rest of the day (per-minute
+// snapshots of every sailing — ~94% of the payload by evening) and the
+// history page never reads it, so keep it out of the response.
+function ferryHistoryResponseDay(day) {
+  const { predictionSnapshots, ...rest } = day;
+  return rest;
+}
+
 function ferryHistoryEndpoint(route = DEFAULT_FERRY_ROUTE) {
   return async (req, res) => {
     const date = String(req.query.date || ferryHistoryDateForMs()).trim();
@@ -4078,11 +4092,11 @@ function ferryHistoryEndpoint(route = DEFAULT_FERRY_ROUTE) {
     try {
       const today = ferryHistoryDateForMs();
       const day = date === today ? await recordFerryHistoryDay(date, Date.now(), route) : readFerryHistoryDay(date, route);
-      res.json(day);
+      res.json(ferryHistoryResponseDay(day));
     } catch (e) {
       const existing = readFerryHistoryDay(date, route);
       res.status(existing.generatedAt ? 200 : 500).json({
-        ...existing,
+        ...ferryHistoryResponseDay(existing),
         error: e.message,
       });
     }
