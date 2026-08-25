@@ -12,7 +12,10 @@ See the hosted version at [whidbey-dashboard.mckoss.com](https://whidbey-dashboa
 - 🌅 Sunrise & sunset times (calculated locally, shown in weather card header)
 - 🌕 Moon phase display — SVG rendered client-side with pure geometry, no images
 - 🌊 Tide predictions — hi/lo table + sparkline + thermometer (NOAA Hansville station)
-- ⛴ Bidirectional ferry: Clinton→Mukilteo and Mukilteo→Clinton, with live space occupancy
+- ⛴ Bidirectional ferry dashboards for Clinton–Mukilteo and Seattle–Bainbridge,
+  with live vessel state, predicted departures, and space occupancy
+- 📊 Daily 60-minute ferry prediction accuracy reports with RMSE, tail-error
+  statistics, and absolute-error histograms
 - ⚠ Per-source data staleness indicators
 
 ## Setup
@@ -169,9 +172,17 @@ even if another Google account successfully signs in.
 
 ## Architecture
 
-**Single-file frontend:** `public/index.html` — all HTML, CSS, and JS in one file. No build step, no bundler.
+**Plain frontend:** each page keeps its HTML, CSS, and JavaScript together under
+`public/`. `public/index.html` is the shared route-aware dashboard;
+`ferry-history.html`, `estimate.html`, `admin.html`, and `tracking.html` provide
+the supporting views. There is no build step or bundler.
 
 **Server:** `server.js` — Express, ignored `config.json` or Railway `CONFIG_JSON` for runtime settings, memory-first cache per endpoint persisted to `data/cache.json`, stale-while-revalidate pattern. If a fresh fetch fails, serves stale data with `_stale: true` flag.
+
+**Ferry prediction:** `ferry-prediction-model.js` owns the server-side route
+policy and daily 60-minute evaluation. Its header comment is the canonical
+methodology record and must be updated whenever the model changes. The browser
+only displays server-resolved estimates; it does not adjust them locally.
 
 **Tests:** `npm test` runs `node --test test/api.test.js`. Tests spawn their own server on port 3001.
 
@@ -192,20 +203,36 @@ Data windows include headroom beyond the refresh interval. The tide sparkline
 uses a fixed 72-hour window so the shape and scale do not change when the
 available prediction range is shorter.
 
-Ferry history records raw WSDOT vessel GPS samples when `/api/ferry/history`
-is hit. Production also uses `scripts/ferry-history-keepalive.sh` from system
-cron once per minute to keep recording through low-traffic periods, especially
-the midnight-to-2 AM tail of the operational ferry day.
-History files are retained permanently by the app and written under dated
-folders such as `data/ferry-history/2026/06/2026-06-20.json`. There is no
+The server samples schedule, space, and WSDOT vessel GPS data for both ferry
+routes once per minute while it is running. Requests to the ferry history and
+departure endpoints use that same collector, and
+`scripts/ferry-history-keepalive.sh` remains available as an external
+keepalive for deployments that need it. Raw WSF responses continue to be
+appended under `wsfRawLogDir`; the prediction model does not change collection
+or rewrite historical observations.
+
+History files are retained permanently under dated folders such as
+`data/ferry-history/2026/06/2026-06-20.json` for Clinton–Mukilteo and
+`data/ferry-history-bainbridge/...` for Seattle–Bainbridge. There is no
 automated history cleanup; manually remove old files from the data volume if
 you want to reclaim space.
 
 Each ferry-history sample also stores the dashboard model's departure
-projection for visible upcoming sailings. The history page uses those snapshots
-to chart departure-estimate error for each recorded trip: minutes before actual
-departure on the x-axis and prediction error in minutes on the y-axis, with the
-dashboard model and WSF scheduled departure shown together for comparison.
+projection for visible upcoming sailings. The dedicated estimates pages use
+those immutable snapshots to chart departure-estimate error for each recorded
+trip: minutes before actual departure on the x-axis and signed prediction error
+in minutes on the y-axis, with the dashboard model and WSF scheduled departure
+shown together for comparison. Historical estimates are not recalculated after
+a model deployment.
+
+The daily 60-minute report selects exactly one snapshot per verified departure:
+the sample closest to 60 minutes beforehand within a 57.5–62.5 minute window.
+It reports RMSE, mean absolute error, 95th-percentile absolute error, worst
+error, the proportion within five minutes, and absolute-error histogram buckets
+of 0–5, 5–10, 10–15, 15–20, 20–30, 30–45, and 45+ minutes. The current day is
+provisional; earlier days are final. View the reports at
+[`/estimate`](https://whidbey-dashboard.mckoss.com/estimate) and
+[`/bainbridge/estimate`](https://whidbey-dashboard.mckoss.com/bainbridge/estimate).
 
 Cache files are written to `dataDir` in `config.json`, or local `./data` when
 `dataDir` is omitted. For Railway persistence across deploys, mount a Railway
@@ -241,7 +268,14 @@ warnings appear only for persistent or actionable feed problems:
 | `GET /api/ferry/clinton/space` | Drive-up space by departure (Clinton) |
 | `GET /api/ferry/mukilteo/space` | Drive-up space by departure (Mukilteo) |
 | `GET /api/ferry` | Legacy alias for `/api/ferry/clinton` |
-| `GET /api/ferry/departure-metrics` | Departure prediction error series for the history page |
+| `GET /api/ferry/history` | Clinton–Mukilteo reconciled trip and GPS history |
+| `GET /api/ferry/departures` | Clinton–Mukilteo compiled departure truth and server-resolved predictions |
+| `GET /api/ferry/departure-metrics` | Clinton–Mukilteo prediction series and daily 60-minute accuracy report |
+| `GET /api/bainbridge/ferry/seattle` | Seattle→Bainbridge schedule (today) |
+| `GET /api/bainbridge/ferry/bainbridge` | Bainbridge→Seattle schedule (today) |
+| `GET /api/bainbridge/ferry/history` | Seattle–Bainbridge reconciled trip and GPS history |
+| `GET /api/bainbridge/ferry/departures` | Seattle–Bainbridge compiled departure truth and server-resolved predictions |
+| `GET /api/bainbridge/ferry/departure-metrics` | Seattle–Bainbridge prediction series and daily 60-minute accuracy report |
 | `GET /api/messages` | Active user-managed crawl messages; admins may pass `?includeInactive=1` |
 | `POST /api/messages` | Add a user-managed crawl message, with optional `startDate`/`endDate`/`color` (Google admin auth required) |
 | `PUT /api/messages/:id` | Update a user-managed crawl message, including optional `startDate`/`endDate`/`color` (Google admin auth required) |
@@ -265,7 +299,8 @@ This keeps the frontend fully self-contained and avoids any external moon-image 
 
 ## Ferry Display
 
-- Two panels: one per direction, each in its own card
+- Shared route-aware dashboard for Clinton–Mukilteo and Seattle–Bainbridge
+- Two panels per route: one per direction, each in its own card
 - Shows last departed + next 3 sailings (count-based)
 - "🔔 Last" label on the final sailing of the day
 - Live countdown badge, advances every 30s
@@ -277,6 +312,22 @@ This keeps the frontend fully self-contained and avoids any external moon-image 
   amber with the scheduled time underneath — inferred from GPS, distinct from a
   red, boat-specific confirmed delay. The chip does not show a separate
   "N min late" status label.
+
+### Ferry Prediction Model
+
+Prediction runs entirely on the server. Reconciled GPS/`LeftDock` departures
+are truth; fresh vessel position and measured/default dock turnaround determine
+the next physically possible departure. The ordinary estimate is
+`max(now, vessel ready, scheduled departure)`, while overdue unserved slots are
+retained when live vessel state shows the route is operating behind schedule.
+
+Future sailings are chained by vessel and terminal so one vessel cannot depart
+both sides at once or return faster than crossing plus turnaround allows.
+Clinton–Mukilteo gives recent operating cadence and schedule more influence;
+Seattle–Bainbridge gives its physical route baseline more influence. GPS state
+older than two hours cannot anchor a prediction. See the maintained design
+record at the top of `ferry-prediction-model.js` for exact weights, safeguards,
+and evaluation rules.
 
 ## Tide Display
 
