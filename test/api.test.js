@@ -16,6 +16,11 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import vm from 'node:vm';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import {
+  FERRY_PREDICTION_MODEL_ID,
+  buildOperationalDeparturePredictions,
+  summarizeSixtyMinuteAccuracy,
+} from '../ferry-prediction-model.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BASE = 'http://localhost:3001'; // use 3001 to avoid conflicting with running server
@@ -25,6 +30,70 @@ let weatherServer;
 let weatherBaseUrl;
 let noaaServer;
 let noaaBaseUrl;
+
+test('ferry prediction model — rejects stale vessel evidence and applies route-specific chaining', () => {
+  const minute = 60 * 1000;
+  const nowMs = Date.UTC(2026, 7, 25, 16, 0);
+  const trips = [
+    { direction: 'a-to-b', fromTerminalId: 1, toTerminalId: 2, scheduledDepartureMs: nowMs - 180 * minute, actualDepartureMs: nowMs - 180 * minute },
+    { direction: 'b-to-a', fromTerminalId: 2, toTerminalId: 1, scheduledDepartureMs: nowMs - 90 * minute, actualDepartureMs: nowMs - 90 * minute },
+    { direction: 'a-to-b', fromTerminalId: 1, toTerminalId: 2, scheduledDepartureMs: nowMs },
+    { direction: 'b-to-a', fromTerminalId: 2, toTerminalId: 1, scheduledDepartureMs: nowMs + 30 * minute },
+  ];
+  const input = {
+    nowMs,
+    trips,
+    vesselStates: [{
+      vesselName: 'Test Ferry',
+      vesselId: 1,
+      availableTerminalId: 1,
+      availableMs: nowMs,
+      observedAtMs: nowMs - minute,
+      sourceStatus: 'at-a-dock',
+      basis: 'gps-vessel-state',
+    }],
+    observedDepartureKeys: [],
+    operationalCycleMs: 45 * minute,
+    departureMatchMs: 20 * minute,
+    horizonMs: 4 * 60 * minute,
+  };
+  const whidbey = buildOperationalDeparturePredictions({ ...input, routeKey: 'whidbey' });
+  const bainbridge = buildOperationalDeparturePredictions({ ...input, routeKey: 'bainbridge' });
+  assert.equal(whidbey[`1:${nowMs}`].modelId, FERRY_PREDICTION_MODEL_ID, 'labels the isolated production model');
+  assert.ok(
+    whidbey[`2:${nowMs + 30 * minute}`].projectedDepartureMs > bainbridge[`2:${nowMs + 30 * minute}`].projectedDepartureMs,
+    'Whidbey responds more strongly to a long recent operating cadence than Bainbridge'
+  );
+
+  const stale = buildOperationalDeparturePredictions({
+    ...input,
+    routeKey: 'whidbey',
+    vesselStates: [{ ...input.vesselStates[0], observedAtMs: nowMs - 121 * minute }],
+  });
+  assert.deepEqual(stale, {}, 'a vessel state over two hours old cannot anchor a prediction');
+});
+
+test('ferry prediction model — daily accuracy chooses one closest 60-minute sample and bins absolute errors', () => {
+  const errorValues = [5, 8, 10, 15, 20, 30, 45, 60];
+  const series = errorValues.map((errorMinutes, index) => ({
+    key: `trip-${index}`,
+    fromTerminalId: index % 2 ? 1 : 2,
+    fromTerminalName: index % 2 ? 'A' : 'B',
+    actualDepartureMs: 1_000_000 + index,
+    points: index === 1
+      ? [
+          { observedAtMs: 1, minutesBeforeDeparture: 57.6, modelErrorMinutes: 3 },
+          { observedAtMs: 2, minutesBeforeDeparture: 60.1, modelErrorMinutes: errorMinutes },
+        ]
+      : [{ observedAtMs: index, minutesBeforeDeparture: 60, modelErrorMinutes: errorMinutes }],
+  }));
+  const report = summarizeSixtyMinuteAccuracy(series);
+  assert.equal(report.sampleCount, errorValues.length, 'uses one point per verified departure');
+  assert.equal(report.samples[1].errorMinutes, 8, 'selects the snapshot closest to exactly 60 minutes');
+  assert.deepEqual(report.buckets.map(bucket => bucket.count), [1, 2, 1, 1, 1, 1, 1], 'puts exact boundaries in the lower absolute-error bucket');
+  assert.equal(report.withinFiveMinutesProportion, 1 / 8, 'reports the requested within-five-minute rate');
+  assert.equal(report.maxAbsoluteErrorMinutes, 60, 'keeps gross errors visible');
+});
 
 function testWeatherPayload() {
   return {
@@ -844,7 +913,7 @@ test('ferry/departure-metrics endpoint — returns prediction error series from 
   const historyDate = '2026-06-05';
   const scheduledDepartureMs = Date.UTC(2026, 5, 5, 16, 0);
   const actualDepartureMs = scheduledDepartureMs + 5 * 60 * 1000;
-  const sampleMs = actualDepartureMs - 45 * 60 * 1000;
+  const sampleMs = actualDepartureMs - 60 * 60 * 1000;
   const historyDir = join(dataDir, 'ferry-history');
   await mkdir(historyDir, { recursive: true });
   await writeFerryHistoryFixture(historyDir, historyDate, {
@@ -890,17 +959,26 @@ test('ferry/departure-metrics endpoint — returns prediction error series from 
   assert.equal(d.series.length, 1, 'returns one trip series');
   assert.equal(d.series[0].fromTerminalName, 'Clinton', 'series carries terminal label');
   assert.equal(d.series[0].points.length, 1, 'returns one prediction sample');
-  assert.equal(d.series[0].points[0].minutesBeforeDeparture, 45, 'x-axis is minutes before actual departure');
+  assert.equal(d.series[0].points[0].minutesBeforeDeparture, 60, 'x-axis is minutes before actual departure');
   assert.equal(d.series[0].points[0].modelErrorMinutes, 3, 'model error is projected minus actual departure');
   assert.equal(d.series[0].points[0].wsfScheduleErrorMinutes, -5, 'WSF schedule error is scheduled minus actual departure');
   assert.equal(d.series[0].points[0].modelTimingSource, 'gps-vessel-state', 'keeps model basis for tooltips and analysis');
+  assert.equal(d.sixtyMinuteAccuracy.sampleCount, 1, 'daily report selects one near-60-minute estimate per sailing');
+  assert.equal(d.sixtyMinuteAccuracy.rmseMinutes, 3, 'daily report exposes 60-minute RMSE');
+  assert.equal(d.sixtyMinuteAccuracy.withinFiveMinutesProportion, 1, 'daily report exposes within-five-minute accuracy');
+  assert.deepEqual(d.sixtyMinuteAccuracy.buckets.map(bucket => bucket.count), [1, 0, 0, 0, 0, 0, 0], 'daily report includes absolute-error histogram buckets');
   for (const pruned of ['observedAt', 'modelStatus', 'modelVesselName', 'modelSourceStatus', 'modelVersion', 'wsfVesselName', 'wsfEtaMs', 'wsfLeftDockMs']) {
     assert.ok(!(pruned in d.series[0].points[0]), `metrics points omit ${pruned} — thousands of points ship per response and TVs parse them every refresh`);
   }
 
   const source = await readFile(join(__dirname, '../server.js'), 'utf8');
+  const modelSource = await readFile(join(__dirname, '../ferry-prediction-model.js'), 'utf8');
   assert.match(source, /predictionSnapshots: mergeFerryPredictionSnapshots/, 'records prediction snapshots in the durable history day');
   assert.match(source, /function ferryDepartureMetricsPayload/, 'has a dedicated metrics payload builder');
+  assert.match(source, /from '\.\/ferry-prediction-model\.js'/, 'server imports the isolated prediction policy');
+  assert.match(modelSource, /IMPORTANT MAINTENANCE NOTE/, 'prediction source carries its required maintained design record');
+  assert.match(modelSource, /Evidence and decision order/, 'prediction source documents evidence precedence and reasoning');
+  assert.match(modelSource, /Daily 60-minute evaluation/, 'prediction source documents daily evaluation methodology');
   assert.match(source, /app\.get\('\/api\/ferry\/departure-metrics'/, 'registers the Whidbey metrics endpoint');
   assert.match(source, /app\.get\('\/api\/bainbridge\/ferry\/departure-metrics'/, 'registers the Bainbridge metrics endpoint');
 
@@ -908,6 +986,8 @@ test('ferry/departure-metrics endpoint — returns prediction error series from 
   assert.equal(estimatePage.status, 200, 'serves the dedicated estimate page');
   const estimateHtml = await estimatePage.text();
   assert.match(estimateHtml, /Departure Estimate Error/, 'estimate page includes the estimate-error section');
+  assert.match(estimateHtml, /60-Minute Departure Accuracy/, 'estimate page includes the daily 60-minute accuracy report');
+  assert.match(estimateHtml, /accuracy-histogram/, 'estimate page renders proportional absolute-error histogram bars');
   assert.match(estimateHtml, /departure-metrics/, 'estimate page fetches the metrics API');
   assert.match(estimateHtml, /modelErrorMinutes/, 'estimate chart draws model error series');
   assert.match(estimateHtml, /wsfScheduleErrorMinutes/, 'estimate chart draws WSF schedule error series');
