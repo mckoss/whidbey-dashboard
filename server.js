@@ -7,6 +7,11 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renam
 import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
+import {
+  FERRY_PREDICTION_MODEL_ID,
+  buildOperationalDeparturePredictions,
+  summarizeSixtyMinuteAccuracy,
+} from './ferry-prediction-model.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CONFIG_FILE = resolve(process.env.CONFIG_FILE || join(__dirname, 'config.json'));
@@ -737,7 +742,9 @@ function currentAnalyticsConnections(nowMs = Date.now()) {
       existing.first = event;
       existing.firstMs = recordedMs;
     }
-    if (recordedMs > existing.lastMs) {
+    // JSONL order is event order. If start/end land in the same millisecond,
+    // the later line must win or an already-ended view appears connected.
+    if (recordedMs >= existing.lastMs) {
       existing.last = event;
       existing.lastMs = recordedMs;
     }
@@ -3090,25 +3097,6 @@ function ferryReturningStatus(track, latest, reason) {
   };
 }
 
-function closestScheduledAtOrBefore(trips, projectedMs) {
-  let match = null;
-  for (const trip of trips) {
-    if (trip.scheduledDepartureMs <= projectedMs) match = trip;
-    else break;
-  }
-  return match || trips[0] || null;
-}
-
-function operationalReferenceTrip(trips, projectedMs, usedKeys) {
-  const closest = closestScheduledAtOrBefore(trips, projectedMs);
-  const startIndex = Math.max(0, closest ? trips.indexOf(closest) : 0);
-  for (let i = startIndex; i < trips.length; i += 1) {
-    const trip = trips[i];
-    if (!usedKeys.has(ferryDepartureKey(trip.fromTerminalId, trip.scheduledDepartureMs))) return trip;
-  }
-  return null;
-}
-
 function activeVesselStatusForTrip(trip, vesselStatuses = {}) {
   if (!Number.isFinite(trip?.fromTerminalId)) return null;
   const statuses = Object.values(vesselStatuses)
@@ -3165,84 +3153,27 @@ function gpsDominantProjectionForTrip(trip, vesselStatuses = {}, nowMs = Date.no
 }
 
 function ferryOperationalPredictions(day, nowMs = Date.now(), vesselStatuses = ferryVesselStatusSummary(day, nowMs), terminalTurnarounds = ferryRecentTerminalTurnarounds(day, nowMs)) {
-  const predictions = {};
-  if (!Number.isFinite(nowMs)) return predictions;
   const route = ferryRouteForKey(day?.routeKey);
-  const operationalCycleMs = ferryOperationalCycleMs(route);
-  const orderedTrips = [...(day?.trips || [])].sort((a, b) => a.scheduledDepartureMs - b.scheduledDepartureMs);
-  const tripsByTerminal = new Map();
-  for (const trip of orderedTrips) {
-    const activeStatus = activeVesselStatusForTrip(trip, vesselStatuses);
-    const staleButLiveVesselStillAnchorsThisSlot =
-      trip?.scheduledDepartureMs < nowMs - FERRY_HISTORY_DEPARTURE_MATCH_MS &&
-      activeStatus &&
-      isCurrentScheduleTripForLiveTerminal(trip, orderedTrips, activeStatus, nowMs);
-    if (!Number.isFinite(trip?.scheduledDepartureMs) ||
-        trip.actualDepartureMs ||
-        (trip.scheduledDepartureMs < nowMs - FERRY_HISTORY_DEPARTURE_MATCH_MS && !staleButLiveVesselStillAnchorsThisSlot)) {
-      continue;
-    }
-    const trips = tripsByTerminal.get(trip.fromTerminalId) || [];
-    trips.push(trip);
-    tripsByTerminal.set(trip.fromTerminalId, trips);
-  }
-  const scheduleBounds = ferryOperationalScheduleBounds(day);
   const departures = Object.values(ferryDepartureSummary(day));
-  const observedKeys = new Set(departures.map(departure =>
-    ferryDepartureKey(departure.fromTerminalId, departure.scheduledDepartureMs)));
-  const usedKeys = new Set(observedKeys);
-  const states = Object.values(vesselStatuses)
-    .filter(status => status.availableTerminalId && Number.isFinite(status.availableMs))
-    .map(status => ({
+  return buildOperationalDeparturePredictions({
+    routeKey: route.key,
+    nowMs,
+    trips: day?.trips || [],
+    vesselStates: Object.values(vesselStatuses).map(status => ({
       vesselName: status.vesselName,
       vesselId: status.vesselId,
-      nextFromTerminalId: status.availableTerminalId,
+      availableTerminalId: status.availableTerminalId,
       availableMs: status.availableMs,
       sourceStatus: status.status,
-      sourceObservedAtMs: status.observedAtMs,
-    }))
-    .sort((a, b) => a.availableMs - b.availableMs);
-
-  let guard = 0;
-  while (guard < 96 && states.length) {
-    guard += 1;
-    states.sort((a, b) => a.availableMs - b.availableMs || String(a.vesselName).localeCompare(String(b.vesselName)));
-    const state = states.shift();
-    const directionTrips = tripsByTerminal.get(state.nextFromTerminalId) || [];
-    const bounds = scheduleBounds.get(state.nextFromTerminalId);
-    if (!directionTrips.length || !bounds) continue;
-    const closeMs = bounds.finalScheduledMs + operationalCycleMs;
-    const projectedBaseMs = Math.max(state.availableMs, nowMs);
-    const referenceTrip = operationalReferenceTrip(directionTrips, projectedBaseMs, usedKeys);
-    if (!referenceTrip) continue;
-    const projectedDepartureMs = Math.max(projectedBaseMs, referenceTrip.scheduledDepartureMs);
-    if (projectedDepartureMs > closeMs || projectedDepartureMs > nowMs + FERRY_OPERATIONAL_HORIZON_MS) continue;
-    const key = ferryDepartureKey(referenceTrip.fromTerminalId, referenceTrip.scheduledDepartureMs);
-    if (!observedKeys.has(key) && !predictions[key]) {
-      predictions[key] = {
-        direction: referenceTrip.direction,
-        fromTerminalId: referenceTrip.fromTerminalId,
-        toTerminalId: referenceTrip.toTerminalId,
-        scheduledDepartureMs: referenceTrip.scheduledDepartureMs,
-        scheduledReferenceMs: referenceTrip.scheduledDepartureMs,
-        displayScheduledMs: referenceTrip.scheduledDepartureMs,
-        projectedDepartureMs,
-        delayMs: Math.max(0, projectedDepartureMs - referenceTrip.scheduledDepartureMs),
-        vesselName: state.vesselName,
-        vesselId: state.vesselId,
-        sourceStatus: state.sourceStatus,
-        sourceObservedAtMs: state.sourceObservedAtMs,
-        basis: 'gps-vessel-state',
-      };
-    }
-    usedKeys.add(key);
-    state.nextFromTerminalId = referenceTrip.toTerminalId;
-    state.availableMs = projectedDepartureMs + operationalCycleMs;
-    state.sourceStatus = 'operational-chain';
-    states.push(state);
-  }
-
-  return predictions;
+      observedAtMs: status.observedAtMs,
+      basis: status.basis,
+    })),
+    observedDepartureKeys: departures.map(departure =>
+      ferryDepartureKey(departure.fromTerminalId, departure.scheduledDepartureMs)),
+    operationalCycleMs: ferryOperationalCycleMs(route),
+    departureMatchMs: FERRY_HISTORY_DEPARTURE_MATCH_MS,
+    horizonMs: FERRY_OPERATIONAL_HORIZON_MS,
+  });
 }
 
 function ferryPredictedDepartureSummary(day, nowMs = Date.now()) {
@@ -3698,6 +3629,7 @@ function normalizeFerryPredictionSnapshots(snapshots = [], route = DEFAULT_FERRY
       observedAt: snapshot.observedAt || new Date(observedAtMs).toISOString(),
       observedAtMs,
       modelVersion: snapshot.modelVersion || null,
+      modelId: snapshot.modelId || null,
       routeKey: snapshot.routeKey || route.key,
       entries: entries
         .filter(entry =>
@@ -3869,6 +3801,7 @@ function ferryPredictionSnapshot(day, nowMs = Date.now()) {
     observedAt: new Date(nowMs).toISOString(),
     observedAtMs: nowMs,
     modelVersion: pkg.version,
+    modelId: FERRY_PREDICTION_MODEL_ID,
     routeKey: route.key,
     entries,
   };
@@ -3952,6 +3885,7 @@ function ferryDepartureMetricsPayload(day) {
       points,
     });
   }
+  const sixtyMinuteAccuracy = summarizeSixtyMinuteAccuracy(series);
   return {
     date: day.date,
     generatedAt: day.generatedAt,
@@ -3959,6 +3893,11 @@ function ferryDepartureMetricsPayload(day) {
     routeKey: route.key,
     route: ferryRouteClientConfig(route),
     snapshotCount: snapshots.length,
+    modelId: FERRY_PREDICTION_MODEL_ID,
+    sixtyMinuteAccuracy: {
+      ...sixtyMinuteAccuracy,
+      status: day.date < ferryHistoryDateForMs() ? 'final' : 'provisional',
+    },
     series,
   };
 }

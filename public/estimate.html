@@ -237,6 +237,82 @@
       background: var(--panel2);
     }
 
+    .accuracy-report {
+      display: grid;
+      grid-template-columns: minmax(220px, 0.7fr) minmax(0, 1.8fr);
+      gap: 1rem;
+      padding: 0.85rem;
+      background: var(--panel2);
+    }
+
+    .accuracy-summary {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.55rem;
+      align-content: start;
+    }
+
+    .accuracy-stat {
+      padding: 0.65rem;
+      border: 1px solid var(--border);
+      border-radius: 0.4rem;
+      background: var(--panel);
+    }
+
+    .accuracy-stat strong {
+      display: block;
+      color: var(--text);
+      font-size: 1.35rem;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .accuracy-stat span {
+      color: var(--dim);
+      font-size: 0.72rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .accuracy-histogram {
+      display: flex;
+      align-items: end;
+      gap: 0.45rem;
+      min-height: 180px;
+      padding: 0.5rem 0.35rem 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .accuracy-bin {
+      min-width: 0;
+      flex: 1 1 0;
+      display: grid;
+      grid-template-rows: 1.25rem 130px 1.4rem;
+      align-items: end;
+      text-align: center;
+      color: var(--dim);
+      font-size: 0.72rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .accuracy-bar-track {
+      height: 130px;
+      display: flex;
+      align-items: end;
+      border-radius: 0.25rem 0.25rem 0 0;
+      background: rgba(51, 65, 85, 0.35);
+      overflow: hidden;
+    }
+
+    .accuracy-bar {
+      width: 100%;
+      min-height: 0;
+      background: var(--accent2);
+      border-radius: 0.25rem 0.25rem 0 0;
+    }
+
+    .accuracy-bin.tail .accuracy-bar { background: var(--danger); }
+
     .estimate-chart {
       overflow: hidden;
       border: 1px solid var(--border);
@@ -315,6 +391,7 @@
         padding: 0.5rem;
         gap: 0.6rem;
       }
+      .accuracy-report { grid-template-columns: 1fr; }
       .estimate-chart-wrap { padding: 0.45rem 0.5rem 0.5rem; }
     }
   </style>
@@ -349,6 +426,13 @@
   </header>
 
   <main>
+    <section>
+      <div class="section-head">
+        <h2>60-Minute Departure Accuracy</h2>
+        <div class="meta" id="accuracy-meta"></div>
+      </div>
+      <div class="accuracy-report" id="accuracy-report"></div>
+    </section>
     <section>
       <div class="section-head">
         <h2>Departure Estimate Error</h2>
@@ -388,6 +472,8 @@
 
     const estimateChartsEl = document.getElementById('estimate-charts');
     const estimateMetaEl = document.getElementById('estimate-meta');
+    const accuracyReportEl = document.getElementById('accuracy-report');
+    const accuracyMetaEl = document.getElementById('accuracy-meta');
     const legendEl = document.getElementById('legend');
     const dateInput = document.getElementById('date-input');
     const errorEl = document.getElementById('error');
@@ -481,6 +567,7 @@
         errorEl.hidden = !metricsData.error;
         errorEl.textContent = metricsData.error || '';
         renderEstimateCharts(metricsData);
+        renderAccuracyReport(metricsData.sixtyMinuteAccuracy);
       } catch (e) {
         if (requestId !== requestSeq) return;
         renderError(e.message);
@@ -489,6 +576,8 @@
 
     function renderError(message) {
       estimateChartsEl.innerHTML = '<div class="estimate-chart"><div class="estimate-chart-wrap empty">No departure estimate metrics are available.</div></div>';
+      accuracyReportEl.innerHTML = '<div class="empty">No 60-minute accuracy samples are available.</div>';
+      accuracyMetaEl.textContent = '';
       legendEl.innerHTML = '';
       errorEl.hidden = false;
       errorEl.textContent = message;
@@ -535,6 +624,35 @@
         ? vessels.map(v => `<span class="legend-item"><span class="swatch" style="background:${colorFor(v, vessels)}"></span>${escapeHtml(v)}</span>`).join('')
           + '<span class="legend-item">solid: dashboard model error · dashed: WSF schedule error</span>'
         : '<span class="empty">Vessel colors appear once snapshots include vessel names.</span>';
+    }
+
+    function renderAccuracyReport(report = null) {
+      const count = Number(report?.sampleCount) || 0;
+      accuracyMetaEl.textContent = count
+        ? `${report.status === 'final' ? 'final daily report' : 'provisional'} · ${count} departures · one estimate per sailing`
+        : 'awaiting estimates recorded 60 minutes before verified departures';
+      if (!count) {
+        accuracyReportEl.innerHTML = '<div class="empty">No departures have a prediction snapshot within 57.5–62.5 minutes of actual departure.</div>';
+        return;
+      }
+      const percent = value => Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : '--';
+      const minutes = value => Number.isFinite(value) ? `${value.toFixed(1)}m` : '--';
+      const summary = [
+        [minutes(report.rmseMinutes), 'RMSE'],
+        [minutes(report.p95AbsoluteErrorMinutes), '95th percentile'],
+        [percent(report.withinFiveMinutesProportion), 'within 5 min'],
+        [minutes(report.maxAbsoluteErrorMinutes), 'worst error'],
+      ].map(([value, label]) => `<div class="accuracy-stat"><strong>${value}</strong><span>${label}</span></div>`).join('');
+      const bins = (report.buckets || []).map(bin => {
+        const height = Math.max(0, Math.min(100, (Number(bin.proportion) || 0) * 100));
+        const tail = Number(bin.minMinutes) >= 30 ? ' tail' : '';
+        return `<div class="accuracy-bin${tail}">
+          <span>${percent(bin.proportion)}</span>
+          <div class="accuracy-bar-track"><div class="accuracy-bar" style="height:${height.toFixed(1)}%"></div></div>
+          <span>${escapeHtml(bin.label)}m</span>
+        </div>`;
+      }).join('');
+      accuracyReportEl.innerHTML = `<div class="accuracy-summary">${summary}</div><div class="accuracy-histogram" aria-label="Absolute departure prediction error histogram">${bins}</div>`;
     }
 
     function estimateChart(terminal, series, vessels) {
