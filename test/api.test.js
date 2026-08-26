@@ -73,12 +73,13 @@ test('ferry prediction model — rejects stale vessel evidence and applies route
   assert.deepEqual(stale, {}, 'a vessel state over two hours old cannot anchor a prediction');
 });
 
-test('ferry prediction model — does not resurrect hours-old skipped sailing slots', () => {
+test('ferry prediction model — drops a skipped slot once its same-terminal successor is overdue', () => {
   const minute = 60 * 1000;
-  const nowMs = Date.UTC(2026, 7, 25, 20, 0);
-  const staleMukilteo1535 = Date.UTC(2026, 7, 25, 15, 35);
-  const mukilteo2035 = Date.UTC(2026, 7, 25, 20, 35);
-  const clinton2000 = Date.UTC(2026, 7, 25, 20, 0);
+  const nowMs = Date.UTC(2026, 7, 25, 16, 30);
+  const skippedMukilteo1535 = Date.UTC(2026, 7, 25, 15, 35);
+  const skippedMukilteo1605 = Date.UTC(2026, 7, 25, 16, 5);
+  const mukilteo1635 = Date.UTC(2026, 7, 25, 16, 35);
+  const clinton1630 = Date.UTC(2026, 7, 25, 16, 30);
   const predictions = buildOperationalDeparturePredictions({
     routeKey: 'whidbey',
     nowMs,
@@ -87,20 +88,26 @@ test('ferry prediction model — does not resurrect hours-old skipped sailing sl
         direction: 'mukilteo-to-clinton',
         fromTerminalId: 14,
         toTerminalId: 5,
-        scheduledDepartureMs: staleMukilteo1535,
-      },
-      {
-        direction: 'clinton-to-mukilteo',
-        fromTerminalId: 5,
-        toTerminalId: 14,
-        scheduledDepartureMs: clinton2000,
-        actualDepartureMs: clinton2000,
+        scheduledDepartureMs: skippedMukilteo1535,
       },
       {
         direction: 'mukilteo-to-clinton',
         fromTerminalId: 14,
         toTerminalId: 5,
-        scheduledDepartureMs: mukilteo2035,
+        scheduledDepartureMs: skippedMukilteo1605,
+      },
+      {
+        direction: 'clinton-to-mukilteo',
+        fromTerminalId: 5,
+        toTerminalId: 14,
+        scheduledDepartureMs: clinton1630,
+        actualDepartureMs: clinton1630,
+      },
+      {
+        direction: 'mukilteo-to-clinton',
+        fromTerminalId: 14,
+        toTerminalId: 5,
+        scheduledDepartureMs: mukilteo1635,
       },
     ],
     vesselStates: [{
@@ -112,16 +119,18 @@ test('ferry prediction model — does not resurrect hours-old skipped sailing sl
       sourceStatus: 'at-mukilteo-dock',
       basis: 'gps-vessel-state',
     }],
-    observedDepartureKeys: [`5:${clinton2000}`],
+    observedDepartureKeys: [`5:${clinton1630}`],
     operationalCycleMs: 30 * minute,
     departureMatchMs: 20 * minute,
     horizonMs: 4 * 60 * minute,
   });
 
-  assert.equal(predictions[`14:${staleMukilteo1535}`], undefined,
-    'does not project a 3:35 PM Mukilteo slot as an 8:00 PM sailing');
-  assert.equal(predictions[`14:${mukilteo2035}`].projectedDepartureMs, mukilteo2035,
-    'uses the next plausible schedule row instead');
+  assert.equal(predictions[`14:${skippedMukilteo1535}`], undefined,
+    'does not keep 3:35 PM alive after the 4:05 PM same-terminal slot is also overdue');
+  assert.equal(predictions[`14:${skippedMukilteo1605}`].projectedDepartureMs, nowMs,
+    'keeps the most recent plausibly late same-terminal slot alive');
+  assert.equal(predictions[`14:${mukilteo1635}`], undefined,
+    'does not assign the same vessel to another Mukilteo slot before it can return');
 });
 
 test('ferry prediction model — later observed same-terminal departures supersede old unserved slots', () => {

@@ -30,9 +30,10 @@
  *    Operators may load early but normally do not leave before the advertised
  *    time. When the service has fallen behind, the state machine retains the
  *    overdue unserved slot briefly so a ready boat can keep moving rather than
- *    being incorrectly assigned to a much later timetable row. It does not
- *    resurrect slots that are hours old or already superseded by later observed
- *    same-terminal service; those are stale history, not live predictions.
+ *    being incorrectly assigned to a much later timetable row. Once that slot's
+ *    same-terminal successor is also overdue, or later observed same-terminal
+ *    service has superseded it, the old slot is stale history rather than a
+ *    live prediction candidate.
  * 4. Future sailings are a physical chain. After a projected departure, that
  *    vessel must cross and turn around before it can depart the other side.
  *    The next-leg duration blends a route baseline, the next scheduled gap,
@@ -169,9 +170,19 @@ export function buildOperationalDeparturePredictions({
   const observedKeys = new Set(observedDepartureKeys);
   const usedKeys = new Set(observedKeys);
   const latestObservedScheduledByTerminal = new Map();
+  const nextScheduledByKey = new Map();
+  const previousTripByTerminal = new Map();
   const scheduleBounds = new Map();
   for (const trip of orderedTrips) {
     const key = departureKey(trip.fromTerminalId, trip.scheduledDepartureMs);
+    const previousTrip = previousTripByTerminal.get(trip.fromTerminalId);
+    if (previousTrip) {
+      nextScheduledByKey.set(
+        departureKey(previousTrip.fromTerminalId, previousTrip.scheduledDepartureMs),
+        trip.scheduledDepartureMs
+      );
+    }
+    previousTripByTerminal.set(trip.fromTerminalId, trip);
     if (observedKeys.has(key) || Number.isFinite(trip?.actualDepartureMs)) {
       latestObservedScheduledByTerminal.set(
         trip.fromTerminalId,
@@ -208,12 +219,17 @@ export function buildOperationalDeparturePredictions({
     const projectedBaseMs = Math.max(nowMs, state.availableMs);
     const overdueCutoffMs = projectedBaseMs - operationalCycleMs * MAX_OVERDUE_UNSERVED_SLOT_CYCLES;
     const latestObservedScheduledMs = latestObservedScheduledByTerminal.get(state.availableTerminalId) || -Infinity;
-    const terminalTrips = orderedTrips.filter(trip =>
-      trip.fromTerminalId === state.availableTerminalId &&
-      !trip.actualDepartureMs &&
-      trip.scheduledDepartureMs >= overdueCutoffMs &&
-      trip.scheduledDepartureMs >= latestObservedScheduledMs - departureMatchMs
-    );
+    const terminalTrips = orderedTrips.filter(trip => {
+      const key = departureKey(trip.fromTerminalId, trip.scheduledDepartureMs);
+      const nextScheduledMs = nextScheduledByKey.get(key);
+      const skippedBySuccessor = Number.isFinite(nextScheduledMs) &&
+        nextScheduledMs <= projectedBaseMs - departureMatchMs;
+      return trip.fromTerminalId === state.availableTerminalId &&
+        !trip.actualDepartureMs &&
+        !skippedBySuccessor &&
+        trip.scheduledDepartureMs >= overdueCutoffMs &&
+        trip.scheduledDepartureMs >= latestObservedScheduledMs - departureMatchMs;
+    });
     const bounds = scheduleBounds.get(state.availableTerminalId);
     if (!terminalTrips.length || !bounds) continue;
     let referenceTrip = null;
