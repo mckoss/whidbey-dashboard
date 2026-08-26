@@ -73,6 +73,108 @@ test('ferry prediction model — rejects stale vessel evidence and applies route
   assert.deepEqual(stale, {}, 'a vessel state over two hours old cannot anchor a prediction');
 });
 
+test('ferry prediction model — does not resurrect hours-old skipped sailing slots', () => {
+  const minute = 60 * 1000;
+  const nowMs = Date.UTC(2026, 7, 25, 20, 0);
+  const staleMukilteo1535 = Date.UTC(2026, 7, 25, 15, 35);
+  const mukilteo2035 = Date.UTC(2026, 7, 25, 20, 35);
+  const clinton2000 = Date.UTC(2026, 7, 25, 20, 0);
+  const predictions = buildOperationalDeparturePredictions({
+    routeKey: 'whidbey',
+    nowMs,
+    trips: [
+      {
+        direction: 'mukilteo-to-clinton',
+        fromTerminalId: 14,
+        toTerminalId: 5,
+        scheduledDepartureMs: staleMukilteo1535,
+      },
+      {
+        direction: 'clinton-to-mukilteo',
+        fromTerminalId: 5,
+        toTerminalId: 14,
+        scheduledDepartureMs: clinton2000,
+        actualDepartureMs: clinton2000,
+      },
+      {
+        direction: 'mukilteo-to-clinton',
+        fromTerminalId: 14,
+        toTerminalId: 5,
+        scheduledDepartureMs: mukilteo2035,
+      },
+    ],
+    vesselStates: [{
+      vesselName: 'Suquamish',
+      vesselId: 75,
+      availableTerminalId: 14,
+      availableMs: nowMs,
+      observedAtMs: nowMs - minute,
+      sourceStatus: 'at-mukilteo-dock',
+      basis: 'gps-vessel-state',
+    }],
+    observedDepartureKeys: [`5:${clinton2000}`],
+    operationalCycleMs: 30 * minute,
+    departureMatchMs: 20 * minute,
+    horizonMs: 4 * 60 * minute,
+  });
+
+  assert.equal(predictions[`14:${staleMukilteo1535}`], undefined,
+    'does not project a 3:35 PM Mukilteo slot as an 8:00 PM sailing');
+  assert.equal(predictions[`14:${mukilteo2035}`].projectedDepartureMs, mukilteo2035,
+    'uses the next plausible schedule row instead');
+});
+
+test('ferry prediction model — later observed same-terminal departures supersede old unserved slots', () => {
+  const minute = 60 * 1000;
+  const nowMs = Date.UTC(2026, 7, 25, 20, 0);
+  const skippedMukilteo1535 = Date.UTC(2026, 7, 25, 15, 35);
+  const observedMukilteo1935 = Date.UTC(2026, 7, 25, 19, 35);
+  const mukilteo2035 = Date.UTC(2026, 7, 25, 20, 35);
+  const predictions = buildOperationalDeparturePredictions({
+    routeKey: 'whidbey',
+    nowMs,
+    trips: [
+      {
+        direction: 'mukilteo-to-clinton',
+        fromTerminalId: 14,
+        toTerminalId: 5,
+        scheduledDepartureMs: skippedMukilteo1535,
+      },
+      {
+        direction: 'mukilteo-to-clinton',
+        fromTerminalId: 14,
+        toTerminalId: 5,
+        scheduledDepartureMs: observedMukilteo1935,
+        actualDepartureMs: observedMukilteo1935 + 5 * minute,
+      },
+      {
+        direction: 'mukilteo-to-clinton',
+        fromTerminalId: 14,
+        toTerminalId: 5,
+        scheduledDepartureMs: mukilteo2035,
+      },
+    ],
+    vesselStates: [{
+      vesselName: 'Issaquah',
+      vesselId: 15,
+      availableTerminalId: 14,
+      availableMs: nowMs,
+      observedAtMs: nowMs - minute,
+      sourceStatus: 'at-mukilteo-dock',
+      basis: 'gps-vessel-state',
+    }],
+    observedDepartureKeys: [`14:${observedMukilteo1935}`],
+    operationalCycleMs: 30 * minute,
+    departureMatchMs: 20 * minute,
+    horizonMs: 4 * 60 * minute,
+  });
+
+  assert.equal(predictions[`14:${skippedMukilteo1535}`], undefined,
+    'a later same-terminal departure proves older skipped slots are no longer live context');
+  assert.equal(predictions[`14:${mukilteo2035}`].projectedDepartureMs, mukilteo2035,
+    'the forecast advances to the next unobserved Mukilteo sailing');
+});
+
 test('ferry prediction model — daily accuracy chooses one closest 60-minute sample and bins absolute errors', () => {
   const errorValues = [5, 8, 10, 15, 20, 30, 45, 60];
   const series = errorValues.map((errorMinutes, index) => ({
