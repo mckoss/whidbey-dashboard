@@ -1,0 +1,652 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+</head>
+<body>
+<!-- BEGIN APP -->
+<title>Pickup Trace Plate</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chivo:wght@400;700;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --paper:   #E7EBEF;
+    --plate:   #F6F8FA;
+    --grid:    #DDE4EA;
+    --rule:    #C0CAD4;
+    --ash:     #98A5B0;
+    --ash-2:   #B6C0C9;
+    --ink:     #16202B;
+    --muted:   #5F6E7C;
+    --blue:    #1550D8;
+    --blue-2:  rgba(21,80,216,.10);
+    --grid-step: 16px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:  #0B1219;
+      --plate:  #121C25;
+      --grid:   #1B2833;
+      --rule:   #2C3B49;
+      --ash:    #5E6E7C;
+      --ash-2:  #44525F;
+      --ink:    #E6ECF2;
+      --muted:  #8C9BA9;
+      --blue:   #5C9BFF;
+      --blue-2: rgba(92,155,255,.14);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:  #0B1219;
+    --plate:  #121C25;
+    --grid:   #1B2833;
+    --rule:   #2C3B49;
+    --ash:    #5E6E7C;
+    --ash-2:  #44525F;
+    --ink:    #E6ECF2;
+    --muted:  #8C9BA9;
+    --blue:   #5C9BFF;
+    --blue-2: rgba(92,155,255,.14);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    height: 100dvh;
+    overflow: hidden;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Chivo", system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+    display: flex;
+    flex-direction: column;
+    padding: 0 clamp(10px, 3vw, 22px);
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+    gap: 10px;
+  }
+
+  /* ---------- masthead ---------- */
+  .masthead {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    padding: max(12px, env(safe-area-inset-top)) 0 8px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .eyebrow {
+    display: block;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 3px;
+  }
+  h1 {
+    margin: 0;
+    font-weight: 900;
+    font-size: clamp(1.15rem, 5.2vw, 1.75rem);
+    letter-spacing: -.025em;
+    line-height: .95;
+  }
+  .gauge { text-align: right; flex: 0 0 auto; }
+  .gauge-read {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .gauge-read b { color: var(--ink); font-weight: 600; }
+  .bar {
+    margin-top: 5px;
+    width: clamp(76px, 26vw, 140px);
+    height: 3px;
+    background: var(--grid);
+    border: 1px solid var(--rule);
+  }
+  .bar i { display: block; height: 100%; width: 0%; background: var(--blue); transition: width .18s linear; }
+
+  /* ---------- plate ---------- */
+  .stage {
+    flex: 1 1 auto;
+    min-height: 0;
+    container-type: size;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .plate {
+    position: relative;
+    width: 100%;
+    /* keep the plate a true 2:1 even when height is the binding constraint */
+    width: min(100%, calc((100cqh - 22px) * 2));
+    max-width: 100%;
+    aspect-ratio: 1000 / 500;
+    background-color: var(--plate);
+    background-image:
+      repeating-linear-gradient(to right, var(--grid) 0 1px, transparent 1px var(--grid-step)),
+      repeating-linear-gradient(to bottom, var(--grid) 0 1px, transparent 1px var(--grid-step));
+    border: 1px solid var(--rule);
+    overflow: hidden;
+  }
+  .plate::after {
+    content: "";
+    position: absolute;
+    inset: 6px;
+    border: 1px dashed var(--grid);
+    pointer-events: none;
+  }
+  .plate > * { position: absolute; inset: 0; }
+
+  .guide { width: 100%; height: 100%; }
+  .guide .trace   { fill: none; stroke: var(--ash);   stroke-width: 1.7px; stroke-dasharray: 5 5; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+  .guide .detail  { fill: none; stroke: var(--ash-2); stroke-width: 1.3px; stroke-dasharray: 4 5; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+  .guide .ground  { fill: none; stroke: var(--rule);  stroke-width: 1px;   stroke-dasharray: 14 6; vector-effect: non-scaling-stroke; }
+  .plate[data-guide="off"] .guide .trace,
+  .plate[data-guide="off"] .guide .detail { display: none; }
+
+  /* explicit size matters: a canvas is a replaced element, so width:auto would
+     resolve to its intrinsic (attribute) size and feed back through the observer */
+  canvas.ink { width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+
+  .overlay { pointer-events: none; }
+  .station {
+    position: absolute;
+    width: 9px;
+    height: 9px;
+    margin: -4.5px 0 0 -4.5px;
+    border-radius: 50%;
+    background: var(--plate);
+    border: 1.5px solid var(--ash);
+  }
+  .station b {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    font: 500 10px/1 "IBM Plex Mono", ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .plate[data-dots="off"] .station { display: none; }
+
+  .dim {
+    position: absolute;
+    height: 11px;
+    transform: translateY(-50%);
+    border-left: 1px solid var(--rule);
+    border-right: 1px solid var(--rule);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .dim::before {
+    content: "";
+    position: absolute;
+    left: 0; right: 0; top: 50%;
+    border-top: 1px solid var(--rule);
+  }
+  .dim span {
+    position: relative;
+    background: var(--plate);
+    padding: 0 5px;
+    font: 500 9px/1 "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .1em;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  .stamp {
+    position: absolute;
+    inset: auto 4% 8% auto;
+    left: auto; top: auto;
+    padding: 7px 12px 6px;
+    border: 2px solid var(--blue);
+    color: var(--blue);
+    background: var(--blue-2);
+    font: 600 11px/1.15 "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .18em;
+    text-align: center;
+    text-transform: uppercase;
+    transform: rotate(-7deg);
+    animation: stamp .28s cubic-bezier(.2,1.4,.5,1) both;
+  }
+  .stamp small { display: block; font-size: 8px; letter-spacing: .12em; opacity: .8; margin-top: 3px; }
+  @keyframes stamp { from { transform: rotate(-7deg) scale(1.7); opacity: 0; } to { transform: rotate(-7deg) scale(1); opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) {
+    .stamp { animation: none; }
+    .bar i { transition: none; }
+  }
+
+  .hint {
+    margin: 0;
+    font: 500 10px/1 "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  @media (orientation: landscape), (pointer: fine) {
+    .hint { display: none; }
+    .plate { width: min(100%, calc(100cqh * 2)); }
+  }
+  /* phone held sideways: give the plate back the height the chrome was using */
+  @media (max-height: 500px) {
+    body { gap: 6px; }
+    .masthead { padding-top: max(6px, env(safe-area-inset-top)); padding-bottom: 5px; }
+    h1 { font-size: 1.15rem; }
+    .tools { padding-top: 6px; }
+    .btn, .pen { min-height: 34px; }
+    .pen { width: 34px; }
+  }
+
+  /* ---------- tool rail ---------- */
+  .tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding-top: 9px;
+    border-top: 1px solid var(--rule);
+  }
+  .group { display: flex; gap: 8px; }
+  .btn {
+    appearance: none;
+    min-height: 40px;
+    padding: 0 13px;
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    background: var(--plate);
+    color: var(--ink);
+    font: 600 11px/1 "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  .btn:active { background: var(--blue-2); }
+  .btn[aria-pressed="true"] { border-color: var(--blue); color: var(--blue); background: var(--blue-2); }
+  .btn:disabled { opacity: .38; cursor: default; }
+
+  .seg { gap: 0; }
+  .pen {
+    appearance: none;
+    width: 40px;
+    min-height: 40px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--rule);
+    border-right-width: 0;
+    background: var(--plate);
+    cursor: pointer;
+  }
+  .pen:last-child { border-right-width: 1px; }
+  .pen:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  .pen i { display: block; border-radius: 50%; background: var(--ash); }
+  .pen[aria-pressed="true"] { background: var(--blue-2); border-color: var(--blue); }
+  .pen[aria-pressed="true"] + .pen { border-left-color: var(--blue); }
+  .pen[aria-pressed="true"] i { background: var(--blue); }
+</style>
+
+<header class="masthead">
+  <div>
+    <span class="eyebrow">Plate 01 &mdash; Side elevation, 1:24</span>
+    <h1>Pickup Truck</h1>
+  </div>
+  <div class="gauge">
+    <div class="gauge-read" aria-live="polite"><b id="pct">0%</b> traced</div>
+    <div class="bar"><i id="barFill"></i></div>
+  </div>
+</header>
+
+<main class="stage">
+  <div class="plate" id="plate" data-guide="on" data-dots="on">
+    <svg class="guide" id="guide" viewBox="0 0 1000 500" preserveAspectRatio="none" aria-hidden="true">
+      <line class="ground" x1="34" y1="432" x2="966" y2="432"></line>
+      <g id="paths"></g>
+    </svg>
+    <canvas class="ink" id="ink" aria-label="Tracing surface: draw the truck outline with your finger"></canvas>
+    <div class="overlay" id="overlay"></div>
+  </div>
+  <p class="hint">Turn sideways for a bigger plate</p>
+</main>
+
+<footer class="tools">
+  <div class="group">
+    <button class="btn" id="undo" disabled>Undo</button>
+    <button class="btn" id="clear" disabled>Clear</button>
+  </div>
+  <div class="group seg" role="group" aria-label="Pen width">
+    <button class="pen" data-w="3" aria-pressed="false" aria-label="Fine pen"><i style="width:4px;height:4px"></i></button>
+    <button class="pen" data-w="5" aria-pressed="true"  aria-label="Medium pen"><i style="width:7px;height:7px"></i></button>
+    <button class="pen" data-w="9" aria-pressed="false" aria-label="Broad pen"><i style="width:11px;height:11px"></i></button>
+  </div>
+  <div class="group">
+    <button class="btn" id="tGuide" aria-pressed="true">Guide</button>
+    <button class="btn" id="tDots"  aria-pressed="true">Dots</button>
+  </div>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  /* Side elevation drawn in a 1000 x 500 plate. Wheel centers (208,372) and
+     (762,372); ground at y=432. Body outline is the numbered connect-the-dots
+     run; details are free-form. */
+  var SHAPES = [
+    { cls: "trace", d: "M 70 372 L 66 322 L 86 286 L 258 276 L 352 178 L 560 176 L 600 270 L 632 270 L 632 258 L 930 258 L 930 360 L 946 360 L 946 372 L 840 372 A 78 78 0 0 0 684 372 L 286 372 A 78 78 0 0 0 130 372 Z" },
+    { cls: "trace", d: "M 154 372 A 54 54 0 1 0 262 372 A 54 54 0 1 0 154 372 Z" },
+    { cls: "trace", d: "M 708 372 A 54 54 0 1 0 816 372 A 54 54 0 1 0 708 372 Z" },
+    { cls: "detail", d: "M 186 372 a 22 22 0 1 0 44 0 a 22 22 0 1 0 -44 0 Z" },
+    { cls: "detail", d: "M 740 372 a 22 22 0 1 0 44 0 a 22 22 0 1 0 -44 0 Z" },
+    { cls: "detail", d: "M 368 250 L 388 198 L 546 196 L 546 250 Z" },
+    { cls: "detail", d: "M 600 270 L 600 372" },
+    { cls: "detail", d: "M 306 276 L 306 372" },
+    { cls: "detail", d: "M 486 268 L 516 268" },
+    { cls: "detail", d: "M 80 300 L 120 294 L 122 314 L 82 318 Z" }
+  ];
+
+  /* x, y, then the direction the station number sits from the dot */
+  var STATIONS = [
+    [ 70, 372, -1,  0.8], [ 66, 322, -1,  0  ], [ 86, 286, -0.7, -0.8],
+    [258, 276,  0, -1  ], [352, 178, -1, -0.4], [560, 176,  0.6, -0.9],
+    [600, 270, -1,  0.5], [632, 270,  0.3, 1 ], [632, 258, -0.3, -1],
+    [930, 258,  0, -1  ], [930, 360, -1, -0.1], [946, 360,  1, -0.2],
+    [946, 372,  1,  0.8], [840, 372,  0.3, 1 ], [684, 372, -0.3, 1],
+    [286, 372,  0.4, 1 ], [130, 372, -0.4, 1 ]
+  ];
+
+  var DIMS = [
+    { x1:  66, x2: 948, y: 104, label: "OVERALL LENGTH 231.7 IN" },
+    { x1: 632, x2: 930, y: 143, label: "BOX 67 IN" },
+    { x1: 208, x2: 762, y: 470, label: "WHEELBASE 145 IN" }
+  ];
+
+  var W = 1000, H = 500, TOL = 16, CELL = 16, DONE_AT = 90;
+
+  var plate   = document.getElementById("plate");
+  var svg     = document.getElementById("guide");
+  var pathsEl = document.getElementById("paths");
+  var overlay = document.getElementById("overlay");
+  var canvas  = document.getElementById("ink");
+  var ctx     = canvas.getContext("2d");
+  var pctEl   = document.getElementById("pct");
+  var barEl   = document.getElementById("barFill");
+  var undoBtn = document.getElementById("undo");
+  var clearBtn= document.getElementById("clear");
+
+  /* ---------- build the plate ---------- */
+  var SVGNS = "http://www.w3.org/2000/svg";
+  var pathEls = SHAPES.map(function (s) {
+    var p = document.createElementNS(SVGNS, "path");
+    p.setAttribute("d", s.d);
+    p.setAttribute("class", s.cls);
+    pathsEl.appendChild(p);
+    return p;
+  });
+
+  var frag = document.createDocumentFragment();
+  STATIONS.forEach(function (s, i) {
+    var dot = document.createElement("span");
+    dot.className = "station";
+    dot.style.left = (s[0] / W * 100) + "%";
+    dot.style.top  = (s[1] / H * 100) + "%";
+    var n = document.createElement("b");
+    n.textContent = i + 1;
+    n.style.transform = "translate(calc(-50% + " + (s[2] * 15) + "px), calc(-50% + " + (s[3] * 15) + "px))";
+    dot.appendChild(n);
+    frag.appendChild(dot);
+  });
+  DIMS.forEach(function (d) {
+    var el = document.createElement("div");
+    el.className = "dim";
+    el.style.left  = (d.x1 / W * 100) + "%";
+    el.style.width = ((d.x2 - d.x1) / W * 100) + "%";
+    el.style.top   = (d.y / H * 100) + "%";
+    var s = document.createElement("span");
+    s.textContent = d.label;
+    el.appendChild(s);
+    frag.appendChild(el);
+  });
+  overlay.appendChild(frag);
+
+  /* ---------- coverage samples along every guide path ---------- */
+  var samples = [];
+  pathEls.forEach(function (p) {
+    var len = p.getTotalLength();
+    if (!len) return;
+    for (var l = 0; l <= len; l += 5) {
+      var pt = p.getPointAtLength(l);
+      samples.push(pt.x, pt.y);
+    }
+  });
+  var total = samples.length / 2;
+  var covered = new Uint8Array(total);
+  var hits = 0;
+
+  var buckets = new Map();
+  for (var i = 0; i < total; i++) {
+    var key = Math.floor(samples[i * 2] / CELL) + "," + Math.floor(samples[i * 2 + 1] / CELL);
+    var arr = buckets.get(key);
+    if (arr) { arr.push(i); } else { buckets.set(key, [i]); }
+  }
+
+  function markPoint(x, y) {
+    var cx = Math.floor(x / CELL), cy = Math.floor(y / CELL);
+    for (var gx = cx - 1; gx <= cx + 1; gx++) {
+      for (var gy = cy - 1; gy <= cy + 1; gy++) {
+        var arr = buckets.get(gx + "," + gy);
+        if (!arr) continue;
+        for (var k = 0; k < arr.length; k++) {
+          var idx = arr[k];
+          if (covered[idx]) continue;
+          var dx = samples[idx * 2] - x, dy = samples[idx * 2 + 1] - y;
+          if (dx * dx + dy * dy <= TOL * TOL) { covered[idx] = 1; hits++; }
+        }
+      }
+    }
+  }
+
+  function markSegment(a, b) {
+    var dx = b.x - a.x, dy = b.y - a.y;
+    var steps = Math.max(1, Math.ceil(Math.hypot(dx, dy) / 8));
+    for (var s = 1; s <= steps; s++) markPoint(a.x + dx * s / steps, a.y + dy * s / steps);
+  }
+
+  var done = false;
+  function updateGauge() {
+    var pct = total ? Math.round(hits / total * 100) : 0;
+    pctEl.textContent = pct + "%";
+    barEl.style.width = pct + "%";
+    if (pct >= DONE_AT && !done) {
+      done = true;
+      var stamp = document.createElement("div");
+      stamp.className = "stamp";
+      stamp.innerHTML = "Traced<small>Plate 01 &mdash; approved</small>";
+      plate.appendChild(stamp);
+    }
+  }
+
+  /* ---------- ink ---------- */
+  var strokes = [], current = null, activePointer = null, pen = 5, scale = 1;
+
+  function inkColor() {
+    return getComputedStyle(document.documentElement).getPropertyValue("--blue").trim() || "#1550D8";
+  }
+
+  function resize() {
+    var r = canvas.getBoundingClientRect();
+    if (!r.width) return;
+    var dpr = Math.min(window.devicePixelRatio || 1, 3);
+    scale = r.width / W;
+    canvas.width  = Math.round(r.width * dpr);
+    canvas.height = Math.round(r.height * dpr);
+    ctx.setTransform(dpr * scale, 0, 0, dpr * (r.height / H), 0, 0);
+    redraw();
+  }
+
+  function drawStroke(st) {
+    var pts = st.pts;
+    ctx.strokeStyle = ctx.fillStyle = inkColor();
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = st.w / scale;
+    if (pts.length === 1) {
+      ctx.beginPath();
+      ctx.arc(pts[0].x, pts[0].y, (st.w / 2) / scale, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (var i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.stroke();
+  }
+
+  function redraw() {
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+    strokes.forEach(drawStroke);
+  }
+
+  function drawTip(st) {
+    var pts = st.pts, n = pts.length;
+    ctx.strokeStyle = ctx.fillStyle = inkColor();
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = st.w / scale;
+    if (n === 1) {
+      ctx.beginPath();
+      ctx.arc(pts[0].x, pts[0].y, (st.w / 2) / scale, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+    ctx.beginPath();
+    ctx.moveTo(pts[n - 2].x, pts[n - 2].y);
+    ctx.lineTo(pts[n - 1].x, pts[n - 1].y);
+    ctx.stroke();
+  }
+
+  function toPlate(e) {
+    var r = canvas.getBoundingClientRect();
+    return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H };
+  }
+
+  function syncButtons() {
+    undoBtn.disabled = clearBtn.disabled = strokes.length === 0;
+  }
+
+  canvas.addEventListener("pointerdown", function (e) {
+    if (activePointer !== null) return;
+    activePointer = e.pointerId;
+    canvas.setPointerCapture(e.pointerId);
+    var p = toPlate(e);
+    current = { w: pen, pts: [p] };
+    strokes.push(current);
+    drawTip(current);
+    markPoint(p.x, p.y);
+    updateGauge();
+    syncButtons();
+    e.preventDefault();
+  });
+
+  canvas.addEventListener("pointermove", function (e) {
+    if (e.pointerId !== activePointer || !current) return;
+    var events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+    for (var i = 0; i < events.length; i++) {
+      var p = toPlate(events[i]);
+      var last = current.pts[current.pts.length - 1];
+      if (Math.abs(p.x - last.x) < 0.4 && Math.abs(p.y - last.y) < 0.4) continue;
+      current.pts.push(p);
+      drawTip(current);
+      markSegment(last, p);
+    }
+    updateGauge();
+    e.preventDefault();
+  });
+
+  function endStroke(e) {
+    if (e.pointerId !== activePointer) return;
+    activePointer = null;
+    current = null;
+  }
+  canvas.addEventListener("pointerup", endStroke);
+  canvas.addEventListener("pointercancel", endStroke);
+
+  /* ---------- controls ---------- */
+  function recount() {
+    covered.fill(0);
+    hits = 0;
+    strokes.forEach(function (st) {
+      markPoint(st.pts[0].x, st.pts[0].y);
+      for (var i = 1; i < st.pts.length; i++) markSegment(st.pts[i - 1], st.pts[i]);
+    });
+    updateGauge();
+  }
+
+  undoBtn.addEventListener("click", function () {
+    strokes.pop();
+    redraw();
+    recount();
+    syncButtons();
+  });
+
+  clearBtn.addEventListener("click", function () {
+    strokes = [];
+    redraw();
+    recount();
+    syncButtons();
+    done = false;
+    var stamp = plate.querySelector(".stamp");
+    if (stamp) stamp.remove();
+  });
+
+  Array.prototype.forEach.call(document.querySelectorAll(".pen"), function (b) {
+    b.addEventListener("click", function () {
+      pen = Number(b.dataset.w);
+      Array.prototype.forEach.call(document.querySelectorAll(".pen"), function (o) {
+        o.setAttribute("aria-pressed", String(o === b));
+      });
+    });
+  });
+
+  function toggle(btn, attr) {
+    btn.addEventListener("click", function () {
+      var on = btn.getAttribute("aria-pressed") === "true";
+      btn.setAttribute("aria-pressed", String(!on));
+      plate.dataset[attr] = on ? "off" : "on";
+    });
+  }
+  toggle(document.getElementById("tGuide"), "guide");
+  toggle(document.getElementById("tDots"), "dots");
+
+  /* ---------- lifecycle ---------- */
+  if (window.ResizeObserver) new ResizeObserver(resize).observe(canvas);
+  window.addEventListener("resize", resize);
+  window.addEventListener("orientationchange", function () { setTimeout(resize, 250); });
+  if (window.matchMedia) {
+    var mq = window.matchMedia("(prefers-color-scheme: dark)");
+    if (mq.addEventListener) mq.addEventListener("change", redraw);
+  }
+  document.addEventListener("gesturestart", function (e) { e.preventDefault(); });
+  resize();
+  updateGauge();
+  syncButtons();
+})();
+</script>
+<!-- END APP -->
+</body>
+</html>
