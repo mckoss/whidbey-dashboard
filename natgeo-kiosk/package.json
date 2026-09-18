@@ -1,0 +1,22 @@
+{
+  "name": "natgeo-kiosk",
+  "version": "0.1.0",
+  "description": "National Geographic magazine slideshow kiosk for the Whidbey TV",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test test/*.test.js",
+    "harvest": "node bin/harvest.js",
+    "verify": "node bin/verify.js"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.74.0",
+    "express": "^5.2.1"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

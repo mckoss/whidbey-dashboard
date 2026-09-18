@@ -1,0 +1,26 @@
+{
+  "port": 3000,
+  "dataDir": "data",
+  "magazineUrl": "https://www.nationalgeographic.com/magazine",
+  "origin": "https://www.nationalgeographic.com",
+  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  "harvestHourLocal": 4,
+  "timezone": "America/Los_Angeles",
+  "harvestOnStartIfStale": true,
+  "staleAfterHours": 36,
+  "maxArticles": 24,
+  "maxImagesPerArticle": 12,
+  "minImageBytes": 40000,
+  "minImageWidth": 1200,
+  "targetImageWidth": 4096,
+  "requestDelayMs": 1500,
+  "condenseModel": "claude-opus-5",
+  "condenseEffort": "low",
+  "slideDurationMs": 12000,
+  "crossfadeMs": 2000,
+  "captionDelayMs": 3000,
+  "articlePathDenyList": [
+    "/subscribe", "/account", "/newsletters", "/podcasts", "/video",
+    "/photography/photo-of-the-day", "/tag/", "/author/", "/shop"
+  ]
+}

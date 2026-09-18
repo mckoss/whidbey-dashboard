@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>National Geographic Kiosk</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23000'/%3E%3Crect x='5' y='11' width='22' height='10' fill='%23ffd700'/%3E%3C/svg%3E">
+  <style>
+    :root {
+      --fade: 2000ms;
+      --caption-fade: 900ms;
+      --dim: rgba(255, 255, 255, 0.72);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      width: 100%;
+      height: 100vh;
+      overflow: hidden;
+      background: #000;
+      color: #fff;
+      font-family: 'Helvetica Neue', 'Segoe UI', system-ui, sans-serif;
+      cursor: none;
+    }
+
+    /* ── Image stack ───────────────────────────────────────────────────────
+       Two layers that swap roles. The incoming layer fades up over the
+       outgoing one, so there is never a black frame between slides. */
+    #stage { position: fixed; inset: 0; background: #000; }
+
+    /* Each layer holds two stacked children rather than a background of its
+       own: inside a stacking context a negative-z child paints ABOVE the
+       parent's background, which would hide the sharp photo behind the blur. */
+    .layer {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      transition: opacity var(--fade) ease-in-out;
+      will-change: opacity;
+    }
+
+    .layer.visible { opacity: 1; }
+
+    .layer .backdrop,
+    .layer .photo {
+      position: absolute;
+      inset: 0;
+      background-position: center center;
+      background-repeat: no-repeat;
+    }
+
+    /* A blurred copy of the same photo fills the pillarbox bars so a portrait
+       frame doesn't leave two dead black columns on a 16:9 TV. */
+    .layer .backdrop {
+      background-size: cover;
+      filter: blur(48px) saturate(1.2) brightness(0.42);
+      transform: scale(1.12);
+    }
+
+    /* The photograph itself, never cropped. */
+    .layer .photo { background-size: contain; }
+
+    /* ── Lower third ───────────────────────────────────────────────────── */
+    #lower-third {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      padding: 12vh 5vw 5.5vh;
+      background: linear-gradient(
+        to top,
+        rgba(0, 0, 0, 0.92) 0%,
+        rgba(0, 0, 0, 0.78) 28%,
+        rgba(0, 0, 0, 0.45) 58%,
+        rgba(0, 0, 0, 0) 100%
+      );
+      opacity: 0;
+      transform: translateY(14px);
+      transition: opacity var(--caption-fade) ease-out, transform var(--caption-fade) ease-out;
+      pointer-events: none;
+    }
+
+    #lower-third.visible { opacity: 1; transform: translateY(0); }
+
+    #headline {
+      font-size: clamp(1.8rem, 3.4vw, 3.4rem);
+      font-weight: 600;
+      line-height: 1.12;
+      letter-spacing: -0.015em;
+      text-shadow: 0 2px 18px rgba(0, 0, 0, 0.75);
+      margin-bottom: 0.5rem;
+    }
+
+    #caption {
+      font-size: clamp(1.05rem, 1.55vw, 1.6rem);
+      font-weight: 300;
+      line-height: 1.35;
+      color: var(--dim);
+      max-width: 62ch;
+      margin-bottom: 0.9rem;
+      text-shadow: 0 1px 12px rgba(0, 0, 0, 0.7);
+    }
+
+    #meta {
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+      font-size: clamp(0.8rem, 1.05vw, 1.05rem);
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.58);
+    }
+
+    #location { color: #ffd700; font-weight: 500; }
+    #meta .sep { opacity: 0.4; }
+    #meta.no-location #location, #meta.no-location .sep.loc { display: none; }
+    #meta.no-credit #credit, #meta.no-credit .sep.cred { display: none; }
+
+    /* Keeps the brand mark and issue label legible over a bright photograph. */
+    #top-scrim {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 16vh;
+      background: linear-gradient(to bottom, rgba(0, 0, 0, 0.55) 0%, rgba(0, 0, 0, 0) 100%);
+      opacity: 0;
+      transition: opacity var(--caption-fade) ease-out;
+      pointer-events: none;
+    }
+
+    #top-scrim.visible { opacity: 1; }
+
+    /* Yellow rectangle, in the spirit of the magazine's border. */
+    #brand {
+      position: fixed;
+      top: 4vh;
+      left: 5vw;
+      width: clamp(52px, 5vw, 96px);
+      height: clamp(7px, 0.7vw, 12px);
+      background: #ffd700;
+      opacity: 0;
+      transition: opacity var(--caption-fade) ease-out;
+    }
+
+    #brand.visible { opacity: 0.92; }
+
+    /* When the failure banner is up, move the top row clear of it. */
+    body.has-banner #brand,
+    body.has-banner #issue-label { top: calc(4vh + 3.2rem); }
+    body.has-banner #top-scrim { top: 3.2rem; }
+
+    #issue-label {
+      position: fixed;
+      top: 4vh;
+      right: 5vw;
+      font-size: clamp(0.75rem, 1vw, 1rem);
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.45);
+      opacity: 0;
+      transition: opacity var(--caption-fade) ease-out;
+      text-shadow: 0 1px 10px rgba(0, 0, 0, 0.8);
+    }
+
+    #issue-label.visible { opacity: 1; }
+
+    /* ── Failure states — never fail silently ──────────────────────────── */
+    #banner {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      padding: 0.85rem 5vw;
+      background: rgba(153, 27, 27, 0.94);
+      border-bottom: 2px solid #f87171;
+      font-size: clamp(0.85rem, 1.15vw, 1.15rem);
+      letter-spacing: 0.02em;
+      display: none;
+      z-index: 20;
+    }
+
+    #banner.visible { display: block; }
+    #banner.warn { background: rgba(146, 96, 6, 0.94); border-bottom-color: #fbbf24; }
+    #banner b { letter-spacing: 0.1em; text-transform: uppercase; margin-right: 0.6rem; }
+
+    #splash {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
+      text-align: center;
+      padding: 5vw;
+      background: #000;
+      z-index: 15;
+      transition: opacity 600ms ease-out;
+    }
+
+    #splash.hidden { opacity: 0; pointer-events: none; }
+    #splash .mark { width: 92px; height: 13px; background: #ffd700; }
+    #splash .msg { font-size: 1.1rem; color: rgba(255, 255, 255, 0.65); max-width: 60ch; line-height: 1.5; }
+    #version { position: fixed; bottom: 0.6rem; right: 0.8rem; font-size: 0.65rem; color: rgba(255,255,255,0.18); }
+
+    @media (prefers-reduced-motion: reduce) {
+      .layer, #lower-third, #brand, #issue-label { transition-duration: 1ms; }
+    }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <div class="layer" id="layer-a"><div class="backdrop"></div><div class="photo"></div></div>
+    <div class="layer" id="layer-b"><div class="backdrop"></div><div class="photo"></div></div>
+  </div>
+
+  <div id="top-scrim"></div>
+  <div id="brand"></div>
+  <div id="issue-label"></div>
+
+  <div id="lower-third">
+    <div id="headline"></div>
+    <div id="caption"></div>
+    <div id="meta">
+      <span id="location"></span>
+      <span class="sep loc">·</span>
+      <span id="credit"></span>
+    </div>
+  </div>
+
+  <div id="banner"></div>
+
+  <div id="splash">
+    <div class="mark"></div>
+    <div class="msg" id="splash-msg">Loading the current issue…</div>
+  </div>
+
+  <div id="version"></div>
+
+<script>
+// ── Configuration (server-provided, with safe defaults) ──────────────────────
+const cfg = {
+  slideDurationMs: 12000,
+  crossfadeMs: 2000,
+  captionDelayMs: 3000,
+  refetchMs: 15 * 60 * 1000,
+};
+
+const els = {
+  layers: [document.getElementById('layer-a'), document.getElementById('layer-b')],
+  lowerThird: document.getElementById('lower-third'),
+  headline: document.getElementById('headline'),
+  caption: document.getElementById('caption'),
+  location: document.getElementById('location'),
+  credit: document.getElementById('credit'),
+  meta: document.getElementById('meta'),
+  brand: document.getElementById('brand'),
+  topScrim: document.getElementById('top-scrim'),
+  issueLabel: document.getElementById('issue-label'),
+  banner: document.getElementById('banner'),
+  splash: document.getElementById('splash'),
+  splashMsg: document.getElementById('splash-msg'),
+  version: document.getElementById('version'),
+};
+
+let slides = [];
+let issueLabel = '';
+let index = -1;
+let activeLayer = 0;
+let slideTimer = null;
+let captionTimer = null;
+let currentIssueId = '';
+
+// ── Data ────────────────────────────────────────────────────────────────────
+
+async function loadConfig() {
+  try {
+    const data = await fetch('/api/config', { cache: 'no-store' }).then((r) => r.json());
+    Object.assign(cfg, data);
+    document.documentElement.style.setProperty('--fade', cfg.crossfadeMs + 'ms');
+    if (data.version) els.version.textContent = 'v' + data.version;
+  } catch (err) {
+    console.warn('config unavailable', err);
+  }
+}
+
+async function loadSlides() {
+  let data;
+  try {
+    data = await fetch('/api/slides', { cache: 'no-store' }).then((r) => r.json());
+  } catch (err) {
+    showBanner('error', 'OFFLINE', 'Cannot reach the kiosk server. Retrying…');
+    return;
+  }
+
+  renderHealth(data.health);
+  issueLabel = data.issueLabel || '';
+  els.issueLabel.textContent = issueLabel;
+
+  const incoming = Array.isArray(data.slides) ? data.slides.filter((s) => s && s.image) : [];
+  if (!incoming.length) {
+    // Keep showing whatever is already on screen rather than going black.
+    if (!slides.length) {
+      els.splashMsg.textContent =
+        'No issue has been harvested yet. Run `npm run harvest` on the server.';
+      els.splash.classList.remove('hidden');
+    }
+    return;
+  }
+
+  const issueChanged = data.issueId !== currentIssueId;
+  currentIssueId = data.issueId;
+  slides = incoming;
+
+  if (issueChanged || index < 0) {
+    index = -1;
+    start();
+  }
+}
+
+// ── Health banner ───────────────────────────────────────────────────────────
+
+function renderHealth(health) {
+  if (!health || health.ok) {
+    hideBanner();
+    return;
+  }
+  const worst = health.problems.find((p) => p.level === 'error') || health.problems[0];
+  if (worst.code === 'NO_ISSUE' && slides.length) {
+    hideBanner();
+    return;
+  }
+  showBanner(worst.level, worst.code.replace(/_/g, ' '), worst.message);
+}
+
+function showBanner(level, code, message) {
+  els.banner.innerHTML = '';
+  const label = document.createElement('b');
+  label.textContent = code;
+  els.banner.appendChild(label);
+  els.banner.appendChild(document.createTextNode(message));
+  els.banner.classList.toggle('warn', level !== 'error');
+  els.banner.classList.add('visible');
+  document.body.classList.add('has-banner');
+}
+
+function hideBanner() {
+  els.banner.classList.remove('visible');
+  document.body.classList.remove('has-banner');
+}
+
+// ── Slideshow ───────────────────────────────────────────────────────────────
+
+function start() {
+  clearTimeout(slideTimer);
+  next();
+}
+
+function preload(url) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(true);
+    img.onerror = () => resolve(false);
+    img.src = url;
+  });
+}
+
+async function next() {
+  if (!slides.length) return;
+  index = (index + 1) % slides.length;
+  const slide = slides[index];
+
+  const ok = await preload(slide.image);
+  if (!ok) {
+    // A missing file shouldn't stall the loop; skip to the next one.
+    console.warn('image failed to load', slide.image);
+    if (slides.length > 1) {
+      slideTimer = setTimeout(next, 200);
+      return;
+    }
+  }
+
+  // Hide the caption before the image changes, then bring it back after the
+  // crossfade has settled — the picture gets a few seconds on its own.
+  hideCaption();
+
+  const incoming = els.layers[1 - activeLayer];
+  const outgoing = els.layers[activeLayer];
+  const url = 'url("' + slide.image + '")';
+  incoming.querySelector('.photo').style.backgroundImage = url;
+  incoming.querySelector('.backdrop').style.backgroundImage = url;
+  incoming.classList.add('visible');
+  outgoing.classList.remove('visible');
+  activeLayer = 1 - activeLayer;
+
+  els.splash.classList.add('hidden');
+
+  captionTimer = setTimeout(() => showCaption(slide), cfg.crossfadeMs + cfg.captionDelayMs);
+  slideTimer = setTimeout(next, cfg.slideDurationMs);
+
+  // Warm the next image while this one is on screen.
+  if (slides.length > 1) preload(slides[(index + 1) % slides.length].image);
+}
+
+function showCaption(slide) {
+  els.headline.textContent = slide.headline || slide.articleHeadline || '';
+  els.caption.textContent = slide.short_caption || '';
+  els.location.textContent = slide.location || '';
+  els.credit.textContent = slide.credit ? 'Photograph by ' + slide.credit : '';
+  els.meta.classList.toggle('no-location', !slide.location);
+  els.meta.classList.toggle('no-credit', !slide.credit);
+  els.lowerThird.classList.add('visible');
+  els.brand.classList.add('visible');
+  els.topScrim.classList.add('visible');
+  if (issueLabel) els.issueLabel.classList.add('visible');
+}
+
+function hideCaption() {
+  clearTimeout(captionTimer);
+  els.lowerThird.classList.remove('visible');
+  els.brand.classList.remove('visible');
+  els.topScrim.classList.remove('visible');
+  els.issueLabel.classList.remove('visible');
+}
+
+// A TV left on for weeks drifts; re-poll for a new issue and recover from
+// transient server restarts without anyone touching the remote.
+setInterval(loadSlides, cfg.refetchMs);
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) loadSlides();
+});
+
+// Manual stepping while setting the kiosk up.
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'ArrowRight') { clearTimeout(slideTimer); next(); }
+  if (event.key === 'ArrowLeft') {
+    clearTimeout(slideTimer);
+    index = (index - 2 + slides.length) % slides.length;
+    next();
+  }
+});
+
+loadConfig().then(loadSlides);
+</script>
+</body>
+</html>
