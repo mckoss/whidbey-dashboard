@@ -39,7 +39,7 @@ const CONFIG = {
   wsfApiKey: String(configValue('wsfApiKey', '')).trim(),
   wsfApiMinIntervalMs: Number(configValue('wsfApiMinIntervalMs', 60 * 1000)),
   wsfRawLogDir: resolve(configValue('wsfRawLogDir', join(dataDir, 'wsf-raw'))),
-  gaMeasurementId: configValue('gaMeasurementId', null),
+  gaMeasurementId: process.env.GA_MEASUREMENT_ID || configValue('gaMeasurementId', null),
   googleClientId: String(configValue('googleClientId', '')).trim(),
   adminUsers: parseAuthorizedUsers(configValue('adminUsers', [])),
   adminTestTokens: parseJsonObject(configValue('adminTestTokens', {})),

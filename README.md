@@ -61,6 +61,8 @@ Runtime configuration lives in ignored `config.json`. Copy
 The WSDOT ferry API key is free from https://www.wsdot.wa.gov/traffic/api/.
 For Railway, set the same JSON object as a `CONFIG_JSON` environment variable.
 `config.json` and `CONFIG_JSON` use the same canonical keys.
+Set `GA_MEASUREMENT_ID` to override `gaMeasurementId` without editing the
+production `CONFIG_JSON` (which also contains credentials).
 WSF ferry API calls are limited to at most one outbound request per endpoint and
 parameter set per minute. Raw WSF responses are appended under `wsfRawLogDir` as
 2 AM operational-day JSONL files named `yyyy/mm/yyyy-mm-dd-wsfdata.jsonl`; each

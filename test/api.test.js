@@ -2948,9 +2948,11 @@ test('server config — accepts canonical CONFIG_JSON for Railway-style deploys'
     env: {
       ...process.env,
       NODE_ENV: 'test',
+      GA_MEASUREMENT_ID: 'G-NEWPROPERTY',
       CONFIG_JSON: JSON.stringify({
         port,
         dataDir: tempDir,
+        gaMeasurementId: 'G-OLDPROPERTY',
         googleClientId: 'config-json-client-id',
         adminUsers: ['mike@example.com'],
       }),
@@ -2965,6 +2967,7 @@ test('server config — accepts canonical CONFIG_JSON for Railway-style deploys'
         if (res.ok) {
           const json = await res.json();
           assert.equal(json.googleClientId, 'config-json-client-id');
+          assert.equal(json.gaMeasurementId, 'G-NEWPROPERTY');
           assert.equal(json.ferryHistorySampleMs, 60000);
           assert.equal(json.ferryHistoryDayStartHour, undefined);
           return;
