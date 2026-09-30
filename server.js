@@ -1127,6 +1127,17 @@ function sendHtmlPage(res, fileName, options = {}) {
       html = html.replace('<script>', `${routeScript}\n  <script>`);
     }
   }
+  if (CONFIG.gaMeasurementId && ['index.html', 'ferry-history.html', 'estimate.html'].includes(fileName)) {
+    const id = JSON.stringify(CONFIG.gaMeasurementId).replace(/</g, '\\u003c');
+    const gaScript = `<script async src="https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(CONFIG.gaMeasurementId)}"></script>
+<script>
+window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('js', new Date());
+gtag('config', ${id});
+</script>`;
+    html = html.replace('</body>', `${gaScript}\n</body>`);
+  }
   noCacheHtmlResponses(res);
   res.type('html').send(injectAnalyticsScript(html));
 }
@@ -1137,6 +1148,10 @@ app.get(['/', '/index.html'], (req, res) => {
 
 app.get('/ferry-history.html', (req, res) => {
   sendHtmlPage(res, 'ferry-history.html');
+});
+
+app.get('/estimate.html', (req, res) => {
+  sendHtmlPage(res, 'estimate.html');
 });
 
 app.get('/admin.html', (req, res) => {

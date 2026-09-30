@@ -401,6 +401,7 @@ before(async () => {
       'unauthorized-admin-token': 'someone@example.com',
     },
     analyticsGeoUrl: '',
+    gaMeasurementId: 'G-TESTPROPERTY',
     sessionSecret: 'test-session-secret-for-admin-cookies',
   }, null, 2));
 
@@ -2336,6 +2337,21 @@ test('html responses — inject dashboard analytics heartbeat script', async () 
     assert.match(html, /\/api\/analytics\/view/, `${path} includes analytics endpoint`);
     assert.match(html, /view_heartbeat/, `${path} includes hourly heartbeat event`);
   }
+});
+
+test('public HTML pages load GA4 once with the configured measurement ID', async () => {
+  for (const path of ['/', '/index.html', '/ferry-history', '/ferry-history.html',
+    '/estimate', '/estimate.html', '/bainbridge', '/bainbridge/ferry-history', '/bainbridge/estimate']) {
+    const res = await fetch(`${BASE}${path}`);
+    assert.equal(res.status, 200, path);
+    const html = await res.text();
+    assert.equal((html.match(/googletagmanager\.com\/gtag\/js/g) || []).length, 1, `${path} loads GA4 once`);
+    assert.match(html, /gtag\('config', "G-TESTPROPERTY"\)/, `${path} configures its own stream`);
+    assert.match(html, /function gtag\(\)\{dataLayer\.push\(arguments\);\}/);
+    assert.doesNotMatch(html, /google-analytics\.com\/analytics\.js/);
+  }
+  const admin = await fetch(`${BASE}/admin`).then(res => res.text());
+  assert.doesNotMatch(admin, /googletagmanager\.com/);
 });
 
 test('alert-contexts endpoint — Google-authorized admins can manage ferry alert parentheticals', async () => {

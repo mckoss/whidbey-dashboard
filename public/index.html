@@ -1960,7 +1960,7 @@ scheduleLoader(refreshSeawaterTemperature, 10 * 60 * 1000); // 10 min, retry 5 m
 scheduleLoader(loadTides,  120 * 60 * 1000);   // 2 hours, retry 5 min
 scheduleLoader(loadFerry,   30 * 1000);        // 30 sec,  retry 5 min
 
-// ── Client config: version + Google Analytics ────────────────────────────────
+// ── Client config: version ────────────────────────────────
 // Version comes from package.json via the server's /api/config endpoint, so
 // bumping with `npm version patch` is the only step needed.
 (async () => {
@@ -1970,18 +1970,8 @@ scheduleLoader(loadFerry,   30 * 1000);        // 30 sec,  retry 5 min
       const el = document.getElementById('version');
       if (el) el.textContent = 'v ' + cfg.version;
     }
-    if (cfg.gaMeasurementId) {
-      const s = document.createElement('script');
-      s.async = true;
-      s.src = `https://www.googletagmanager.com/gtag/js?id=${cfg.gaMeasurementId}`;
-      document.head.appendChild(s);
-      window.dataLayer = window.dataLayer || [];
-      function gtag() { dataLayer.push(arguments); }
-      gtag('js', new Date());
-      gtag('config', cfg.gaMeasurementId);
-    }
   } catch (e) {
-    console.warn('[ga] config fetch failed:', e.message);
+    console.warn('[config] config fetch failed:', e.message);
   }
 })();
 
