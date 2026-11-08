@@ -401,7 +401,6 @@ before(async () => {
       'unauthorized-admin-token': 'someone@example.com',
     },
     analyticsGeoUrl: '',
-    gaMeasurementId: 'G-TESTPROPERTY',
     sessionSecret: 'test-session-secret-for-admin-cookies',
   }, null, 2));
 
@@ -2339,19 +2338,17 @@ test('html responses — inject dashboard analytics heartbeat script', async () 
   }
 });
 
-test('public HTML pages load GA4 once with the configured measurement ID', async () => {
+test('HTML pages load the shared Umami analytics tag once and no Google Analytics', async () => {
   for (const path of ['/', '/index.html', '/ferry-history', '/ferry-history.html',
-    '/estimate', '/estimate.html', '/bainbridge', '/bainbridge/ferry-history', '/bainbridge/estimate']) {
+    '/estimate', '/estimate.html', '/bainbridge', '/bainbridge/ferry-history', '/bainbridge/estimate',
+    '/admin', '/admin.html']) {
     const res = await fetch(`${BASE}${path}`);
     assert.equal(res.status, 200, path);
     const html = await res.text();
-    assert.equal((html.match(/googletagmanager\.com\/gtag\/js/g) || []).length, 1, `${path} loads GA4 once`);
-    assert.match(html, /gtag\('config', "G-TESTPROPERTY"\)/, `${path} configures its own stream`);
-    assert.match(html, /function gtag\(\)\{dataLayer\.push\(arguments\);\}/);
-    assert.doesNotMatch(html, /google-analytics\.com\/analytics\.js/);
+    const tags = html.match(/<script defer src="https:\/\/mckoss\.com\/js\/mk\.js"><\/script>/g) || [];
+    assert.equal(tags.length, 1, `${path} loads mk.js once`);
+    assert.doesNotMatch(html, /googletagmanager\.com|gtag\(/, `${path} has no Google Analytics`);
   }
-  const admin = await fetch(`${BASE}/admin`).then(res => res.text());
-  assert.doesNotMatch(admin, /googletagmanager\.com/);
 });
 
 test('alert-contexts endpoint — Google-authorized admins can manage ferry alert parentheticals', async () => {
@@ -2567,6 +2564,7 @@ test('tracking page — requires admin session and renders recent analytics UI',
   assert.match(html, /connection-chip/, 'can enumerate current connection IPs when fewer than 10');
   assert.match(html, /view_heartbeat/, 'has event rendering for hourly heartbeats');
   assert.match(html, /credentials:\s*'same-origin'/, 'sends admin session cookie with tracking requests');
+  assert.equal((html.match(/mckoss\.com\/js\/mk\.js/g) || []).length, 1, 'loads the Umami tag once');
 
   const scriptMatch = html.match(/<script[^>]*>([\s\S]*?)<\/script>/);
   assert.ok(scriptMatch, 'found tracking script block');
@@ -2950,7 +2948,6 @@ test('config example — documents runtime and Google admin auth configuration',
   assert.equal(config.ferryHistoryRetentionDays, undefined, 'example does not expose a ferry history cleanup setting');
   assert.equal(config.ferryHistorySampleMs, 60000, 'example documents ferry history sampling interval');
   assert.equal(config.ferryHistoryDayStartHour, 2, 'example documents ferry history operational-day boundary');
-  assert.ok('gaMeasurementId' in config, 'example documents optional Google Analytics ID');
   assert.ok(config.googleClientId, 'example has googleClientId placeholder');
   assert.ok(config.sessionSecret, 'example has sessionSecret placeholder');
   assert.ok(Array.isArray(config.adminUsers), 'example has adminUsers array');
@@ -2964,11 +2961,9 @@ test('server config — accepts canonical CONFIG_JSON for Railway-style deploys'
     env: {
       ...process.env,
       NODE_ENV: 'test',
-      GA_MEASUREMENT_ID: 'G-NEWPROPERTY',
       CONFIG_JSON: JSON.stringify({
         port,
         dataDir: tempDir,
-        gaMeasurementId: 'G-OLDPROPERTY',
         googleClientId: 'config-json-client-id',
         adminUsers: ['mike@example.com'],
       }),
@@ -2983,7 +2978,7 @@ test('server config — accepts canonical CONFIG_JSON for Railway-style deploys'
         if (res.ok) {
           const json = await res.json();
           assert.equal(json.googleClientId, 'config-json-client-id');
-          assert.equal(json.gaMeasurementId, 'G-NEWPROPERTY');
+          assert.equal(json.gaMeasurementId, undefined);
           assert.equal(json.ferryHistorySampleMs, 60000);
           assert.equal(json.ferryHistoryDayStartHour, undefined);
           return;

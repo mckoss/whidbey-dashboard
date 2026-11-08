@@ -39,7 +39,6 @@ const CONFIG = {
   wsfApiKey: String(configValue('wsfApiKey', '')).trim(),
   wsfApiMinIntervalMs: Number(configValue('wsfApiMinIntervalMs', 60 * 1000)),
   wsfRawLogDir: resolve(configValue('wsfRawLogDir', join(dataDir, 'wsf-raw'))),
-  gaMeasurementId: process.env.GA_MEASUREMENT_ID || configValue('gaMeasurementId', null),
   googleClientId: String(configValue('googleClientId', '')).trim(),
   adminUsers: parseAuthorizedUsers(configValue('adminUsers', [])),
   adminTestTokens: parseJsonObject(configValue('adminTestTokens', {})),
@@ -1126,17 +1125,6 @@ function sendHtmlPage(res, fileName, options = {}) {
     } else {
       html = html.replace('<script>', `${routeScript}\n  <script>`);
     }
-  }
-  if (CONFIG.gaMeasurementId && ['index.html', 'ferry-history.html', 'estimate.html'].includes(fileName)) {
-    const id = JSON.stringify(CONFIG.gaMeasurementId).replace(/</g, '\\u003c');
-    const gaScript = `<script async src="https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(CONFIG.gaMeasurementId)}"></script>
-<script>
-window.dataLayer = window.dataLayer || [];
-function gtag(){dataLayer.push(arguments);}
-gtag('js', new Date());
-gtag('config', ${id});
-</script>`;
-    html = html.replace('</body>', `${gaScript}\n</body>`);
   }
   noCacheHtmlResponses(res);
   res.type('html').send(injectAnalyticsScript(html));
@@ -4148,11 +4136,10 @@ app.get('/bainbridge/ferry-history', (req, res) => {
   sendRoutePage(res, 'ferry-history.html', FERRY_ROUTES.bainbridge);
 });
 
-// ── Client config (feature flags, analytics ID) ──────────────────────
+// ── Client config (feature flags) ──────────────────────
 app.get('/api/config', (req, res) => {
   res.json({
     ferryHistorySampleMs: FERRY_HISTORY_SAMPLE_INTERVAL_MS,
-    gaMeasurementId: CONFIG.gaMeasurementId,
     googleClientId: googleClientId() || null,
     version: pkg.version,
   });
