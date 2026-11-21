@@ -916,6 +916,10 @@ function weatherDesc(code) {
   return 'Storm';
 }
 
+function pacificDateKey(date) {
+  return date.toLocaleDateString('en-CA', { timeZone: TZ }); // YYYY-MM-DD
+}
+
 function windDir(deg) {
   const dirs = ['N','NE','E','SE','S','SW','W','NW'];
   return dirs[Math.round(deg / 45) % 8];
@@ -1084,9 +1088,15 @@ async function loadWeather() {
     const cur = d.current;
     const daily = d.daily;
 
-    const days = daily.time.slice(0, 3).map((t, i) => {
+    // Label days by their actual date (not position) and skip days already
+    // past, so a forecast issued yesterday never calls yesterday "Today".
+    const todayKey = pacificDateKey(new Date());
+    const tomorrowKey = pacificDateKey(new Date(Date.now() + 86400000));
+    const dayIdx = daily.time.map((t, i) => i).filter(i => daily.time[i] >= todayKey).slice(0, 3);
+    const days = dayIdx.map(i => {
+      const t = daily.time[i];
       const date = new Date(t + 'T12:00:00');
-      const name = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : DAYS[date.getDay()];
+      const name = t === todayKey ? 'Today' : t === tomorrowKey ? 'Tomorrow' : DAYS[date.getDay()];
       return {
         name,
         icon: weatherIcon(daily.weather_code[i]),
@@ -1100,9 +1110,10 @@ async function loadWeather() {
 
     if (d._stale) markStale('weather', d._staleAgeMinutes, d);
     else markFresh('weather', d);
-    if (d.daily?.sunrise?.[0]) {
-      window._sunriseMs = new Date(d.daily.sunrise[0]).getTime();
-      window._sunsetMs  = new Date(d.daily.sunset[0]).getTime();
+    const sunIdx = dayIdx.length ? dayIdx[0] : 0;
+    if (d.daily?.sunrise?.[sunIdx]) {
+      window._sunriseMs = new Date(d.daily.sunrise[sunIdx]).getTime();
+      window._sunsetMs  = new Date(d.daily.sunset[sunIdx]).getTime();
       const riseStr = new Date(window._sunriseMs).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
       const setStr  = new Date(window._sunsetMs).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true });
       const sunEl = document.getElementById('sun-times');
@@ -1132,7 +1143,7 @@ async function loadWeather() {
             <div class="weather-icon">${day.icon}</div>
             <div class="temp-high">${day.hi}°</div>
             <div class="temp-low">${day.lo}°</div>
-            <div class="precip">💧 ${day.precip}%</div>
+            <div class="precip">💧 ${Number.isFinite(day.precip) ? `${day.precip}%` : '—'}</div>
             <div class="wind">💨 ${day.wind} mph ${day.windDir}</div>
           </div>`).join('')}
       </div>`;

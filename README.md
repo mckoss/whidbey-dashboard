@@ -7,7 +7,7 @@ See the hosted version at [whidbey-dashboard.mckoss.com](https://whidbey-dashboa
 ## Features
 
 - 🕐 Real-time digital clock (12-hour, am/pm)
-- 🌤 3-day weather forecast with current conditions (NWS primary, Open-Meteo fallback)
+- 🌤 3-day weather forecast with current conditions (NWS primary, Open-Meteo and MET Norway fallbacks)
 - 🌊 Observed seawater temperature from NOAA Port Townsend in the weather header
 - 🌅 Sunrise & sunset times (calculated locally, shown in weather card header)
 - 🌕 Moon phase display — SVG rendered client-side with pure geometry, no images
@@ -191,7 +191,7 @@ only displays server-resolved estimates; it does not adjust them locally.
 
 | Data | Source | API Key | Client Refresh | Server Cache |
 |------|--------|---------|---------------|-------------|
-| Weather | [NWS API](https://api.weather.gov) primary, [Open-Meteo](https://open-meteo.com) fallback | No | 1 hour | 1 hour |
+| Weather | [NWS API](https://api.weather.gov) primary, [Open-Meteo](https://open-meteo.com) then [MET Norway](https://api.met.no) fallbacks | No | 1 hour | 1 hour |
 | Seawater temperature | [NOAA CO-OPS](https://tidesandcurrents.noaa.gov) station 9444900 (Port Townsend) | No | 10 min | 10 min |
 | Tides (hi/lo) | [NOAA CO-OPS](https://tidesandcurrents.noaa.gov) station 9445526 | No | 2 hours | 2 hours |
 | Tides (hourly) | NOAA (cosine-interpolated from hi/lo) | No | 2 hours | 2 hours |
@@ -345,7 +345,7 @@ and evaluation rules.
 
 - NOAA station 9445526 (Hansville) is a subordinate station — only provides hi/lo predictions, not hourly. Hourly data is generated server-side via cosine interpolation.
 - NOAA sometimes returns HTTP 200 with an error body instead of a proper error code. The server guards against caching these.
-- Weather uses NWS as the primary source and Open-Meteo as fallback. Sunrise/sunset are calculated server-side from latitude/longitude.
+- Weather tries NWS, then Open-Meteo, then MET Norway, and uses the first forecast that was issued within the last 4 hours and covers today. If none is current, it serves the freshest stale forecast and flags its age. Forecast days are labeled by date, and days already past are skipped. Sunrise/sunset are calculated server-side from latitude/longitude.
 - `window._sunriseMs` / `window._sunsetMs` are globals used by both the sparkline and the weather card.
 - Ferry WSF API uses `/Date(ms)/` format for timestamps.
 - The `preserveAspectRatio="none"` on sparkline/thermometer SVGs is intentional — they stretch to fill their flex containers.
