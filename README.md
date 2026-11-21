@@ -191,7 +191,7 @@ only displays server-resolved estimates; it does not adjust them locally.
 
 | Data | Source | API Key | Client Refresh | Server Cache |
 |------|--------|---------|---------------|-------------|
-| Weather | [NWS API](https://api.weather.gov) primary, [Open-Meteo](https://open-meteo.com) then [MET Norway](https://api.met.no) fallbacks | No | 1 hour | 1 hour |
+| Weather | [NWS API](https://api.weather.gov) primary, [Open-Meteo](https://open-meteo.com) then [MET Norway](https://api.met.no) fallbacks | No | 5 min (picks up server refreshes) | 1 hour |
 | Seawater temperature | [NOAA CO-OPS](https://tidesandcurrents.noaa.gov) station 9444900 (Port Townsend) | No | 10 min | 10 min |
 | Tides (hi/lo) | [NOAA CO-OPS](https://tidesandcurrents.noaa.gov) station 9445526 | No | 2 hours | 2 hours |
 | Tides (hourly) | NOAA (cosine-interpolated from hi/lo) | No | 2 hours | 2 hours |

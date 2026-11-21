@@ -929,8 +929,11 @@ function windDir(deg) {
 const dataUpdatedAt = {};  // key → timestamp ms of last successful fresh fetch
 const staleSourceAge = {}; // key → { ageMin, seenAt } for server-provided stale data
 
-function markFresh(key) {
-  dataUpdatedAt[key] = Date.now();
+function markFresh(key, data) {
+  // Prefer the server's data age (when the source issued it) over fetch time,
+  // so frequent polling doesn't make old data look new.
+  const ageMin = Number(data?._dataAgeMinutes);
+  dataUpdatedAt[key] = Date.now() - (Number.isFinite(ageMin) ? ageMin * 60000 : 0);
   delete staleSourceAge[key];
 }
 
@@ -1966,7 +1969,11 @@ function scheduleLoader(fn, normalMs) {
   run();
 }
 
-scheduleLoader(loadWeather, 60 * 60 * 1000);   // 1 hour, retry 5 min
+// Weather polls every 5 min (served from the server's cache, so it's cheap) so
+// a forecast the server pulls shows up within minutes, and day labels roll
+// over promptly at midnight.
+const WEATHER_POLL_MS = 5 * 60 * 1000;
+scheduleLoader(loadWeather, WEATHER_POLL_MS);
 scheduleLoader(refreshSeawaterTemperature, 10 * 60 * 1000); // 10 min, retry 5 min
 scheduleLoader(loadTides,  120 * 60 * 1000);   // 2 hours, retry 5 min
 scheduleLoader(loadFerry,   30 * 1000);        // 30 sec,  retry 5 min

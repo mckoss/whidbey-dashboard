@@ -591,6 +591,10 @@ test('weather endpoint — skips a forecast over 4h old and a failed backup for 
 
 test('static HTML — weather days are labeled by date, not position', async () => {
   const html = await readFile(join(__dirname, '../public/index.html'), 'utf8');
+  assert.match(html, /const WEATHER_POLL_MS = 5 \* 60 \* 1000;\s*scheduleLoader\(loadWeather, WEATHER_POLL_MS\);/,
+    'client polls weather often enough to pick up server refreshes within minutes');
+  assert.match(html, /markFresh\('weather', d\)/, 'weather freshness uses the server payload');
+  assert.match(html, /data\?\._dataAgeMinutes/, 'freshness badge uses server-reported data age');
   assert.match(html, /daily\.time\[i\] >= todayKey/, 'forecast days already past are skipped');
   assert.match(html, /t === todayKey \? 'Today' : t === tomorrowKey \? 'Tomorrow'/,
     'Today/Tomorrow labels come from the date');
