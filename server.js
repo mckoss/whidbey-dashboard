@@ -49,6 +49,7 @@ const CONFIG = {
   nwsBaseUrl: String(configValue('nwsBaseUrl', 'https://api.weather.gov')).replace(/\/+$/, ''),
   nwsUserAgent: String(configValue('nwsUserAgent', 'whidbey-dashboard (mckoss.com)')).trim(),
   openMeteoBaseUrl: String(configValue('openMeteoBaseUrl', 'https://api.open-meteo.com')).replace(/\/+$/, ''),
+  metNorwayBaseUrl: String(configValue('metNorwayBaseUrl', 'https://api.met.no')).replace(/\/+$/, ''),
   lat: Number(configValue('lat', 47.9748)),
   lon: Number(configValue('lon', -122.3534)),
   wsfDepartingTerminal: Number(configValue('wsfDepartingTerminal', 5)),
@@ -101,7 +102,16 @@ const FERRY_ROUTES = {
   },
 };
 const DEFAULT_FERRY_ROUTE = FERRY_ROUTES.whidbey;
-const WEATHER_CACHE_SCHEMA = 'nws-solar-v2';
+const WEATHER_CACHE_SCHEMA = 'multi-source-v3';
+const WEATHER_TTL_MS = 60 * 60 * 1000;
+// A forecast issued longer ago than this is treated as stale and the next
+// weather source is tried instead.
+const WEATHER_MAX_AGE_MS = 4 * 60 * 60 * 1000;
+// Ignore NWS station observations older than this; use the forecast hour.
+const NWS_OBSERVATION_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+const WEATHER_SOURCE_TIMEOUT_MS = 25 * 1000;
+// A background refresh that never settles must not block future refreshes.
+const BACKGROUND_REFRESH_TIMEOUT_MS = 90 * 1000;
 const SEAWATER_TEMPERATURE_CACHE_MS = 10 * 60 * 1000;
 const TIDE_CACHE_MS = 2 * 60 * 60 * 1000;
 const TERMINAL_NAMES = new Map(Object.values(FERRY_ROUTES).flatMap(route => [
@@ -936,6 +946,37 @@ async function fetchWithRetry(url, options = {}, retries = 1) {
   }
 }
 
+// Like fetchWithRetry, but the timeout also covers reading the JSON body, so a
+// response that stalls mid-body cannot hang the caller forever.
+async function fetchJsonWithRetry(url, options = {}, retries = 1) {
+  const { timeoutMs = 8000, ...fetchOptions } = options;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...fetchOptions, signal: controller.signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    const message = err.name === 'AbortError' ? `timeout after ${timeoutMs}ms` : err.message;
+    if (retries > 0) {
+      console.warn(`[retry] ${url} — ${message}`);
+      await new Promise(r => setTimeout(r, 1000));
+      return fetchJsonWithRetry(url, options, retries - 1);
+    }
+    throw new Error(message);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function withDeadline(promise, ms, label) {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} did not finish within ${Math.round(ms / 1000)}s`)), ms);
+  });
+  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+}
+
 const wsfFetchesInFlight = new Map();
 const wsfFetchAttempts = new Map();
 
@@ -1074,7 +1115,7 @@ function refreshCacheInBackground(cacheKey, ttlMs, fetcher, req) {
   if (backgroundRefreshes.has(cacheKey)) return;
   const refresh = (async () => {
     try {
-      const data = await fetcher(req);
+      const data = await withDeadline(fetcher(req), BACKGROUND_REFRESH_TIMEOUT_MS, `refresh of ${cacheKey}`);
       setCache(cacheKey, data, ttlMs);
     } catch (e) {
       console.warn(`[stale] background refresh failed for ${cacheKey}: ${e.message}`);
@@ -1085,24 +1126,24 @@ function refreshCacheInBackground(cacheKey, ttlMs, fetcher, req) {
   backgroundRefreshes.set(cacheKey, refresh);
 }
 
-function cachedEndpointStaleWhileRefresh(cacheKey, ttlMs, fetcher, isUsableCacheEntry = () => true) {
+function cachedEndpointStaleWhileRefresh(cacheKey, ttlMs, fetcher, isUsableCacheEntry = () => true, decorate = data => data) {
   return async (req, res) => {
     const hit = getCached(cacheKey);
     if (hit && isUsableCacheEntry(hit)) {
-      return res.json(hit.data);
+      return res.json(decorate(hit.data, hit));
     }
 
     const stale = getStale(cacheKey);
     if (stale && isUsableCacheEntry(stale)) {
       refreshCacheInBackground(cacheKey, ttlMs, fetcher, req);
       const ageMin = Math.round((Date.now() - stale.cachedAt) / 60000);
-      return res.json({ ...stale.data, _stale: true, _staleAgeMinutes: ageMin, _refreshing: true });
+      return res.json(decorate({ ...stale.data, _stale: true, _staleAgeMinutes: ageMin, _refreshing: true }, stale));
     }
 
     try {
       const data = await fetcher(req);
       setCache(cacheKey, data, ttlMs);
-      res.json(data);
+      res.json(decorate(data, getStale(cacheKey)));
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
@@ -1529,16 +1570,81 @@ async function fetchNoaaSeawaterTemperature(route = DEFAULT_FERRY_ROUTE) {
   };
 }
 
-// ── Weather (NWS primary, Open-Meteo fallback) ─────────────────────────
+// ── Weather (NWS primary, Open-Meteo then MET Norway fallbacks) ────────
+const WEATHER_SOURCES = [
+  { name: 'NWS', fetch: route => fetchNwsWeather(route) },
+  { name: 'Open-Meteo', fetch: route => fetchOpenMeteoWeather(route) },
+  { name: 'MET Norway', fetch: route => fetchMetNorwayWeather(route) },
+];
+
 function weatherEndpoint(route = DEFAULT_FERRY_ROUTE) {
-  return cachedEndpointStaleWhileRefresh(route.weather.cacheKey, 60 * 60 * 1000, async () => {
+  return cachedEndpointStaleWhileRefresh(
+    route.weather.cacheKey,
+    WEATHER_TTL_MS,
+    () => fetchWeatherFromSources(route),
+    isUsableWeatherCache,
+    decorateWeatherResponse,
+  );
+}
+
+// Try each source in order and return the first whose forecast is current.
+// If none is current, fall back to the freshest stale forecast we received.
+async function fetchWeatherFromSources(route, now = Date.now()) {
+  const problems = [];
+  let bestStale = null;
+  for (const source of WEATHER_SOURCES) {
     try {
-      return markWeatherCacheSchema(await fetchNwsWeather(route));
+      const data = await withDeadline(source.fetch(route), WEATHER_SOURCE_TIMEOUT_MS, `${source.name} weather`);
+      const problem = weatherFreshnessProblem(data, now);
+      if (!problem) {
+        if (problems.length) {
+          console.warn(`[weather] using ${source.name} for ${route.key}; skipped ${problems.join('; ')}`);
+        }
+        return markWeatherCacheSchema(data);
+      }
+      problems.push(`${source.name}: ${problem}`);
+      if (!bestStale || weatherIssuedMs(data) > weatherIssuedMs(bestStale)) bestStale = data;
     } catch (e) {
-      console.warn(`[weather] NWS failed for ${route.key}: ${e.message}; falling back to Open-Meteo`);
-      return markWeatherCacheSchema(await fetchOpenMeteoWeather(route));
+      problems.push(`${source.name}: ${e.message}`);
     }
-  }, isUsableWeatherCache);
+  }
+  if (bestStale) {
+    console.warn(`[weather] no current source for ${route.key}; serving stale ${bestStale.source} (${problems.join('; ')})`);
+    return markWeatherCacheSchema(bestStale);
+  }
+  throw new Error(`all weather sources failed — ${problems.join('; ')}`);
+}
+
+function weatherIssuedMs(data) {
+  const ms = Date.parse(data?.issuedAt || '');
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function weatherFreshnessProblem(data, now = Date.now()) {
+  const issuedMs = weatherIssuedMs(data);
+  if (!issuedMs) return 'forecast has no issue time';
+  if (now - issuedMs > WEATHER_MAX_AGE_MS) {
+    return `forecast issued ${Math.round((now - issuedMs) / 3600000)}h ago`;
+  }
+  const today = localDateInTimeZone(new Date(now), CONFIG.timezone);
+  if (!data?.daily?.time?.includes(today)) return `forecast does not cover today (${today})`;
+  return null;
+}
+
+// Report weather age from when the forecast was issued, not just when we
+// cached it, so an old forecast is flagged even if it was fetched recently.
+function decorateWeatherResponse(data, entry) {
+  const now = Date.now();
+  const cacheAgeMin = entry?.cachedAt ? Math.round((now - entry.cachedAt) / 60000) : 0;
+  const issuedMs = weatherIssuedMs(data);
+  const issuedAgeMin = issuedMs ? Math.round((now - issuedMs) / 60000) : cacheAgeMin;
+  const ageMin = Math.max(cacheAgeMin, issuedAgeMin);
+  const out = { ...data, _dataAgeMinutes: ageMin };
+  if (data._stale || ageMin * 60000 > WEATHER_MAX_AGE_MS) {
+    out._stale = true;
+    out._staleAgeMinutes = Math.max(data._staleAgeMinutes || 0, ageMin);
+  }
+  return out;
 }
 
 function markWeatherCacheSchema(data) {
@@ -1550,13 +1656,12 @@ function isUsableWeatherCache(entry) {
 }
 
 async function fetchNwsJson(url) {
-  const res = await fetchWithRetry(url, {
+  return fetchJsonWithRetry(url, {
     headers: {
       Accept: 'application/geo+json',
       'User-Agent': CONFIG.nwsUserAgent,
     },
   });
-  return res.json();
 }
 
 async function fetchNwsWeather(route) {
@@ -1574,9 +1679,21 @@ async function fetchNwsWeather(route) {
     }),
   ]);
 
-  const periods = hourly.properties?.periods || [];
-  if (!periods.length) throw new Error('NWS hourly forecast returned no periods');
-  return normalizeNwsWeather(route, periods, observation);
+  const allPeriods = hourly.properties?.periods || [];
+  if (!allPeriods.length) throw new Error('NWS hourly forecast returned no periods');
+  // Drop hours that have already ended; a cached NWS forecast can lag.
+  const now = Date.now();
+  const periods = allPeriods.filter(period => nwsPeriodEndMs(period) > now);
+  if (!periods.length) throw new Error('NWS hourly forecast has no current periods');
+  const issuedAt = hourly.properties?.updateTime || hourly.properties?.generatedAt || null;
+  return { ...normalizeNwsWeather(route, periods, observation), issuedAt };
+}
+
+function nwsPeriodEndMs(period) {
+  const end = Date.parse(period.endTime || '');
+  if (Number.isFinite(end)) return end;
+  const start = Date.parse(period.startTime || '');
+  return Number.isFinite(start) ? start + 60 * 60 * 1000 : 0;
 }
 
 async function fetchNwsObservation(stationsUrl) {
@@ -1586,7 +1703,13 @@ async function fetchNwsObservation(stationsUrl) {
   const obsUrl = station?.id ? `${station.id}/observations/latest` : null;
   if (!obsUrl) return null;
   const observation = await fetchNwsJson(obsUrl);
-  return observation.properties || null;
+  const props = observation.properties || null;
+  const observedMs = Date.parse(props?.timestamp || '');
+  if (!Number.isFinite(observedMs) || Date.now() - observedMs > NWS_OBSERVATION_MAX_AGE_MS) {
+    console.warn(`[weather] ignoring NWS observation from ${props?.timestamp || 'unknown time'} (too old)`);
+    return null;
+  }
+  return props;
 }
 
 function normalizeNwsWeather(route, periods, observation) {
@@ -1609,7 +1732,7 @@ function normalizeNwsCurrent(period, observation = null) {
   const tempF = cToF(observation?.temperature?.value);
   const windMph = kmhToMph(observation?.windSpeed?.value);
   return {
-    time: observation?.timestamp || period.startTime || new Date().toISOString(),
+    time: observation?.timestamp || new Date().toISOString(),
     interval: 3600,
     temperature_2m: Number.isFinite(tempF) ? tempF : Number(period.temperature),
     weather_code: weatherCodeFromText(observation?.textDescription || period.shortForecast),
@@ -1675,14 +1798,112 @@ async function fetchOpenMeteoWeather(route) {
     `&current=temperature_2m,weather_code,wind_speed_10m,wind_direction_10m,relative_humidity_2m` +
     `&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch` +
     `&timezone=${encodeURIComponent(CONFIG.timezone)}&forecast_days=3`;
-  const r = await fetchWithRetry(url);
-  const data = await r.json();
+  const data = await fetchJsonWithRetry(url);
+  if (data.error) throw new Error(`Open-Meteo error: ${data.reason || 'unknown'}`);
   const offset = pacificOffset();
   if (data.daily?.sunrise) {
     data.daily.sunrise = data.daily.sunrise.map(s => s + ':00' + offset);
     data.daily.sunset  = data.daily.sunset.map(s  => s + ':00' + offset);
   }
-  return { ...data, source: 'Open-Meteo' };
+  // Open-Meteo models update hourly and the response carries no issue time;
+  // a successful response is current as of now.
+  return { ...data, source: 'Open-Meteo', issuedAt: new Date().toISOString() };
+}
+
+// MET Norway (api.met.no) — free, keyless global forecast. Requires an
+// identifying User-Agent. Compact responses carry no precipitation
+// probability, so those values are null.
+async function fetchMetNorwayWeather(route) {
+  const url = `${CONFIG.metNorwayBaseUrl}/weatherapi/locationforecast/2.0/compact` +
+    `?lat=${route.weather.lat.toFixed(4)}&lon=${route.weather.lon.toFixed(4)}`;
+  const data = await fetchJsonWithRetry(url, { headers: { 'User-Agent': CONFIG.nwsUserAgent } });
+  const now = Date.now();
+  const series = (data.properties?.timeseries || [])
+    .filter(entry => Date.parse(entry.time) + 60 * 60 * 1000 > now);
+  if (!series.length) throw new Error('MET Norway forecast has no current entries');
+  return {
+    ...normalizeMetNorwayWeather(route, series),
+    issuedAt: data.properties?.meta?.updated_at || null,
+  };
+}
+
+function metNorwaySymbol(entry) {
+  const data = entry.data || {};
+  return data.next_1_hours?.summary?.symbol_code
+    || data.next_6_hours?.summary?.symbol_code
+    || data.next_12_hours?.summary?.symbol_code
+    || '';
+}
+
+function weatherCodeFromMetSymbol(symbol) {
+  const value = String(symbol || '').replace(/_(day|night|polartwilight)$/, '');
+  if (value.includes('thunder')) return 95;
+  if (value.includes('snow') || value.includes('sleet')) return 71;
+  if (value.includes('rainshowers')) return 80;
+  if (value.includes('heavyrain')) return 65;
+  if (value.includes('rain')) return 61;
+  if (value === 'fog') return 45;
+  if (value === 'cloudy') return 3;
+  if (value === 'partlycloudy') return 2;
+  if (value === 'fair') return 1;
+  if (value === 'clearsky') return 0;
+  return 3;
+}
+
+function normalizeMetNorwayWeather(route, series) {
+  const msToMph = ms => (Number.isFinite(ms) ? ms * 2.236936 : null);
+  const hourlyEntries = series.filter(entry => entry.data?.next_1_hours);
+  const first = series[0];
+  const firstDetails = first.data?.instant?.details || {};
+  const current = {
+    time: first.time,
+    interval: 3600,
+    temperature_2m: cToF(firstDetails.air_temperature),
+    weather_code: weatherCodeFromMetSymbol(metNorwaySymbol(first)),
+    wind_speed_10m: msToMph(firstDetails.wind_speed) ?? 0,
+    wind_direction_10m: Number.isFinite(firstDetails.wind_from_direction) ? firstDetails.wind_from_direction : 0,
+    relative_humidity_2m: Number.isFinite(firstDetails.relative_humidity) ? Math.round(firstDetails.relative_humidity) : null,
+  };
+  const hourly = {
+    time: hourlyEntries.map(entry => stripSeconds(formatInTimeZoneWithOffset(new Date(entry.time), CONFIG.timezone))),
+    temperature_2m: hourlyEntries.map(entry => cToF(entry.data.instant?.details?.air_temperature)),
+    weather_code: hourlyEntries.map(entry => weatherCodeFromMetSymbol(metNorwaySymbol(entry))),
+    wind_speed_10m: hourlyEntries.map(entry => msToMph(entry.data.instant?.details?.wind_speed) ?? 0),
+  };
+
+  const byDate = new Map();
+  for (const entry of series) {
+    const date = localDateInTimeZone(new Date(entry.time), CONFIG.timezone);
+    if (!date) continue;
+    const details = entry.data?.instant?.details || {};
+    const day = byDate.get(date) || { time: date, temps: [], winds: [], windDirections: [], codes: [] };
+    day.temps.push(cToF(details.air_temperature));
+    day.winds.push(msToMph(details.wind_speed));
+    day.windDirections.push(details.wind_from_direction);
+    const symbol = metNorwaySymbol(entry);
+    if (symbol) day.codes.push(weatherCodeFromMetSymbol(symbol));
+    byDate.set(date, day);
+  }
+  const days = [...byDate.values()].slice(0, 3);
+  return {
+    latitude: route.weather.lat,
+    longitude: route.weather.lon,
+    timezone: CONFIG.timezone,
+    source: 'MET Norway',
+    current,
+    hourly,
+    daily: {
+      time: days.map(day => day.time),
+      weather_code: days.map(day => dominantWeatherCode(day.codes)),
+      temperature_2m_max: days.map(day => Math.max(...day.temps.filter(Number.isFinite))),
+      temperature_2m_min: days.map(day => Math.min(...day.temps.filter(Number.isFinite))),
+      precipitation_probability_max: days.map(() => null),
+      wind_speed_10m_max: days.map(day => Math.max(...day.winds.filter(Number.isFinite), 0)),
+      wind_direction_10m_dominant: days.map(day => dominantWindDirection(day.windDirections)),
+      sunrise: days.map(day => solarTimeIso(day.time, route.weather.lat, route.weather.lon, true)),
+      sunset: days.map(day => solarTimeIso(day.time, route.weather.lat, route.weather.lon, false)),
+    },
+  };
 }
 
 function cToF(celsius) {

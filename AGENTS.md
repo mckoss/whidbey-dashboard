@@ -119,7 +119,7 @@ NOAA sometimes returns HTTP 200 with an error body — the server guards against
 
 ### Sunrise/Sunset
 
-Added to the weather card header (☀️/🌙 icons, stacked vertically). Data comes from Open-Meteo's `daily.sunrise/sunset` fields — no separate endpoint. Values stored as `window._sunriseMs` / `window._sunsetMs` globals, shared by the weather card and the sparkline day/night rendering.
+Added to the weather card header (☀️/🌙 icons, stacked vertically). Data comes from the weather payload's `daily.sunrise/sunset` fields (calculated server-side) — no separate endpoint. Values stored as `window._sunriseMs` / `window._sunsetMs` globals, shared by the weather card and the sparkline day/night rendering.
 
 ### Seawater Temperature
 
@@ -156,3 +156,7 @@ npm test  # Runs: node --test test/api.test.js
 ```
 
 Tests spawn their own server on port 3001 (separate from the dev server on 3000). Tests cover all API endpoints + HTML structure. Transient network failures from upstream APIs can cause flaky test runs — retry once before investigating.
+
+### Weather source chain (v1.30.0)
+
+`/api/weather` tries NWS → Open-Meteo → MET Norway (`api.met.no`, keyless, needs a User-Agent). A source is accepted only if its forecast `issuedAt` is within 4 hours and `daily.time` includes today; otherwise the next source is tried, and if none is current the freshest stale forecast is served with `_stale`. Weather age (`_dataAgeMinutes`) is the larger of cache age and forecast age. NWS hours that already ended are dropped and NWS observations older than 2 hours are ignored. Pitfall that caused a 17h-stale display: `fetchWithRetry`'s timeout did not cover `res.json()`, so a stalled body could hang a background refresh forever and block all later refreshes. Use `fetchJsonWithRetry`, and background refreshes now have a 90s deadline.

@@ -206,13 +206,30 @@ test('ferry prediction model — daily accuracy chooses one closest 60-minute sa
   assert.equal(report.maxAbsoluteErrorMinutes, 60, 'keeps gross errors visible');
 });
 
+const FALLBACK_TEST_LAT = '47.6262'; // Bainbridge: NWS stale + Open-Meteo down → MET Norway
+
+function hourStartMs(offsetHours = 0) {
+  const now = Date.now();
+  return now - (now % 3600000) + offsetHours * 3600000;
+}
+
+function pacificIsoWithOffset(ms) {
+  const d = new Date(ms);
+  const local = d.toLocaleString('sv-SE', { timeZone: 'America/Los_Angeles' }).replace(' ', 'T');
+  const offsetMin = Math.round((new Date(local + 'Z').getTime() - ms) / 60000);
+  const sign = offsetMin < 0 ? '-' : '+';
+  const abs = Math.abs(offsetMin);
+  return `${local}${sign}${String(Math.floor(abs / 60)).padStart(2, '0')}:${String(abs % 60).padStart(2, '0')}`;
+}
+
 function testWeatherPayload() {
+  const days = [0, 1, 2].map(n => pacificDate(new Date(Date.now() + n * 86400000)));
   return {
     latitude: 47.9748,
     longitude: -122.3534,
     timezone: 'America/Los_Angeles',
     current: {
-      time: '2026-07-02T12:00',
+      time: `${days[0]}T12:00`,
       interval: 900,
       temperature_2m: 68.4,
       weather_code: 1,
@@ -221,18 +238,18 @@ function testWeatherPayload() {
       relative_humidity_2m: 58,
     },
     daily: {
-      time: ['2026-07-02', '2026-07-03', '2026-07-04'],
+      time: days,
       weather_code: [1, 2, 3],
       temperature_2m_max: [72, 69, 70],
       temperature_2m_min: [55, 54, 53],
       precipitation_probability_max: [5, 15, 25],
       wind_speed_10m_max: [9, 11, 8],
       wind_direction_10m_dominant: [250, 230, 210],
-      sunrise: ['2026-07-02T05:16', '2026-07-03T05:17', '2026-07-04T05:18'],
-      sunset: ['2026-07-02T21:12', '2026-07-03T21:11', '2026-07-04T21:11'],
+      sunrise: days.map(day => `${day}T05:16`),
+      sunset: days.map(day => `${day}T21:12`),
     },
     hourly: {
-      time: ['2026-07-02T12:00'],
+      time: [`${days[0]}T12:00`],
       temperature_2m: [68.4],
       weather_code: [1],
       wind_speed_10m: [7.2],
@@ -240,37 +257,31 @@ function testWeatherPayload() {
   };
 }
 
-function testNwsHourlyPayload() {
+function testNwsHourlyPayload({ updatedHoursAgo = 0.5 } = {}) {
+  const forecasts = ['Mostly Sunny', 'Partly Sunny', 'Mostly Cloudy', 'Light Rain', 'Sunny'];
   const periods = [];
-  const entries = [
-    ['2026-07-02T12:00:00-07:00', 68, '7 mph', 'WSW', 'Mostly Sunny', 5, 58],
-    ['2026-07-02T13:00:00-07:00', 70, '8 mph', 'WSW', 'Partly Sunny', 7, 56],
-    ['2026-07-02T14:00:00-07:00', 72, '9 mph', 'W', 'Partly Sunny', 10, 54],
-    ['2026-07-02T15:00:00-07:00', 71, '8 mph', 'W', 'Partly Sunny', 12, 55],
-    ['2026-07-02T16:00:00-07:00', 69, '6 mph', 'W', 'Mostly Cloudy', 15, 60],
-    ['2026-07-03T12:00:00-07:00', 69, '11 mph', 'SW', 'Mostly Cloudy', 15, 62],
-    ['2026-07-03T13:00:00-07:00', 66, '10 mph', 'SW', 'Light Rain', 30, 70],
-    ['2026-07-04T12:00:00-07:00', 70, '8 mph', 'NW', 'Sunny', 2, 55],
-    ['2026-07-04T13:00:00-07:00', 67, '7 mph', 'NW', 'Sunny', 1, 57],
-  ];
-  for (const [startTime, temperature, windSpeed, windDirection, shortForecast, precip, humidity] of entries) {
+  // Includes two already-finished hours that the server must drop.
+  for (let h = -2; h < 72; h++) {
+    const start = hourStartMs(h);
     periods.push({
-      startTime,
-      temperature,
-      windSpeed,
-      windDirection,
-      shortForecast,
-      probabilityOfPrecipitation: { value: precip },
-      relativeHumidity: { value: humidity },
+      startTime: pacificIsoWithOffset(start),
+      endTime: pacificIsoWithOffset(start + 3600000),
+      temperature: 60 + (h % 12),
+      windSpeed: `${5 + (h % 6)} mph`,
+      windDirection: 'WSW',
+      shortForecast: forecasts[(h + 10) % forecasts.length],
+      probabilityOfPrecipitation: { value: (h * 3 + 30) % 60 },
+      relativeHumidity: { value: 58 },
     });
   }
-  return { properties: { generatedAt: '2026-07-02T19:00:00Z', periods } };
+  const updateTime = new Date(Date.now() - updatedHoursAgo * 3600000).toISOString();
+  return { properties: { updateTime, generatedAt: new Date().toISOString(), periods } };
 }
 
 function testNwsObservationPayload() {
   return {
     properties: {
-      timestamp: '2026-07-02T19:00:00Z',
+      timestamp: new Date(Date.now() - 20 * 60000).toISOString(),
       textDescription: 'Partly Sunny',
       temperature: { value: 20 },
       windSpeed: { value: 11.265 },
@@ -280,8 +291,48 @@ function testNwsObservationPayload() {
   };
 }
 
+function testMetNorwayPayload() {
+  const symbols = ['clearsky_day', 'partlycloudy_night', 'cloudy', 'lightrain', 'rainshowers_day', 'fog'];
+  const timeseries = [];
+  for (let h = -1; h < 60; h++) {
+    timeseries.push({
+      time: new Date(hourStartMs(h)).toISOString().replace('.000Z', 'Z'),
+      data: {
+        instant: { details: { air_temperature: 8 + (h % 5), wind_speed: 3.1, wind_from_direction: 200, relative_humidity: 81.4 } },
+        next_1_hours: { summary: { symbol_code: symbols[(h + 6) % symbols.length] }, details: { precipitation_amount: 0.2 } },
+      },
+    });
+  }
+  return {
+    type: 'Feature',
+    properties: { meta: { updated_at: new Date(Date.now() - 40 * 60000).toISOString() }, timeseries },
+  };
+}
+
 async function startWeatherFixture() {
   weatherServer = createServer((req, res) => {
+    if (req.url?.startsWith(`/points/${FALLBACK_TEST_LAT}`)) {
+      res.writeHead(200, { 'Content-Type': 'application/geo+json' });
+      res.end(JSON.stringify({
+        properties: { forecastHourly: `${weatherBaseUrl}/gridpoints/SEW/stale/forecast/hourly` },
+      }));
+      return;
+    }
+    if (req.url === '/gridpoints/SEW/stale/forecast/hourly') {
+      res.writeHead(200, { 'Content-Type': 'application/geo+json' });
+      res.end(JSON.stringify(testNwsHourlyPayload({ updatedHoursAgo: 6 })));
+      return;
+    }
+    if (req.url?.startsWith('/v1/forecast') && req.url.includes(`latitude=${FALLBACK_TEST_LAT}`)) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: true, reason: 'test outage' }));
+      return;
+    }
+    if (req.url?.startsWith('/weatherapi/locationforecast/2.0/compact')) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(testMetNorwayPayload()));
+      return;
+    }
     if (req.url?.startsWith('/points/')) {
       res.writeHead(200, { 'Content-Type': 'application/geo+json' });
       res.end(JSON.stringify({
@@ -394,6 +445,7 @@ before(async () => {
     noaaBaseUrl,
     nwsBaseUrl: weatherBaseUrl,
     openMeteoBaseUrl: weatherBaseUrl,
+    metNorwayBaseUrl: weatherBaseUrl,
     googleClientId: 'test-google-client-id',
     adminUsers: ['mike@example.com'],
     adminTestTokens: {
@@ -516,6 +568,32 @@ test('weather endpoint — returns current temperature and 3-day forecast', asyn
     'daily sunrise stays on the forecast local date');
   assert.ok(d.daily.sunset[0].startsWith(`${d.daily.time[0]}T`),
     'daily sunset stays on the forecast local date');
+  assert.equal(d.daily.time[0], pacificDate(), 'first forecast day is today, not a day already past');
+  assert.ok(Date.parse(d.hourly.time[0]) > Date.now() - 3600000, 'finished NWS hours are dropped');
+  assert.ok(d.issuedAt, 'reports when the forecast was issued');
+  assert.ok(d._dataAgeMinutes < 240, 'fresh forecast reports its age');
+  assert.ok(!d._stale, 'fresh forecast is not flagged stale');
+});
+
+test('weather endpoint — skips a forecast over 4h old and a failed backup for the next source', async () => {
+  const d = await getJson('/api/bainbridge/ferry/weather');
+
+  assert.equal(d.source, 'MET Norway', 'falls through stale NWS and failed Open-Meteo to MET Norway');
+  assert.ok(!d._stale, 'backup forecast is current');
+  assert.equal(d.daily.time[0], pacificDate(), 'backup forecast starts today');
+  assert.ok(d.daily.time.length >= 3, 'backup forecast has 3 days');
+  assert.ok(Number.isFinite(d.current.temperature_2m), 'backup has current temperature');
+  assert.ok(d.current.temperature_2m > 40 && d.current.temperature_2m < 60, 'Celsius converted to Fahrenheit');
+  assert.ok(d.daily.precipitation_probability_max.every(v => v === null),
+    'MET Norway compact has no precipitation probability');
+  assert.ok(d.daily.weather_code.every(Number.isFinite), 'symbol codes mapped to weather codes');
+});
+
+test('static HTML — weather days are labeled by date, not position', async () => {
+  const html = await readFile(join(__dirname, '../public/index.html'), 'utf8');
+  assert.match(html, /daily\.time\[i\] >= todayKey/, 'forecast days already past are skipped');
+  assert.match(html, /t === todayKey \? 'Today' : t === tomorrowKey \? 'Tomorrow'/,
+    'Today/Tomorrow labels come from the date');
 });
 
 test('seawater-temperature endpoint — returns Port Townsend observed seawater temperature', async () => {
