@@ -109,7 +109,7 @@ when a feed problem is persistent enough to matter to someone glancing at it:
 
 | Source | Refresh | Visible Warning |
 |--------|---------|-----------------|
-| Weather | 1 hour | Weather data at least 3 hours old |
+| Weather | 5 min poll (server cache 1 hour) | Weather data at least 3 hours old (by forecast issue time) |
 | Tides | 2 hours | Tide data is expired, unavailable, or ending within 1h |
 | Ferry | 30 sec | Ferry data at least 10 minutes old |
 
