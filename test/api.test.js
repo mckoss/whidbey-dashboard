@@ -609,6 +609,9 @@ test('weather endpoint — skips a forecast over 4h old and a failed backup for 
 
 test('static HTML — weather days are labeled by date, not position', async () => {
   const html = await readFile(join(__dirname, '../public/index.html'), 'utf8');
+  assert.match(html, /document\.addEventListener\?\.\('visibilitychange'/, 'reloads data when the page becomes visible');
+  assert.match(html, /if \(now - lastWakeTick > WAKE_GAP_MS\) reloadAllAfterWake/, 'reloads data after the page was frozen');
+  assert.match(html, /for \(const run of loaderRunners\) run\(\);/, 'wake reload runs every loader');
   assert.match(html, /const WEATHER_POLL_MS = 5 \* 60 \* 1000;\s*scheduleLoader\(loadWeather, WEATHER_POLL_MS\);/,
     'client polls weather often enough to pick up server refreshes within minutes');
   assert.match(html, /markFresh\('weather', d\)/, 'weather freshness uses the server payload');
@@ -2857,6 +2860,7 @@ test('ferry history page — atDock false starts an observed departure before le
     URLSearchParams,
     setInterval: () => 0,
     setTimeout: () => 0,
+    clearTimeout: () => {},
     clearInterval: () => {},
     fetch: () => Promise.resolve({ ok: true, json: () => Promise.resolve({}) }),
     document: {
@@ -2916,6 +2920,7 @@ test('ferry history page — matched WSF actual departure can beat GPS departure
     URLSearchParams,
     setInterval: () => 0,
     setTimeout: () => 0,
+    clearTimeout: () => {},
     clearInterval: () => {},
     fetch: () => Promise.resolve({ ok: true, json: () => Promise.resolve({}) }),
     document: {
@@ -2975,6 +2980,7 @@ test('ferry history page — lower table uses same resolved departure time as de
     URLSearchParams,
     setInterval: () => 0,
     setTimeout: () => 0,
+    clearTimeout: () => {},
     clearInterval: () => {},
     fetch: () => Promise.resolve({ ok: true, json: () => Promise.resolve({}) }),
     document: {
@@ -3119,6 +3125,7 @@ test('static HTML — ferry alerts render as a single scrolling ticker with titl
     Date,
     setInterval: () => 0,
     setTimeout: () => 0,
+    clearTimeout: () => {},
     clearInterval: () => {},
     fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
     document: {
@@ -3276,6 +3283,7 @@ test('late ferry logic — a full (no drive-up space) upcoming sailing is flagge
     Date: FakeDate,
     setInterval: () => 0,
     setTimeout: () => 0,
+    clearTimeout: () => {},
     clearInterval: () => {},
     fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
     document: {
@@ -3328,6 +3336,7 @@ test('late ferry logic — current vessel position does not resurrect old mornin
     Date: FakeDate,
     setInterval: () => 0,
     setTimeout: () => 0,
+    clearTimeout: () => {},
     clearInterval: () => {},
     fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
     document: {
@@ -3420,6 +3429,7 @@ test('late ferry logic — a server-missed slot is never re-projected onto a liv
     Date: FakeDate,
     setInterval: () => 0,
     setTimeout: () => 0,
+    clearTimeout: () => {},
     clearInterval: () => {},
     fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
     document: {
@@ -3508,6 +3518,7 @@ test('late ferry logic — old missed morning rows are not displayed as previous
     Date: FakeDate,
     setInterval: () => 0,
     setTimeout: () => 0,
+    clearTimeout: () => {},
     clearInterval: () => {},
     fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
     document: {
@@ -3576,6 +3587,7 @@ test('late ferry logic — vessel scheduled departure does not delay nearby earl
     Date: FakeDate,
     setInterval: () => 0,
     setTimeout: () => 0,
+    clearTimeout: () => {},
     clearInterval: () => {},
     fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
     document: {
@@ -3631,6 +3643,7 @@ test('late ferry logic — small departure jitter does not propagate to later sa
     Date: FakeDate,
     setInterval: () => 0,
     setTimeout: () => 0,
+    clearTimeout: () => {},
     clearInterval: () => {},
     fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
     document: {
@@ -3720,6 +3733,7 @@ test('late ferry logic — live resolved departure table uses server effective d
     Date: FakeDate,
     setInterval: () => 0,
     setTimeout: () => 0,
+    clearTimeout: () => {},
     clearInterval: () => {},
     fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
     document: {
@@ -3798,6 +3812,7 @@ test('late ferry logic — live inbound vessel suppresses schedule-derived misse
     Date: FakeDate,
     setInterval: () => 0,
     setTimeout: () => 0,
+    clearTimeout: () => {},
     clearInterval: () => {},
     fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
     document: {
@@ -3867,6 +3882,7 @@ test('late ferry logic — overtaken missed slot does not propagate lateness to 
     Date: FakeDate,
     setInterval: () => 0,
     setTimeout: () => 0,
+    clearTimeout: () => {},
     clearInterval: () => {},
     fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
     document: {
@@ -3957,6 +3973,7 @@ test('late ferry logic — vessel forecast projects onto upcoming chips with no 
     Date: FakeDate,
     setInterval: () => 0,
     setTimeout: () => 0,
+    clearTimeout: () => {},
     clearInterval: () => {},
     fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
     document: {
@@ -4049,6 +4066,7 @@ test('late ferry logic — small projected departure drift renders as normal sch
     Date: FakeDate,
     setInterval: () => 0,
     setTimeout: () => 0,
+    clearTimeout: () => {},
     clearInterval: () => {},
     fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
     document: {
@@ -4118,6 +4136,7 @@ test('late ferry logic — regenerated vessel forecast overrides stale GPS-chain
     Date: FakeDate,
     setInterval: () => 0,
     setTimeout: () => 0,
+    clearTimeout: () => {},
     clearInterval: () => {},
     fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
     document: {
@@ -4210,6 +4229,7 @@ test('late ferry logic — projected chips keep the forecast time after it slips
     Date: FakeDate,
     setInterval: () => 0,
     setTimeout: () => 0,
+    clearTimeout: () => {},
     clearInterval: () => {},
     fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
     document: {
@@ -4274,6 +4294,7 @@ test('late ferry logic — direct delay does not propagate to later sailings', a
     Date: FakeDate,
     setInterval: () => 0,
     setTimeout: () => 0,
+    clearTimeout: () => {},
     clearInterval: () => {},
     fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
     document: {
@@ -4360,6 +4381,7 @@ test('late ferry logic — departed delayed sailing shows actual and scheduled t
     Date: FakeDate,
     setInterval: () => 0,
     setTimeout: () => 0,
+    clearTimeout: () => {},
     clearInterval: () => {},
     fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
     document: {
@@ -4427,6 +4449,7 @@ test('late ferry logic — schedule-only vessel names are not rendered on live c
     Date: FakeDate,
     setInterval: () => 0,
     setTimeout: () => 0,
+    clearTimeout: () => {},
     clearInterval: () => {},
     fetch: () => Promise.resolve({ json: () => Promise.resolve({}) }),
     document: {
