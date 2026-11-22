@@ -112,6 +112,9 @@ const NWS_OBSERVATION_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 const WEATHER_SOURCE_TIMEOUT_MS = 25 * 1000;
 // A background refresh that never settles must not block future refreshes.
 const BACKGROUND_REFRESH_TIMEOUT_MS = 90 * 1000;
+// How long a request waits for a fresh forecast when the cached one is too old.
+const WEATHER_WAIT_FOR_FRESH_MS = 20 * 1000;
+const WEATHER_KEEP_FRESH_INTERVAL_MS = 5 * 60 * 1000;
 const SEAWATER_TEMPERATURE_CACHE_MS = 10 * 60 * 1000;
 const TIDE_CACHE_MS = 2 * 60 * 60 * 1000;
 const TERMINAL_NAMES = new Map(Object.values(FERRY_ROUTES).flatMap(route => [
@@ -1112,7 +1115,7 @@ function cachedEndpoint(cacheKey, ttlMs, fetcher) {
 const backgroundRefreshes = new Map();
 
 function refreshCacheInBackground(cacheKey, ttlMs, fetcher, req) {
-  if (backgroundRefreshes.has(cacheKey)) return;
+  if (backgroundRefreshes.has(cacheKey)) return backgroundRefreshes.get(cacheKey);
   const refresh = (async () => {
     try {
       const data = await withDeadline(fetcher(req), BACKGROUND_REFRESH_TIMEOUT_MS, `refresh of ${cacheKey}`);
@@ -1124,6 +1127,7 @@ function refreshCacheInBackground(cacheKey, ttlMs, fetcher, req) {
     }
   })();
   backgroundRefreshes.set(cacheKey, refresh);
+  return refresh;
 }
 
 function cachedEndpointStaleWhileRefresh(cacheKey, ttlMs, fetcher, isUsableCacheEntry = () => true, decorate = data => data) {
@@ -1578,13 +1582,44 @@ const WEATHER_SOURCES = [
 ];
 
 function weatherEndpoint(route = DEFAULT_FERRY_ROUTE) {
-  return cachedEndpointStaleWhileRefresh(
+  const handler = cachedEndpointStaleWhileRefresh(
     route.weather.cacheKey,
     WEATHER_TTL_MS,
     () => fetchWeatherFromSources(route),
     isUsableWeatherCache,
     decorateWeatherResponse,
   );
+  return async (req, res) => {
+    // If the cached forecast is too old to show (e.g. no refresh happened
+    // while the server was idle), wait briefly for a fresh one rather than
+    // painting a stale forecast first.
+    const entry = getStale(route.weather.cacheKey);
+    if (entry && isUsableWeatherCache(entry) && weatherEntryAgeMs(entry) > WEATHER_MAX_AGE_MS) {
+      await withDeadline(refreshWeather(route), WEATHER_WAIT_FOR_FRESH_MS, 'weather refresh').catch(() => {});
+    }
+    return handler(req, res);
+  };
+}
+
+function refreshWeather(route) {
+  return refreshCacheInBackground(route.weather.cacheKey, WEATHER_TTL_MS, () => fetchWeatherFromSources(route));
+}
+
+function weatherEntryAgeMs(entry, now = Date.now()) {
+  const issuedMs = weatherIssuedMs(entry?.data);
+  return Math.max(now - (entry?.cachedAt || 0), issuedMs ? now - issuedMs : 0);
+}
+
+// The server refreshes weather on its own schedule, so a forecast is current
+// when a browser wakes up after a quiet night instead of only refreshing on
+// demand.
+function keepWeatherFresh() {
+  for (const route of Object.values(FERRY_ROUTES)) {
+    const entry = getStale(route.weather.cacheKey);
+    if (!entry || !isUsableWeatherCache(entry) || Date.now() > entry.expiresAt) {
+      refreshWeather(route);
+    }
+  }
 }
 
 // Try each source in order and return the first whose forecast is current.
@@ -4406,4 +4441,6 @@ app.listen(listenPort, () => {
   };
   setTimeout(sample, 15 * 1000).unref?.();
   setInterval(sample, FERRY_HISTORY_SAMPLE_INTERVAL_MS).unref?.();
+  setTimeout(keepWeatherFresh, 5 * 1000).unref?.();
+  setInterval(keepWeatherFresh, WEATHER_KEEP_FRESH_INTERVAL_MS).unref?.();
 });

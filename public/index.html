@@ -1150,7 +1150,8 @@ async function loadWeather() {
             <div class="wind">💨 ${day.wind} mph ${day.windDir}</div>
           </div>`).join('')}
       </div>`;
-    return d._stale ? { retrySoon: true } : null;
+    // The server is fetching a fresh forecast; it usually lands within seconds.
+    return d._stale ? { retrySoon: true, retryMs: 30 * 1000 } : null;
   } catch (e) {
     el.innerHTML = `<div class="card-title">Weather</div><div class="error-msg">Failed to load weather: ${e.message}</div>`;
     throw e;
@@ -1960,7 +1961,7 @@ function scheduleLoader(fn, normalMs) {
     try {
       const result = await fn();
       loaderSuccess[fn.name] = true;
-      timer = setTimeout(run, result?.retrySoon ? RETRY_MS : normalMs);
+      timer = setTimeout(run, result?.retrySoon ? (result.retryMs || RETRY_MS) : normalMs);
     } catch (e) {
       loaderSuccess[fn.name] = false;
       timer = setTimeout(run, RETRY_MS);
