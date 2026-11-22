@@ -1955,9 +1955,15 @@ setInterval(refreshTideVisual, 60 * 1000);
 const RETRY_MS = 5 * 60 * 1000;  // 5 min
 const loaderSuccess = {};  // tracks whether last run succeeded
 
+const loaderRunners = [];
+
 function scheduleLoader(fn, normalMs) {
   let timer = null;
+  let running = false;
   async function run() {
+    clearTimeout(timer);
+    if (running) return;
+    running = true;
     try {
       const result = await fn();
       loaderSuccess[fn.name] = true;
@@ -1965,10 +1971,38 @@ function scheduleLoader(fn, normalMs) {
     } catch (e) {
       loaderSuccess[fn.name] = false;
       timer = setTimeout(run, RETRY_MS);
+    } finally {
+      running = false;
     }
   }
+  loaderRunners.push(run);
   run();
 }
+
+// Wake handling: a TV or car browser may freeze the page while the screen is
+// off, and its timers don't catch up promptly on wake. Reload everything as
+// soon as the page becomes visible again or its clock jumps forward.
+const WAKE_TICK_MS = 15 * 1000;
+const WAKE_GAP_MS = 2 * 60 * 1000;
+let lastWakeTick = Date.now();
+let lastWakeReload = 0;
+
+function reloadAllAfterWake(reason) {
+  if (Date.now() - lastWakeReload < 30 * 1000) return;
+  lastWakeReload = Date.now();
+  console.log(`[wake] ${reason}: reloading all data`);
+  for (const run of loaderRunners) run();
+}
+
+setInterval(() => {
+  const now = Date.now();
+  if (now - lastWakeTick > WAKE_GAP_MS) reloadAllAfterWake('clock jumped');
+  lastWakeTick = now;
+}, WAKE_TICK_MS);
+document.addEventListener?.('visibilitychange', () => {
+  if (document.visibilityState === 'visible') reloadAllAfterWake('page visible');
+});
+window.addEventListener?.('pageshow', e => { if (e.persisted) reloadAllAfterWake('page restored'); });
 
 // Weather polls every 5 min (served from the server's cache, so it's cheap) so
 // a forecast the server pulls shows up within minutes, and day labels roll
