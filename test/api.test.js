@@ -610,8 +610,10 @@ test('weather endpoint — skips a forecast over 4h old and a failed backup for 
 test('static HTML — weather days are labeled by date, not position', async () => {
   const html = await readFile(join(__dirname, '../public/index.html'), 'utf8');
   assert.match(html, /document\.addEventListener\?\.\('visibilitychange'/, 'reloads data when the page becomes visible');
-  assert.match(html, /if \(now - lastWakeTick > WAKE_GAP_MS\) reloadAllAfterWake/, 'reloads data after the page was frozen');
-  assert.match(html, /for \(const run of loaderRunners\) run\(\);/, 'wake reload runs every loader');
+  assert.match(html, /if \(now - loader\.lastRunAt > loader\.nextDueMs \+ WATCHDOG_SLACK_MS\)/,
+    'watchdog runs any loader that has not checked within its interval');
+  assert.match(html, /fetch\(FERRY_ROUTE\.weatherPath \|\| '\/api\/weather', \{ cache: 'no-store' \}\)/,
+    'weather requests bypass the browser cache');
   assert.match(html, /const WEATHER_POLL_MS = 5 \* 60 \* 1000;\s*scheduleLoader\(loadWeather, WEATHER_POLL_MS\);/,
     'client polls weather often enough to pick up server refreshes within minutes');
   assert.match(html, /markFresh\('weather', d\)/, 'weather freshness uses the server payload');
