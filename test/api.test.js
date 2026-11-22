@@ -456,6 +456,24 @@ before(async () => {
     sessionSecret: 'test-session-secret-for-admin-cookies',
   }, null, 2));
 
+  // Seed a 13-hour-old Whidbey forecast, as left over after a quiet night,
+  // to check the server replaces it before showing it.
+  const staleMs = Date.now() - 13 * 3600000;
+  const yesterday = pacificDate(new Date(Date.now() - 86400000));
+  await writeFile(join(dataDir, 'cache.json'), JSON.stringify({
+    weather: {
+      data: {
+        source: 'Seeded stale', issuedAt: new Date(staleMs).toISOString(), _weatherCacheSchema: 'multi-source-v3',
+        current: { temperature_2m: 36, weather_code: 0, wind_speed_10m: 0, wind_direction_10m: 0, relative_humidity_2m: 93 },
+        daily: { time: [yesterday], weather_code: [0], temperature_2m_max: [38], temperature_2m_min: [38],
+          precipitation_probability_max: [0], wind_speed_10m_max: [1], wind_direction_10m_dominant: [0],
+          sunrise: [`${yesterday}T07:00:00-08:00`], sunset: [`${yesterday}T16:30:00-08:00`] },
+        hourly: { time: [], temperature_2m: [], weather_code: [], wind_speed_10m: [] },
+      },
+      cachedAt: staleMs, expiresAt: staleMs + 3600000, stale: false,
+    },
+  }));
+
   serverProcess = spawn('node', [join(__dirname, '../server.js')], {
     env: {
       ...process.env,
@@ -471,7 +489,7 @@ before(async () => {
   // Wait for server to be ready
   for (let i = 0; i < 30; i++) {
     try {
-      await fetch(`${BASE}/api/weather`);
+      await fetch(`${BASE}/api/config`);
       break;
     } catch {
       await sleep(300);
@@ -543,7 +561,7 @@ function pacificOperationalDate(date = new Date()) {
 test('weather endpoint — returns current temperature and 3-day forecast', async () => {
   const d = await getJson('/api/weather');
 
-  assert.equal(d.source, 'NWS', 'uses NWS as the primary weather source');
+  assert.equal(d.source, 'NWS', 'uses NWS as the primary weather source (a 13h-old cached forecast is replaced, not shown)');
 
   // current conditions
   assert.ok(d.current, 'has current object');
@@ -2517,9 +2535,9 @@ test('static HTML — index.html contains required elements', async () => {
   assert.match(html, /NOAA error: \$\{text\}/,
     'NOAA source errors render with a plain crawl prefix');
   assert.match(html, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s*minmax\(0,\s*1fr\)/, 'main grid columns can shrink to viewport');
-  assert.match(html, /return d\._stale \? \{ retrySoon: true \} : null;/,
+  assert.match(html, /return d\._stale \? \{ retrySoon: true, retryMs: 30 \* 1000 \} : null;/,
     'stale weather responses ask the scheduler to retry soon');
-  assert.match(html, /result\?\.retrySoon \? RETRY_MS : normalMs/,
+  assert.match(html, /result\?\.retrySoon \? \(result\.retryMs \|\| RETRY_MS\) : normalMs/,
     'scheduler supports successful loads that still need a quick retry');
   assert.ok(html.includes('Whidbey'), 'mentions Whidbey');
 });
